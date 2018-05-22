@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27428.2027
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{002A2DE9-8BB6-484D-9802-7E4AD4084715}") = "TestApp", "TestApp.visualdproj", "{A454254C-C5B9-44FA-B77D-3E276E39D5F0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug DMD|x64 = Debug DMD|x64
+		Debug DMD|x86 = Debug DMD|x86
+		Debug GDC|x64 = Debug GDC|x64
+		Debug GDC|x86 = Debug GDC|x86
+		Release DMD|x64 = Release DMD|x64
+		Release DMD|x86 = Release DMD|x86
+		Release GDC|x64 = Release GDC|x64
+		Release GDC|x86 = Release GDC|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.ActiveCfg = Debug DMD|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.Build.0 = Debug DMD|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.ActiveCfg = Debug DMD|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.Build.0 = Debug DMD|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x64.ActiveCfg = Debug GDC|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x64.Build.0 = Debug GDC|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x86.ActiveCfg = Debug GDC|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x86.Build.0 = Debug GDC|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x64.ActiveCfg = Release DMD|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x64.Build.0 = Release DMD|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x86.ActiveCfg = Release DMD|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x86.Build.0 = Release DMD|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x64.ActiveCfg = Release GDC|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x64.Build.0 = Release GDC|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x86.ActiveCfg = Release GDC|Win32
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x86.Build.0 = Release GDC|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {69F5A058-0EC6-4BB3-8D9C-A72AF51FA997}
+	EndGlobalSection
+EndGlobal
