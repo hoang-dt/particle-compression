@@ -9,9 +9,8 @@ import std.math;
 import std.traits;
 
 /++ Compute the squared error between two arrays +/
-double squared_error(T)(const T[] f1, const T[] f2)
-in { assert(f1.length == f2.length); }
-do {
+double squared_error(T)(const T[] f1, const T[] f2) {
+  assert(f1.length == f2.length);
   double err = 0;
   for (size_t i = 0; i < f1.length; ++i) {
     double diff = cast(double)(f1[i]-f2[i]);

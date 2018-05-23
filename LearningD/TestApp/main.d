@@ -5,7 +5,9 @@ import std.container.array;
 import std.conv;
 import std.datetime.stopwatch;
 import std.exception;
+import std.file;
 import std.math;
+import std.outbuffer;
 import std.path;
 import std.random;
 import std.range;
@@ -36,6 +38,7 @@ For step 6, see this: https://math.stackexchange.com/questions/64716/approximati
 For extra credit, see what happens if you first randomly shuffle all residuals across the entire data set.
 */
 void test_1(const string[] argv) {
+  writeln("Test 1");
   import std.array : array;
   enforce(argv.length == 2, "Args: [json metadata file]");
   string json_file = argv[1];
@@ -56,8 +59,8 @@ void test_1(const string[] argv) {
     e = sign_to_lsb(e);
   }
   /* shuffle the array */
-  //auto rnd = MinstdRand0(42);
-  //fq.buf_ = fq.buf_.randomShuffle(rnd);
+  auto rnd = MinstdRand0(42);
+  fq.buf_ = fq.buf_.randomShuffle(rnd);
   /* build one binary tree from each block of 256 values */
   int block_size = 256;
   long nsamples = product(f.dims);
@@ -70,16 +73,29 @@ void test_1(const string[] argv) {
     enforce(trees[b][0] == sum(trees[b][last_level[0] .. last_level[1]]));
   }
   /* print the values on each level */
-  //for (int b = 0; b < nblocks; ++b) {
-  //  auto tree = trees[b];
-  //  for (int l = 0; l < tree.nlevels; ++l) {
-  //    auto be = tree.index_range(l);
-  //    auto file = File(text("tree",l,".txt"), "a+");
-  //    for (int i = be[0]; i < be[1]; ++i) {
-  //      file.writeln(tree[i]);
-  //    }
-  //  }
-  //}
+  foreach (string name; dirEntries(".", "tree*.txt", SpanMode.shallow)) {
+    remove(name);
+  }
+  OutBuffer[string] bufs;
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    for (int l = 0; l < tree.nlevels; ++l) {
+      auto be = tree.index_range(l);
+      string name = text("tree", l, ".txt");
+      OutBuffer buf = bufs.get(name, null);
+      if (!buf) {
+        bufs[name] = new OutBuffer();
+        buf = bufs[name];
+      }
+      for (int i = be[0]; i < be[1]; ++i) {
+        buf.writef("%s\n", tree[i]);
+      }
+    }
+  }
+  foreach (data; bufs.byKeyValue()) {
+    std.file.write(data.key, data.value.toBytes());
+  }
+  return;
   /* Given the sum, S=s+t, of two children, compute and accumulate the code length L(s) = S-lg(C(S, s)). */
   double code_length1 = 0;
   double code_length2 = 0;
@@ -119,6 +135,7 @@ void test_1(const string[] argv) {
 
 // FINDING: we cannot use the actual min/max on each level as bounds. It is better to just multiply the min/max from previous level by 2.
 void test_2(const string[] argv) {
+  writeln("Test 2");
   enforce(argv.length == 2, "Args: [residual text file]");
   auto residuals = read_text!("%d\n", int)(argv[1]).value;
 
@@ -152,8 +169,8 @@ void test_2(const string[] argv) {
 
 int main(const string[] argv) {
   try {
-    //test_1(argv);
-    test_2(argv);
+    test_1(argv);
+    //test_2(argv);
   }
   catch (Exception e) {
     writeln(e);
