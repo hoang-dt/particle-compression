@@ -2,6 +2,8 @@ module expected;
 
 import std.exception;
 
+/* abc /+def+/ */
+
 /++ Contains either a value or an exception +/
 struct Expected(T) {
   union {

@@ -13,6 +13,7 @@ import std.random;
 import std.range;
 import std.stdio;
 import std.traits;
+import dstats;
 import array;
 import array_util;
 import binary_tree;
@@ -70,7 +71,7 @@ void test_1(const string[] argv) {
     trees[b] = new BinaryTree!int(fq[b*block_size .. (b+1)*block_size]);
     trees[b].reduce();
     auto last_level = trees[b].index_range(trees[b].nlevels-1);
-    enforce(trees[b][0] == sum(trees[b][last_level[0] .. last_level[1]]));
+    enforce(trees[b][0] == std.algorithm.sum(trees[b][last_level[0] .. last_level[1]]));
   }
   /* print the values on each level */
   foreach (string name; dirEntries(".", "tree*.txt", SpanMode.shallow)) {
@@ -134,6 +135,7 @@ void test_1(const string[] argv) {
 }
 
 // FINDING: we cannot use the actual min/max on each level as bounds. It is better to just multiply the min/max from previous level by 2.
+/+ Compute the code length of one level of the tree of residuals +/
 void test_2(const string[] argv) {
   writeln("Test 2");
   enforce(argv.length == 2, "Args: [residual text file]");
@@ -167,12 +169,74 @@ void test_2(const string[] argv) {
   int a = 0;
 }
 
+/+ Generate a binomial distribution and compute the code length of the sum +/
+// TODO: generate the array using exponential/Laplace distributions
+void test_3() {
+  /* Generate binomial-distributed values between 0 and A, by approximating it with a Gaussian with
+  muy = A/2 and sigma_squared = A/4 */
+  int A = 1024;
+  double sigma = sqrt(cast(double)A/4); // sigma
+  double m = A / 2;
+  int[] arr;
+  int nvals = 2048; // generate nvals values
+  for (int i = 0; (i<nvals) || (i>=nvals && is_odd(arr.length)) ; ++i) {
+    auto v = rNormal(m, sigma);
+    if (v>=0 && v<A) {
+      arr ~= cast(int)v;
+    }
+  }
+  /* Scale the values so they become 16-bit integers */
+  int bits = 10;
+  //auto max_val = maxElement(arr);
+  //auto scale = ((1<<bits)-1) / cast(double)max_val;
+  //foreach (ref e; arr) {
+  //  e = cast(int)(e*scale);
+  //}
+  //A = cast(int)(max_val*scale);
+  /* Compute the sum for every pair of numbers */
+  int[] sum = new int[](arr.length/2);
+  for (int i = 0; i < sum.length; ++i) {
+    sum[i] = arr[2*i] + arr[2*i+1];
+  }
+
+  /* Approximate the code length for the leaf level using four methods:
+    - assume uniform distribution
+    - assume uniform distribution under each parent
+    - assume binomial distribution on the leaf level
+    - assume binomial distribution on the leaf level, conditioned on the parent level
+    - assume binomial under each parent */
+  double code_length1 = 0;
+  double code_length2 = 0;
+  double code_length3 = 0;
+  double code_length4 = 0;
+  double code_length5 = 0;
+  for (int i = 0; i < arr.length; i += 2) {
+    int s = arr[i];
+    int p = i / 2;
+    int S = sum[p];
+    code_length1 += bits;
+    code_length2 += log2(S);
+    code_length3 += A - log2_C_n_m(A, s);
+    code_length4 += S - log2_C_n_m(S, s);
+    double M = 0.5 * (erf((S-m)/sqrt(2*sigma*sigma)) - erf((0-m)/sqrt(2*sigma*sigma)));
+    code_length5 += A + log2(M) - log2_C_n_m(A, s);
+    int stop = 0;
+  }
+  writefln("uniform distribution = %s", code_length1);
+  writefln("uniform distribution under each parent = %s", code_length2);
+  writefln("binomial distribution on leaf level = %s", code_length3);
+  writefln("binomial distribution under each parent = %s", code_length4);
+  writefln("code length 5 = %s", code_length5);
+  write_text("out.txt", sum);
+}
+
 int main(const string[] argv) {
   try {
-    test_1(argv);
+    //test_1(argv);
     //test_2(argv);
+    test_3();
   }
-  catch (Exception e) {
+  atch (Exception e) {
     writeln(e);
     return 1;
   }

@@ -1,0 +1,13 @@
+{
+	"name": "testapp",
+	"authors": [
+		"User"
+	],
+	"description": "A minimal D application.",
+	"copyright": "Copyright © 2018, User",
+	"license": "proprietary",
+	"buildRequirements": ["allowWarnings"],
+	"dependencies": {
+		"dstats": "~>1.0.5"
+	}
+}

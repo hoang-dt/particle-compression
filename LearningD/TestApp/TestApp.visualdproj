@@ -266,9 +266,9 @@
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c</cccmd>
   <ccTransOpt>1</ccTransOpt>
-  <addDepImp>0</addDepImp>
+  <addDepImp>1</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
-  <imppath />
+  <imppath>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\source</imppath>
   <fileImppath />
   <outdir>$(PlatformName)\$(ConfigurationName)</outdir>
   <objdir>$(OutDir)</objdir>
@@ -305,7 +305,7 @@
   <cv2pdbOptions />
   <objfiles />
   <linkswitches />
-  <libfiles />
+  <libfiles>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\dstats.lib</libfiles>
   <libpaths />
   <deffile />
   <resfile />
@@ -373,9 +373,9 @@
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c</cccmd>
   <ccTransOpt>1</ccTransOpt>
-  <addDepImp>0</addDepImp>
+  <addDepImp>1</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
-  <imppath />
+  <imppath>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\source</imppath>
   <fileImppath />
   <outdir>$(PlatformName)\$(ConfigurationName)</outdir>
   <objdir>$(OutDir)</objdir>
@@ -412,7 +412,7 @@
   <cv2pdbOptions />
   <objfiles />
   <linkswitches />
-  <libfiles />
+  <libfiles>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\dstats.lib</libfiles>
   <libpaths />
   <deffile />
   <resfile />
@@ -694,9 +694,9 @@
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c</cccmd>
   <ccTransOpt>1</ccTransOpt>
-  <addDepImp>0</addDepImp>
+  <addDepImp>1</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
-  <imppath />
+  <imppath>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\source</imppath>
   <fileImppath />
   <outdir>$(PlatformName)\$(ConfigurationName)</outdir>
   <objdir>$(OutDir)</objdir>
@@ -733,7 +733,7 @@
   <cv2pdbOptions />
   <objfiles />
   <linkswitches />
-  <libfiles />
+  <libfiles>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\dstats.lib</libfiles>
   <libpaths />
   <deffile />
   <resfile />
@@ -801,9 +801,9 @@
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c</cccmd>
   <ccTransOpt>1</ccTransOpt>
-  <addDepImp>0</addDepImp>
+  <addDepImp>1</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
-  <imppath />
+  <imppath>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\source</imppath>
   <fileImppath />
   <outdir>$(PlatformName)\$(ConfigurationName)</outdir>
   <objdir>$(OutDir)</objdir>
@@ -840,7 +840,7 @@
   <cv2pdbOptions />
   <objfiles />
   <linkswitches />
-  <libfiles />
+  <libfiles>C:\Users\User\AppData\Local\dub\packages\dstats-1.0.5\dstats\dstats.lib</libfiles>
   <libpaths />
   <deffile />
   <resfile />
@@ -857,15 +857,15 @@
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
  <Folder name="TestApp">
-  <File path="array.d" />
-  <File path="array_util.d" />
-  <File path="binary_tree.d" />
-  <File path="circular_queue.d" />
-  <File path="expected.d" />
-  <File path="io.d" />
-  <File path="lorenzo.d" />
-  <File path="main.d" />
-  <File path="math.d" />
-  <File path="number.d" />
+  <File path="source\app.d" />
+  <File path="source\array.d" />
+  <File path="source\array_util.d" />
+  <File path="source\binary_tree.d" />
+  <File path="source\circular_queue.d" />
+  <File path="source\expected.d" />
+  <File path="source\io.d" />
+  <File path="source\lorenzo.d" />
+  <File path="source\math.d" />
+  <File path="source\number.d" />
  </Folder>
 </DProject>
