@@ -62,12 +62,3 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   }
 }
 
-/++ Find the mode of an array +/
-auto mode(T)(T[] items) {
-  int[T] aa;
-  foreach (item; items) {
-    aa[item]++;
-  }
-  auto m = aa.byValue.reduce!max;
-  return aa.byKey.filter!(k => aa[k]==m);
-}
