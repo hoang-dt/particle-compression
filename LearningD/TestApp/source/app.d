@@ -25,6 +25,8 @@ import math;
 import number;
 import stats;
 
+
+/++ Read a raw data set and process it into 16-bit unsigned, shuffled array of residuals +/
 Array3D!int read_and_process_array(const string[] argv) {
   import std.array : array;
   enforce(argv.length == 2, "Args: [json metadata file]");
@@ -51,10 +53,22 @@ Array3D!int read_and_process_array(const string[] argv) {
   return fq;
 }
 
-BinaryTree!int[] build_binary_trees(int block_size, int nblocks, Array3D!int fq) {
+/++ Generate an exponentially-distributed array of 16-bit unsigned integers +/
+int[] generate_array_exponential() {
+  double[] f;
+  for (int i = 0; i < 384*384*256; ++i) {
+    f ~= r_exponential(1);
+  }
+  int[] fq = new int[](f.length);
+  int bits = 14;
+  quantize_midtread(f, bits, fq, false);
+  return fq;
+}
+
+BinaryTree!int[] build_binary_trees(string op, R)(int block_size, int nblocks, R fq) {
   BinaryTree!int[] trees = new BinaryTree!int[](nblocks);
   for (int b = 0; b < nblocks; ++b) {
-    trees[b] = new BinaryTree!int(fq[b*block_size .. (b+1)*block_size]);
+    trees[b] = new BinaryTree!(int,"+")(fq[b*block_size .. (b+1)*block_size]);
     trees[b].reduce();
     auto last_level = trees[b].index_range(trees[b].nlevels-1);
     enforce(trees[b][0] == std.algorithm.sum(trees[b][last_level[0] .. last_level[1]]));
@@ -108,7 +122,7 @@ void test_1(const string[] argv) {
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
   int nblocks = (nsamples+block_size-1) / block_size;
-  auto trees = build_binary_trees(block_size, nblocks, fq);
+  auto trees = build_binary_trees!"+"(block_size, nblocks, fq);
   /* Given the sum, S=s+t, of two children, compute and accumulate the code length L(s) = S-lg(C(S, s)). */
   double code_length1 = 0;
   double code_length2 = 0;
@@ -232,18 +246,21 @@ void test_3() {
   writefln("code length 5 = %s", code_length5);
   write_text("out.txt", sum);
 }
+
 /++ Print distributions of values under the same parent value on each level +/
-// TODO: for the last level, take the nth largest sum instead of the first or second
+// TODO: estimate the parameter t for the exponential distribution and plot it
 // TODO: plot the distribution for the max operator
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  auto fq = read_and_process_array(argv);
+  //auto fq = read_and_process_array(argv);
+  auto fq = generate_array_exponential();
   /* collect statistic */
   int block_size = 256;
-  int nsamples = cast(int)product(fq.dims);
+  //int nsamples = cast(int)product(fq.dims);
+  int nsamples = cast(int)fq.length;
   int nblocks = (nsamples+block_size-1) / block_size;
-  auto trees = build_binary_trees(block_size, nblocks, fq);
+  auto trees = build_binary_trees!"+"(block_size, nblocks, fq);
   alias map = int[int];
   auto counts = new map[](trees[0].nlevels); // one map per level
   for (int b = 0; b < nblocks; ++b) {
@@ -261,9 +278,9 @@ void test_4(const string[] argv) {
   int[] modes = new int[](counts.length);
   for (int l = 0; l+1 < modes.length; ++l) {
     auto r = counts[l].byValue.array;
-    if (l+1 == modes.length-1) {
-      topN!"a>b"(r, 50);
-      modes[l] = r[50];
+    if (l+2 >= modes.length-1) {
+      topN!"a>b"(r, 100);
+      modes[l] = r[100];
     }
     else {
       modes[l] = r.reduce!max;
@@ -273,17 +290,18 @@ void test_4(const string[] argv) {
     writeln(modes[l]);
   }
   int[][] output = new int[][](modes.length); // one array per level, of samples whose parent is equal to the mode of the previous level
+  int[] m = new int[](modes.length);
+  for (int l = 1; l < m.length; ++l) {
+    m[l] = counts[l-1].byKey.filter!(k => counts[l-1][k]==modes[l-1]).array[0];
+  }
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
-    for (int l = 0; l < tree.nlevels; ++l) {
-      if (l > 0) {
-        int m = counts[l-1].byKey.filter!(k => counts[l-1][k]==modes[l-1]).array[0];
-        auto be = tree.index_range(l);
-        for (int i = be[0]; i < be[1]; ++i) {
-          int p = tree[(i-1)/2];
-          if (p == m) {
-            output[l] ~= tree[i];
-          }
+    for (int l = 1; l < tree.nlevels; ++l) {
+      auto be = tree.index_range(l);
+      for (int i = be[0]; i < be[1]; ++i) {
+        int p = tree[(i-1)/2];
+        if (p == m[l]) {
+          output[l] ~= tree[i];
         }
       }
     }
@@ -292,12 +310,8 @@ void test_4(const string[] argv) {
     write_text(text("out",l,".txt"), output[l]);
   }
 }
+
 int main(const string[] argv) {
-  double[] arr;
-  for (int i = 0; i < 2048; ++i) {
-    arr ~= r_exponential(1);
-  }
-  write_text("out.txt", arr);
   try {
     //test_1(argv);
     //test_2(argv);

@@ -43,7 +43,7 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   return emax;
 }
 
-void quantize_midtread(F, I)(const F[] f, int bits, I[] g)
+void quantize_midtread(F, I)(const F[] f, int bits, I[] g, bool signed=true)
 if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   assert(f.length == g.length);
   assert(bits > 0);
@@ -54,8 +54,15 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   if (vmax > vmin) {
     double scale = ((1L<<bits)-1) * (1.0/(vmax-vmin));
     I bias = I(1) << (bits-1);
-    for (size_t i = 0; i < f.length; ++i) {
-      g[i] = cast(I)((f[i]-vmin)*scale+0.5) - bias;
+    if (signed) {
+      for (size_t i = 0; i < f.length; ++i) {
+        g[i] = cast(I)((f[i]-vmin)*scale+0.5) - bias;
+      }
+    }
+    else {
+      for (size_t i = 0; i < f.length; ++i) {
+        g[i] = cast(I)((f[i]-vmin)*scale+0.5);
+      }
     }
   }
   else { // max is same as min
