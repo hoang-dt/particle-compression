@@ -25,7 +25,7 @@ import math;
 import number;
 import stats;
 
-Array3D!int read_array_and_process(const string[] argv) {
+Array3D!int read_and_process_array(const string[] argv) {
   import std.array : array;
   enforce(argv.length == 2, "Args: [json metadata file]");
   string json_file = argv[1];
@@ -45,6 +45,9 @@ Array3D!int read_array_and_process(const string[] argv) {
   foreach (ref int e; fq) {
     e = sign_to_lsb(e);
   }
+  /* shuffle the array */
+  auto rnd = MinstdRand0(42);
+  fq.buf_ = fq.buf_.randomShuffle(rnd);
   return fq;
 }
 
@@ -100,10 +103,7 @@ For extra credit, see what happens if you first randomly shuffle all residuals a
 */
 void test_1(const string[] argv) {
   writeln("Test 1");
-  auto fq = read_array_and_process(argv);
-  /* shuffle the array */
-  auto rnd = MinstdRand0(42);
-  fq.buf_ = fq.buf_.randomShuffle(rnd);
+  auto fq = read_and_process_array(argv);
   /* build one binary tree from each block of 256 values */
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
@@ -233,99 +233,64 @@ void test_3() {
   write_text("out.txt", sum);
 }
 /++ Print distributions of values under the same parent value on each level +/
+// TODO: for the last level, take the nth largest sum instead of the first or second
+// TODO: plot the distribution for the max operator
 void test_4(const string[] argv) {
-  writeln("Test 4");
   import std.array : array;
-  enforce(argv.length == 2, "Args: [json metadata file]");
-  string json_file = argv[1];
-  /* read json data set */
-  auto dataset = read_json(json_file);
-  enforce(dataset, dataset.exception().toString());
-  string dtype = dataset.metadata["dtype"].str;
-  enforce(dtype=="float64", dtype ~ " not supported");
-  /* quantize to 15 bit integers */
-  int bits = 14;
-  auto f = dataset.data.get!(Array3D!double);
-  auto fq = new Array3D!int(f.dims);
-  quantize_midtread(f, bits, fq);
-  /* generate 16-bit residuals using the Lorenzo predictor */
-  lorenzo_predict(fq);
-  /* turn signed residuals into unsigned ones */
-  foreach (ref int e; fq) {
-    e = sign_to_lsb(e);
-  }
-  /* shuffle the array */
-  auto rnd = MinstdRand0(42);
-  fq.buf_ = fq.buf_.randomShuffle(rnd);
-  /* build one binary tree from each block of 256 values */
+  writeln("Test 4");
+  auto fq = read_and_process_array(argv);
+  /* collect statistic */
   int block_size = 256;
-  long nsamples = product(f.dims);
-  long nblocks = (nsamples+block_size-1) / block_size;
-  BinaryTree!int[] trees = new BinaryTree!int[](nblocks);
+  int nsamples = cast(int)product(fq.dims);
+  int nblocks = (nsamples+block_size-1) / block_size;
+  auto trees = build_binary_trees(block_size, nblocks, fq);
+  alias map = int[int];
+  auto counts = new map[](trees[0].nlevels); // one map per level
   for (int b = 0; b < nblocks; ++b) {
-    trees[b] = new BinaryTree!int(fq[b*block_size .. (b+1)*block_size]);
-    trees[b].reduce();
-    auto last_level = trees[b].index_range(trees[b].nlevels-1);
-    enforce(trees[b][0] == std.algorithm.sum(trees[b][last_level[0] .. last_level[1]]));
-  }
-  /* print the values on each level */
-  //foreach (string name; dirEntries(".", "tree*.txt", SpanMode.shallow)) {
-  //  remove(name);
-  //}
-  //OutBuffer[string] bufs;
-  //for (int b = 0; b < nblocks; ++b) {
-  //  auto tree = trees[b];
-  //  for (int l = 0; l < tree.nlevels; ++l) {
-  //    auto be = tree.index_range(l);
-  //    string name = text("tree", l, ".txt");
-  //    OutBuffer buf = bufs.get(name, null);
-  //    if (!buf) {
-  //      bufs[name] = new OutBuffer();
-  //      buf = bufs[name];
-  //    }
-  //    for (int i = be[0]; i < be[1]; ++i) {
-  //      buf.writef("%s\n", tree[i]);
-  //    }
-  //  }
-  //}
-  //foreach (data; bufs.byKeyValue()) {
-  //  std.file.write(data.key, data.value.toBytes());
-  //}
-  /* Given the sum, S=s+t, of two children, compute and accumulate the code length L(s) = S-lg(C(S, s)). */
-  double code_length1 = 0;
-  double code_length2 = 0;
-  int[] max_per_level;
-  for (int b = 0; b < nblocks; ++b) {
-    const auto tree = trees[b];
-    /* compute the maximum on each level */
-    if (tree.nlevels > max_per_level.length) {
-      max_per_level = new int[](tree.nlevels);
-    }
+    auto tree = trees[b];
     for (int l = 0; l < tree.nlevels; ++l) {
       auto be = tree.index_range(l);
-      max_per_level[l] = maxElement(tree[be[0] .. be[1]]);
-    }
-    /* estimate the code length */
-    for (int i = 1; i < tree.length; i += 2) {
-      int p = (i-1) / 2; // parent
-      int S = tree[p];
-      int s = tree[i];
-      int l = tree.level(i);
-      int max = max_per_level[l];
-      if (S != 0) {
-        if (max == 0) {
-          code_length1 += 1;
-        }
-        else {
-          code_length1 += max - log2_C_n_m_sterling(max, (s+max+1)/2);
-          //code_length1 += log2(max);
-        }
-        code_length2 += log2(S);
+      for (int i = be[0]; i < be[1]; ++i) {
+        int v = tree[i];
+        ++counts[l][v];
       }
     }
   }
-  writeln(code_length1);
-  writeln(code_length2);
+
+  /* compute one mode for each level */
+  int[] modes = new int[](counts.length);
+  for (int l = 0; l+1 < modes.length; ++l) {
+    auto r = counts[l].byValue.array;
+    if (l+1 == modes.length-1) {
+      topN!"a>b"(r, 50);
+      modes[l] = r[50];
+    }
+    else {
+      modes[l] = r.reduce!max;
+    }
+
+    //modes[l] = second_largest(counts[l].byValue);
+    writeln(modes[l]);
+  }
+  int[][] output = new int[][](modes.length); // one array per level, of samples whose parent is equal to the mode of the previous level
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    for (int l = 0; l < tree.nlevels; ++l) {
+      if (l > 0) {
+        int m = counts[l-1].byKey.filter!(k => counts[l-1][k]==modes[l-1]).array[0];
+        auto be = tree.index_range(l);
+        for (int i = be[0]; i < be[1]; ++i) {
+          int p = tree[(i-1)/2];
+          if (p == m) {
+            output[l] ~= tree[i];
+          }
+        }
+      }
+    }
+  }
+  for (int l = 1; l < output.length; ++l) {
+    write_text(text("out",l,".txt"), output[l]);
+  }
 }
 int main(const string[] argv) {
   double[] arr;
@@ -335,8 +300,9 @@ int main(const string[] argv) {
   write_text("out.txt", arr);
   try {
     //test_1(argv);
-    test_2(argv);
+    //test_2(argv);
     //test_3();
+    test_4(argv);
   }
   catch (Exception e) {
     writeln(e);

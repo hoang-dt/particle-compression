@@ -6,6 +6,7 @@ module array_util;
 
 import std.algorithm, std.algorithm.searching;
 import std.math;
+import std.range;
 import std.traits;
 
 /++ Compute the squared error between two arrays +/

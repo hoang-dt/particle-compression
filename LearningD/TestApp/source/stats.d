@@ -3,6 +3,7 @@ module stats;
 import std.algorithm;
 import std.math;
 import std.random;
+import std.range;
 
 /++ Generate an exponential-distributed random variable +/
 double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
@@ -20,4 +21,23 @@ auto mode(T)(T[] items) {
   }
   auto m = aa.byValue.reduce!max;
   return aa.byKey.filter!(k => aa[k]==m);
+}
+
+/++ Find the second largest element +/
+auto second_largest(R)(R arr)
+if (isInputRange!R) {
+  alias T = ElementType!R;
+  T first, second;
+
+  first = second = T.min;
+  foreach (e; arr) {
+    if (e > first) {
+      second = first;
+      first = e;
+    }
+    else if (e>second && e!=first) {
+      second = e;
+    }
+  }
+  return second;
 }
