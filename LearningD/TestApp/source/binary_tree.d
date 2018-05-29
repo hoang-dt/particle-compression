@@ -6,7 +6,7 @@ import std.conv;
 import std.math;
 
 /++ Binary tree stored in a contiguous array, built from applying a binary operator bottom-up +/
-class BinaryTree(T, string op="+") {
+class BinaryTree(T, alias op) {
 private:
   int nleaves_;
   int nlevels_;
@@ -62,7 +62,8 @@ public:
       assert((end-begin)%2 == 0);
       for (int i = begin; i < end; i += 2) {
         int p = (i-1) / 2;
-        mixin("buf_[p] = buf_[i]" ~ op ~ "buf_[i+1];");
+        buf_[p] = op(buf_[i], buf_[i+1]);
+        //mixin("buf_[p] = " ~ op ~ "(buf_[i], buf_[i+1]);");
       }
       end = begin;
       begin = (begin-1) / 2;
@@ -88,7 +89,7 @@ public:
 
 unittest {
   import std.stdio;
-  auto t = new BinaryTree!int([1,2,3,4,5,6,7,8,9]);
+  auto t = new BinaryTree!(int, (a,b)=>a+b)([1,2,3,4,5,6,7,8,9]);
   t.reduce();
   writeln(t);
 }

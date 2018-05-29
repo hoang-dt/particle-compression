@@ -1,6 +1,6 @@
 <DProject>
  <ProjectGuid>{A454254C-C5B9-44FA-B77D-3E276E39D5F0}</ProjectGuid>
- <Config name="Debug DMD" platform="Win32">
+ <Config name="DebugDMD" platform="Win32">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -107,7 +107,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Release DMD" platform="Win32">
+ <Config name="ReleaseDMD" platform="Win32">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -214,7 +214,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Debug DMD" platform="x64">
+ <Config name="DebugDMD" platform="x64">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -228,7 +228,7 @@
   <verbose>0</verbose>
   <vtls>0</vtls>
   <vgc>0</vgc>
-  <symdebug>1</symdebug>
+  <symdebug>2</symdebug>
   <optimize>0</optimize>
   <cpu>0</cpu>
   <isX86_64>1</isX86_64>
@@ -321,7 +321,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Release DMD" platform="x64">
+ <Config name="ReleaseDMD" platform="x64">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -428,7 +428,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Debug GDC" platform="Win32">
+ <Config name="DebugGDC" platform="Win32">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -535,7 +535,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Release GDC" platform="Win32">
+ <Config name="ReleaseGDC" platform="Win32">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -642,7 +642,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Debug GDC" platform="x64">
+ <Config name="DebugGDC" platform="x64">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -749,7 +749,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep;*.tlog</filesToClean>
  </Config>
- <Config name="Release GDC" platform="x64">
+ <Config name="ReleaseGDC" platform="x64">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>

@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 
-if len(sys.argv) != 2:
+if len(sys.argv) != 3:
   print(sys.argv)
-  print('Args: [text file with data]')
+  print('Args: [text file with data] [output text file]')
   exit()
 
 arr = np.loadtxt(sys.argv[1], dtype='float64')
@@ -15,5 +15,5 @@ fig, ax = plt.subplots()
 plt.plot(h[1][1:], h[0])
 plt.show()
 fig.tight_layout()
-fig.savefig('out.pdf')
+fig.savefig(sys.argv[2])
 print('hello')

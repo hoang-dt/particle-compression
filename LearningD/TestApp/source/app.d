@@ -65,18 +65,19 @@ int[] generate_array_exponential() {
   return fq;
 }
 
-BinaryTree!int[] build_binary_trees(string op, R)(int block_size, int nblocks, R fq) {
-  BinaryTree!int[] trees = new BinaryTree!int[](nblocks);
+BinaryTree!(T,op)[] build_binary_trees(R, alias op, T=ElementType!R)(int block_size, int nblocks, R fq) {
+  BinaryTree!(T,op)[] trees = new BinaryTree!(T,op)[](nblocks);
   for (int b = 0; b < nblocks; ++b) {
-    trees[b] = new BinaryTree!(int,"+")(fq[b*block_size .. (b+1)*block_size]);
+    trees[b] = new BinaryTree!(T,op)(fq[b*block_size .. (b+1)*block_size]);
     trees[b].reduce();
     auto last_level = trees[b].index_range(trees[b].nlevels-1);
-    enforce(trees[b][0] == std.algorithm.sum(trees[b][last_level[0] .. last_level[1]]));
+    //enforce(trees[b][0] == std.algorithm.sum(trees[b][last_level[0] .. last_level[1]]));
+    enforce(trees[b][0] == std.algorithm.maxElement(trees[b][last_level[0] .. last_level[1]]));
   }
   return trees;
 }
 
-void print_each_level(int nblocks, BinaryTree!int[] trees) {
+void print_each_level(T,F)(int nblocks, BinaryTree!(T, F)[] trees) {
   foreach (string name; dirEntries(".", "tree*.txt", SpanMode.shallow)) {
     remove(name);
   }
@@ -122,7 +123,7 @@ void test_1(const string[] argv) {
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
   int nblocks = (nsamples+block_size-1) / block_size;
-  auto trees = build_binary_trees!"+"(block_size, nblocks, fq);
+  auto trees = build_binary_trees!(typeof(fq), (a,b)=>a+b)(block_size, nblocks, fq);
   /* Given the sum, S=s+t, of two children, compute and accumulate the code length L(s) = S-lg(C(S, s)). */
   double code_length1 = 0;
   double code_length2 = 0;
@@ -244,7 +245,7 @@ void test_3() {
   writefln("binomial distribution on leaf level = %s", code_length3);
   writefln("binomial distribution under each parent = %s", code_length4);
   writefln("code length 5 = %s", code_length5);
-  write_text("out.txt", sum);
+  write_text("test_3_out.txt", sum);
 }
 
 /++ Print distributions of values under the same parent value on each level +/
@@ -260,7 +261,8 @@ void test_4(const string[] argv) {
   //int nsamples = cast(int)product(fq.dims);
   int nsamples = cast(int)fq.length;
   int nblocks = (nsamples+block_size-1) / block_size;
-  auto trees = build_binary_trees!"+"(block_size, nblocks, fq);
+  //auto trees = build_binary_trees!(typeof(fq), (a,b)=>a+b)(block_size, nblocks, fq);
+  auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq);
   alias map = int[int];
   auto counts = new map[](trees[0].nlevels); // one map per level
   for (int b = 0; b < nblocks; ++b) {
@@ -278,45 +280,80 @@ void test_4(const string[] argv) {
   int[] modes = new int[](counts.length);
   for (int l = 0; l+1 < modes.length; ++l) {
     auto r = counts[l].byValue.array;
-    if (l+2 >= modes.length-1) {
-      topN!"a>b"(r, 100);
-      modes[l] = r[100];
-    }
-    else {
+    //if (l+2 >= modes.length-1) {
+    //  topN!"a>b"(r, 100);
+    //  modes[l] = r[100];
+    //}
+    //else {
       modes[l] = r.reduce!max;
-    }
+    //}
 
-    //modes[l] = second_largest(counts[l].byValue);
     writeln(modes[l]);
   }
   int[][] output = new int[][](modes.length); // one array per level, of samples whose parent is equal to the mode of the previous level
   int[] m = new int[](modes.length);
   for (int l = 1; l < m.length; ++l) {
-    m[l] = counts[l-1].byKey.filter!(k => counts[l-1][k]==modes[l-1]).array[0];
+    m[l] = counts[l-1].byKey.filter!(k=>counts[l-1][k]==modes[l-1]).array[0];
   }
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     for (int l = 1; l < tree.nlevels; ++l) {
       auto be = tree.index_range(l);
-      for (int i = be[0]; i < be[1]; ++i) {
+      for (int i = be[0]; i < be[1]; i += 2) {
         int p = tree[(i-1)/2];
         if (p == m[l]) {
-          output[l] ~= tree[i];
+          //output[l] ~= tree[i]; // NOTE: this is used to plot the left child
+          output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
         }
       }
     }
   }
   for (int l = 1; l < output.length; ++l) {
-    write_text(text("out",l,".txt"), output[l]);
+    write_text(text("test_4_out",l,".txt"), output[l]);
   }
 }
 
+/++ Print unconditioned distributions of left-right children on each level +/
+void test_5(const string[] argv) {
+  import std.array : array;
+  writeln("Test 5");
+  auto fq = read_and_process_array(argv);
+  //auto fq = generate_array_exponential();
+  /* collect statistic */
+  int block_size = 256;
+  int nsamples = cast(int)fq.length;
+  int nblocks = (nsamples+block_size-1) / block_size;
+  //auto trees = build_binary_trees!(typeof(fq), (a,b)=>a+b)(block_size, nblocks, fq); // NOTE: use the sum operator
+  auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq); // NOTE: use the max operator
+  int[][] output = new int[][](trees[0].nlevels); // one array per level, of samples whose parent is equal to the mode of the previous level
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    for (int l = 1; l < tree.nlevels; ++l) {
+      auto be = tree.index_range(l);
+      for (int i = be[0]; i < be[1]; i += 2) {
+        output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
+      }
+    }
+  }
+  for (int l = 1; l < output.length; ++l) {
+    write_text(text("test_5_out",l,".txt"), output[l]);
+  }
+}
 int main(const string[] argv) {
+    int[] arr = [ 1, 2, 3, 4, 5, 6 ];
+    // Sum again, using a string predicate with "a" and "b"
+    auto sum = reduce!((a,b) => a + b)(0, arr);
+
+    // Compute the maximum of all elements
+    auto largest = reduce!(max)(arr);
+    assert(largest == 5);
+
   try {
     //test_1(argv);
     //test_2(argv);
     //test_3();
-    test_4(argv);
+    //test_4(argv);
+    test_5(argv);
   }
   catch (Exception e) {
     writeln(e);
