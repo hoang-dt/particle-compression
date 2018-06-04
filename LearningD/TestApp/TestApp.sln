@@ -17,8 +17,8 @@ Global
 		Release GDC|x86 = Release GDC|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.ActiveCfg = DebugGDC|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.Build.0 = DebugGDC|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.ActiveCfg = DebugDMD|x64
+		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.Build.0 = DebugDMD|x64
 		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.ActiveCfg = DebugGDC|Win32
 		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.Build.0 = DebugGDC|Win32
 		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x64.ActiveCfg = DebugGDC|x64

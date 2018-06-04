@@ -45,7 +45,7 @@ Array3D!int read_and_process_array(const string[] argv) {
   lorenzo_predict(fq);
   /* turn signed residuals into unsigned ones */
   foreach (ref int e; fq) {
-    e = sign_to_lsb(e);
+    //e = sign_to_lsb(e);
   }
   /* shuffle the array */
   //auto rnd = MinstdRand0(42);
@@ -214,7 +214,6 @@ void test_2(const string[] argv) {
 }
 
 /+ Generate a binomial distribution and compute the code length of the sum +/
-// TODO: generate the array using exponential/Laplace distributions
 void test_3() {
   /* Generate binomial-distributed values between 0 and A, by approximating it with a Gaussian with
   muy = A/2 and sigma_squared = A/4 */
@@ -296,8 +295,8 @@ void test_4(const string[] argv) {
   for (int l = 0; l+1 < modes.length; ++l) {
     auto r = counts[l].byValue.array;
     //if (l+2 >= modes.length-1) {
-      topN!"a>b"(r, 30);
-      modes[l] = r[30];
+      topN!"a>b"(r, 7);
+      modes[l] = r[7];
     //}
     //else {
       //modes[l] = r.reduce!max;
@@ -381,6 +380,36 @@ double integrate_h(double m, double lambda, double a, double b) {
   return (exp(lambda*a)-exp(lambda*b)) / (2-2*exp(lambda*m));
 }
 
+/++ Return the sign of x +/
+int sgn(T)(T val)
+if (isIntegral!T) {
+  return (T(0)<val) - (val<T(0));
+}
+
+/++ Map in a way that even numbers in [-m, m] come first, from inside out, then odd numbers come from outside in +/
+int map(int m, int x) {
+  assert(m > 0);
+  int n = ((m+1)/2) * 2 - 1; // largest odd number <= m
+  if (is_odd(x)) {
+    int nevens = (m/2) * 2 + 1; // number of even values in [-m, m]
+    return nevens + (n-abs(x)) + (sgn(x)+1)/2;
+  }
+  return abs(x) + (sgn(x)-1)/2;
+}
+
+/++ Compute the number of bits needed to encode s using exponential golomb with parameter k +/
+double exp_golomb_bits(int s, int k) {
+  assert(s>=0 && k>=0);
+  int d = cast(int)log2(1+s/(1<<k));
+  return (d+1) + (d+k);
+}
+
+double golomb_bits(int s, int m) {
+  assert(s>=0 && m>0);
+  int d = s / m;
+  return d+1 + log2(m);
+}
+
 /++ Estimate the exponential parameter and compare the code length on the last level, between:
   - uniform distribution, conditioned on the parent
   - exponential distribution, conditioned on the parent
@@ -398,9 +427,12 @@ void test_6(const string[] argv) {
   int nsamples = cast(int)fq.length;
   int nblocks = (nsamples+block_size-1) / block_size;
   auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq); // NOTE: use the max operator
-  double code_length1 = 0;
-  double code_length2 = 0;
-  double code_length3 = 0;
+  double code_length1 = 0; // encode the left child using uniform distribution in [0, M]
+  double code_length2 = 0; // encode the left-right difference using exponential distribution conditioned on M
+  double code_length3 = 0; // encode the left child using "global" exponential distribution
+  double code_length4 = 0; // exponential golomb
+  double code_length5 = 0; // golomb
+  double code_length6 = 0;
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     int l = tree.nlevels - 1;
@@ -408,7 +440,7 @@ void test_6(const string[] argv) {
     for (int i = be[0]; i < be[1]; i += 2) {
       auto M = tree[(i-1)/2];
       if (M > 0) {
-        code_length1 += log2(M) + 1;
+        code_length1 += log2(M+1) + 1;
         auto n = tree[i] - tree[i+1];
         if (n == 0) {
           code_length2 +=  log2(1/(2*integrate_h(M+0.5, lambda, 0, 0.5)));
@@ -427,12 +459,24 @@ void test_6(const string[] argv) {
         }
 
         code_length3 += log2(1/integrate_exp(lambda, tree[i], tree[i]+1));
+        code_length4 += exp_golomb_bits(map(M, n), 2);
+        code_length5 += golomb_bits(map(M, n), 6);
+        int nn = map(M, n);
+        if (nn == 0) {
+          code_length6 += 1;
+        }
+        else {
+          code_length6 += exp_golomb_bits(nn-1, 2) + 1;
+        }
       }
     }
   }
   writeln("code length 1 = ", code_length1);
   writeln("code length 2 = ", code_length2);
   writeln("code length 3 = ", code_length3);
+  writeln("code length 4 = ", code_length4);
+  writeln("code length 5 = ", code_length5);
+  writeln("code length 6 = ", code_length6);
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
@@ -441,9 +485,9 @@ int main(const string[] argv) {
     //test_1(argv);
     //test_2(argv);
     //test_3();
-    //test_4(argv);
+    test_4(argv);
     //test_5(argv);
-    test_6(argv);
+    //test_6(argv);
   }
   catch (Exception e) {
     writeln(e);
