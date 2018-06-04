@@ -13,6 +13,15 @@ double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
   return x;
 }
 
+/++ Estimate the maximum likelihood of l in the exponential distribution f(x) = l*e^(-lx) +/
+double ml_exponential(R)(R vals) {
+  double s = 0;
+  foreach (e; vals) {
+    s += e;
+  }
+  return cast(double)vals.length / s;
+}
+
 /++ Find the mode of an array (return a range of elements whose value is equal to the mode) +/
 auto mode(T)(T[] items) {
   int[T] aa;

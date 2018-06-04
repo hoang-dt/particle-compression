@@ -48,21 +48,39 @@ Array3D!int read_and_process_array(const string[] argv) {
     e = sign_to_lsb(e);
   }
   /* shuffle the array */
-  auto rnd = MinstdRand0(42);
-  fq.buf_ = fq.buf_.randomShuffle(rnd);
+  //auto rnd = MinstdRand0(42);
+  //fq.buf_ = fq.buf_.randomShuffle(rnd);
   return fq;
 }
 
 /++ Generate an exponentially-distributed array of 16-bit unsigned integers +/
-int[] generate_array_exponential() {
+int[] generate_array_exponential(double l) {
+  writeln("generate array exponential");
   double[] f;
-  for (int i = 0; i < 384*384*256; ++i) {
-    f ~= r_exponential(1);
+  for (int i = 0; i < 384*384*64; ++i) {
+    f ~= r_exponential(l);
   }
   int[] fq = new int[](f.length);
-  int bits = 14;
-  quantize_midtread(f, bits, fq, false);
+  int bits = 8;
+  quantize(f, bits, fq);
+  double lambda = ml_exponential(fq);
+  writeln("lambda = ", lambda);
+  //for (int i = 0; i < fq.length; ++i) {
+  //  fq[i] = cast(int)f[i];
+  //}
   return fq;
+}
+
+/++ Generate an exponentially-distributed array of 16-bit unsigned integers +/
+double[] generate_array_exponential_double(double l) {
+  double[] f;
+  for (int i = 0; i < 384*384*64; ++i) {
+    f ~= r_exponential(l);
+  }
+  //write_text("out.txt", f);
+  double lambda = ml_exponential(f);
+  writeln("lambda = ", lambda);
+  return f;
 }
 
 BinaryTree!(T,op)[] build_binary_trees(R, alias op, T=ElementType!R)(int block_size, int nblocks, R fq) {
@@ -249,16 +267,13 @@ void test_3() {
 }
 
 /++ Print distributions of values under the same parent value on each level +/
-// TODO: estimate the parameter t for the exponential distribution and plot it
-// TODO: plot the distribution for the max operator
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  //auto fq = read_and_process_array(argv);
-  auto fq = generate_array_exponential();
+  auto fq = read_and_process_array(argv);
+  //auto fq = generate_array_exponential(1);
   /* collect statistic */
   int block_size = 256;
-  //int nsamples = cast(int)product(fq.dims);
   int nsamples = cast(int)fq.length;
   int nblocks = (nsamples+block_size-1) / block_size;
   //auto trees = build_binary_trees!(typeof(fq), (a,b)=>a+b)(block_size, nblocks, fq);
@@ -281,11 +296,11 @@ void test_4(const string[] argv) {
   for (int l = 0; l+1 < modes.length; ++l) {
     auto r = counts[l].byValue.array;
     //if (l+2 >= modes.length-1) {
-    //  topN!"a>b"(r, 100);
-    //  modes[l] = r[100];
+      topN!"a>b"(r, 30);
+      modes[l] = r[30];
     //}
     //else {
-      modes[l] = r.reduce!max;
+      //modes[l] = r.reduce!max;
     //}
 
     writeln(modes[l]);
@@ -294,6 +309,7 @@ void test_4(const string[] argv) {
   int[] m = new int[](modes.length);
   for (int l = 1; l < m.length; ++l) {
     m[l] = counts[l-1].byKey.filter!(k=>counts[l-1][k]==modes[l-1]).array[0];
+    writeln(m[l]);
   }
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
@@ -301,9 +317,17 @@ void test_4(const string[] argv) {
       auto be = tree.index_range(l);
       for (int i = be[0]; i < be[1]; i += 2) {
         int p = tree[(i-1)/2];
+        //enforce(p == (tree[i] + tree[i+1]));
         if (p == m[l]) {
           //output[l] ~= tree[i]; // NOTE: this is used to plot the left child
-          output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
+          //output[l] ~= abs(tree[i] - tree[i+1]); // NOTE: this is used to plot |left child - right child|
+          //auto diff = tree[i] - tree[i+1];
+          //if (is_odd(diff)) {
+            output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
+          //}
+          //if (tree[i+1] == p) {
+            //output[l] ~= tree[i];
+          //}
         }
       }
     }
@@ -318,7 +342,11 @@ void test_5(const string[] argv) {
   import std.array : array;
   writeln("Test 5");
   auto fq = read_and_process_array(argv);
-  //auto fq = generate_array_exponential();
+  //write_text("residuals.txt", fq);
+  double lambda = ml_exponential(fq);
+  //writeln("maximum likelihood exponential = ", lambda);
+  auto gen = generate_array_exponential_double(lambda);
+  //write_text("exponential.txt", gen);
   /* collect statistic */
   int block_size = 256;
   int nsamples = cast(int)fq.length;
@@ -339,21 +367,83 @@ void test_5(const string[] argv) {
     write_text(text("test_5_out",l,".txt"), output[l]);
   }
 }
+
+/++ Compute int_{a}^{b}{lambda*exp(-lambda x)} +/
+double integrate_exp(double lambda, double a, double b) {
+  if (b == double.infinity) {
+    return exp(-lambda*a);
+  }
+  return exp(-lambda*a) - exp(-lambda*b);
+}
+
+/++ Compute int_{a}{b}{lambda/2*exp(lambda*x)/(exp(lambda*m)-1)} +/
+double integrate_h(double m, double lambda, double a, double b) {
+  return (exp(lambda*a)-exp(lambda*b)) / (2-2*exp(lambda*m));
+}
+
+/++ Estimate the exponential parameter and compare the code length on the last level, between:
+  - uniform distribution, conditioned on the parent
+  - exponential distribution, conditioned on the parent
+  - exponential distribution across the entire level +/
+void test_6(const string[] argv) {
+  import std.array : array;
+  writeln("Test 6");
+  auto fq = read_and_process_array(argv);
+  double lambda = 10000;
+  //auto fq = generate_array_exponential(lambda);
+  lambda = ml_exponential(fq);
+  writeln("maximum likelihood exponential = ", lambda);
+  /* collect statistic */
+  int block_size = 256;
+  int nsamples = cast(int)fq.length;
+  int nblocks = (nsamples+block_size-1) / block_size;
+  auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq); // NOTE: use the max operator
+  double code_length1 = 0;
+  double code_length2 = 0;
+  double code_length3 = 0;
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    int l = tree.nlevels - 1;
+    auto be = tree.index_range(l);
+    for (int i = be[0]; i < be[1]; i += 2) {
+      auto M = tree[(i-1)/2];
+      if (M > 0) {
+        code_length1 += log2(M) + 1;
+        auto n = tree[i] - tree[i+1];
+        if (n == 0) {
+          code_length2 +=  log2(1/(2*integrate_h(M+0.5, lambda, 0, 0.5)));
+        }
+        else if (0<n && n <M) {
+          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, n-0.5, n+0.5));
+        }
+        else if (-M<n && n<0) {
+          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
+        }
+        else if (n == -M) {
+          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
+        }
+        else if (n == M) {
+          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, n-0.5, n+0.5));
+        }
+
+        code_length3 += log2(1/integrate_exp(lambda, tree[i], tree[i]+1));
+      }
+    }
+  }
+  writeln("code length 1 = ", code_length1);
+  writeln("code length 2 = ", code_length2);
+  writeln("code length 3 = ", code_length3);
+}
+
+// TODO: also estimate the exponential parameter and replot table 8
 int main(const string[] argv) {
-    int[] arr = [ 1, 2, 3, 4, 5, 6 ];
-    // Sum again, using a string predicate with "a" and "b"
-    auto sum = reduce!((a,b) => a + b)(0, arr);
-
-    // Compute the maximum of all elements
-    auto largest = reduce!(max)(arr);
-    assert(largest == 5);
-
   try {
     //test_1(argv);
     //test_2(argv);
     //test_3();
     //test_4(argv);
-    test_5(argv);
+    //test_5(argv);
+    test_6(argv);
   }
   catch (Exception e) {
     writeln(e);

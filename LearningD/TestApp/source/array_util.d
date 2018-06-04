@@ -53,6 +53,8 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   auto vmax = maxElement(f);
   if (vmax > vmin) {
     double scale = ((1L<<bits)-1) * (1.0/(vmax-vmin));
+    import std.stdio;
+    writeln(scale);
     I bias = I(1) << (bits-1);
     if (signed) {
       for (size_t i = 0; i < f.length; ++i) {

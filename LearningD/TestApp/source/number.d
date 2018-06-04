@@ -27,4 +27,5 @@ if (isIntegral!T) {
 T sign_to_lsb(T)(T s)
 if (isSigned!T) {
   return s<0 ? -(2*s+1) : 2*s;
+  //return std.math.abs(s);
 }
