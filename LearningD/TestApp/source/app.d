@@ -27,7 +27,7 @@ import stats;
 
 
 /++ Read a raw data set and process it into 16-bit unsigned, shuffled array of residuals +/
-Array3D!int read_and_process_array(const string[] argv) {
+Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuffle) {
   import std.array : array;
   enforce(argv.length == 2, "Args: [json metadata file]");
   string json_file = argv[1];
@@ -44,12 +44,15 @@ Array3D!int read_and_process_array(const string[] argv) {
   /* generate 16-bit residuals using the Lorenzo predictor */
   lorenzo_predict(fq);
   /* turn signed residuals into unsigned ones */
-  foreach (ref int e; fq) {
-    //e = sign_to_lsb(e);
+  if (unsigned) {
+    foreach (ref int e; fq) {
+      e = sign_to_lsb(e);
+    }
   }
-  /* shuffle the array */
-  //auto rnd = MinstdRand0(42);
-  //fq.buf_ = fq.buf_.randomShuffle(rnd);
+  if (shuffle) {
+    auto rnd = MinstdRand0(42);
+    fq.buf_ = fq.buf_.randomShuffle(rnd);
+  }
   return fq;
 }
 
@@ -136,7 +139,7 @@ For extra credit, see what happens if you first randomly shuffle all residuals a
 */
 void test_1(const string[] argv) {
   writeln("Test 1");
-  auto fq = read_and_process_array(argv);
+  auto fq = read_and_process_array(argv, true, true);
   /* build one binary tree from each block of 256 values */
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
@@ -269,7 +272,7 @@ void test_3() {
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  auto fq = read_and_process_array(argv);
+  auto fq = read_and_process_array(argv, true, true);
   //auto fq = generate_array_exponential(1);
   /* collect statistic */
   int block_size = 256;
@@ -340,7 +343,7 @@ void test_4(const string[] argv) {
 void test_5(const string[] argv) {
   import std.array : array;
   writeln("Test 5");
-  auto fq = read_and_process_array(argv);
+  auto fq = read_and_process_array(argv, true, true);
   //write_text("residuals.txt", fq);
   double lambda = ml_exponential(fq);
   //writeln("maximum likelihood exponential = ", lambda);
@@ -417,10 +420,11 @@ double golomb_bits(int s, int m) {
 void test_6(const string[] argv) {
   import std.array : array;
   writeln("Test 6");
-  auto fq = read_and_process_array(argv);
+  auto fq = read_and_process_array(argv, true, false);
   double lambda = 10000;
   //auto fq = generate_array_exponential(lambda);
   lambda = ml_exponential(fq);
+  lambda /= 9;
   writeln("maximum likelihood exponential = ", lambda);
   /* collect statistic */
   int block_size = 256;
@@ -440,34 +444,25 @@ void test_6(const string[] argv) {
     for (int i = be[0]; i < be[1]; i += 2) {
       auto M = tree[(i-1)/2];
       if (M > 0) {
-        code_length1 += log2(M+1) + 1;
+        double incr1 = log2(2*M+1);
+        code_length1 += incr1;
         auto n = tree[i] - tree[i+1];
+        double incr2 = 0;
         if (n == 0) {
-          code_length2 +=  log2(1/(2*integrate_h(M+0.5, lambda, 0, 0.5)));
+          incr2 =  log2(1/(2*integrate_h(M+0.5, lambda, 0, 0.5)));
         }
-        else if (0<n && n <M) {
-          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, n-0.5, n+0.5));
+        else if (0<n && n <=M) {
+          incr2 =  log2(1/integrate_h(M+0.5, lambda, n-0.5, n+0.5));
         }
-        else if (-M<n && n<0) {
-          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
+        else if (-M<=n && n<0) {
+          incr2 =  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
         }
-        else if (n == -M) {
-          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
-        }
-        else if (n == M) {
-          code_length2 +=  log2(1/integrate_h(M+0.5, lambda, n-0.5, n+0.5));
-        }
-
+        code_length2 += incr2;
         code_length3 += log2(1/integrate_exp(lambda, tree[i], tree[i]+1));
         code_length4 += exp_golomb_bits(map(M, n), 2);
         code_length5 += golomb_bits(map(M, n), 6);
         int nn = map(M, n);
-        if (nn == 0) {
-          code_length6 += 1;
-        }
-        else {
-          code_length6 += exp_golomb_bits(nn-1, 2) + 1;
-        }
+        code_length6 += min(incr1, incr2);
       }
     }
   }
@@ -485,9 +480,9 @@ int main(const string[] argv) {
     //test_1(argv);
     //test_2(argv);
     //test_3();
-    test_4(argv);
+    //test_4(argv);
     //test_5(argv);
-    //test_6(argv);
+    test_6(argv);
   }
   catch (Exception e) {
     writeln(e);
