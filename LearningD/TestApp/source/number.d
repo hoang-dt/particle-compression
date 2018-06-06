@@ -26,7 +26,7 @@ if (isIntegral!T) {
 /++ Move the sign bit to the LSB: r = s<0 ? -(2*s+1) : 2*s +/
 T sign_to_lsb(T)(T s)
 if (isSigned!T) {
-  import std.math;
   return s<0 ? -(2*s+1) : 2*s;
+  import std.math;
   //return std.math.abs(s);
 }

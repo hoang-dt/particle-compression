@@ -4,6 +4,7 @@ import std.algorithm;
 import std.math;
 import std.random;
 import std.range;
+import std.traits;
 
 /++ Generate an exponential-distributed random variable +/
 double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
@@ -49,4 +50,16 @@ if (isInputRange!R) {
     }
   }
   return second;
+}
+
+/++ Given a range of symbols, compute the probability of each symbol +/
+auto compute_probabilities(T)(T[] arr) {
+  double[T] probs;
+  foreach (e; arr) {
+    ++probs[e];
+  }
+  foreach (ref e; probs) {
+    e /= arr.length;
+  }
+  return probs;
 }

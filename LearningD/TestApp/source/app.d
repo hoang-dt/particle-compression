@@ -43,6 +43,17 @@ Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuf
   quantize_midtread(f, bits, fq);
   /* generate 16-bit residuals using the Lorenzo predictor */
   lorenzo_predict(fq);
+  //take_difference(fq);
+  for (int i = 0; i < 10; ++i) {
+    cdf53_lift(fq, i);
+  }
+  //{
+  //  auto rnd = Random(unpredictableSeed);
+  //  foreach (ref e; fq) {
+  //    auto a = uniform(0, 2, rnd);
+  //    e *= (2*a-1);
+  //  }
+  //}
   /* turn signed residuals into unsigned ones */
   if (unsigned) {
     foreach (ref int e; fq) {
@@ -272,7 +283,7 @@ void test_3() {
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv, true, false);
   //auto fq = generate_array_exponential(1);
   /* collect statistic */
   int block_size = 256;
@@ -372,6 +383,8 @@ void test_5(const string[] argv) {
 
 /++ Compute int_{a}^{b}{lambda*exp(-lambda x)} +/
 double integrate_exp(double lambda, double a, double b) {
+  enforce(lambda*a < 700);
+  enforce(lambda*b < 700);
   if (b == double.infinity) {
     return exp(-lambda*a);
   }
@@ -380,6 +393,9 @@ double integrate_exp(double lambda, double a, double b) {
 
 /++ Compute int_{a}{b}{lambda/2*exp(lambda*x)/(exp(lambda*m)-1)} +/
 double integrate_h(double m, double lambda, double a, double b) {
+  enforce(lambda*a < 700);
+  enforce(lambda*m < 700);
+  enforce(lambda*b < 700);
   return (exp(lambda*a)-exp(lambda*b)) / (2-2*exp(lambda*m));
 }
 
@@ -417,14 +433,18 @@ double golomb_bits(int s, int m) {
   - uniform distribution, conditioned on the parent
   - exponential distribution, conditioned on the parent
   - exponential distribution across the entire level +/
+// TODO: plot the curve on top of the histogram
+// TODO: use a different method to approximate lambda (maximum spacing estimator or exponential regression)
+// TODO: estimate lambda only from half the numbers (the even numbers)
+// TODO: keep the laplace distribution, encode left-right conditioned on max(|left|, |right|)
 void test_6(const string[] argv) {
   import std.array : array;
   writeln("Test 6");
-  auto fq = read_and_process_array(argv, true, false);
+  auto fq = read_and_process_array(argv, true, true);
   double lambda = 10000;
   //auto fq = generate_array_exponential(lambda);
   lambda = ml_exponential(fq);
-  lambda /= 9;
+  lambda *= 2;
   writeln("maximum likelihood exponential = ", lambda);
   /* collect statistic */
   int block_size = 256;
@@ -437,6 +457,8 @@ void test_6(const string[] argv) {
   double code_length4 = 0; // exponential golomb
   double code_length5 = 0; // golomb
   double code_length6 = 0;
+  int[] diffs;
+  int[] maxes;
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     int l = tree.nlevels - 1;
@@ -457,25 +479,47 @@ void test_6(const string[] argv) {
         else if (-M<=n && n<0) {
           incr2 =  log2(1/integrate_h(M+0.5, lambda, -n-0.5, -n+0.5));
         }
+        enforce(incr2 > 0);
         code_length2 += incr2;
         code_length3 += log2(1/integrate_exp(lambda, tree[i], tree[i]+1));
         code_length4 += exp_golomb_bits(map(M, n), 2);
         code_length5 += golomb_bits(map(M, n), 6);
         int nn = map(M, n);
         code_length6 += min(incr1, incr2);
+        diffs ~= tree[i] - tree[i+1];
+        maxes ~= M;
       }
     }
   }
+  double code_length7 = 0;
+  auto probs = compute_probabilities(diffs);
+  foreach (e; probs) {
+    code_length7 += e*log2(1/e);
+  }
+  code_length7 *= diffs.length;
+  probs = compute_probabilities(maxes);
+  double subtract = 0;
+  foreach (e; probs) {
+    subtract += e*log2(1/e);
+  }
+  subtract *= maxes.length;
+  code_length7 -= subtract;
   writeln("code length 1 = ", code_length1);
   writeln("code length 2 = ", code_length2);
   writeln("code length 3 = ", code_length3);
   writeln("code length 4 = ", code_length4);
   writeln("code length 5 = ", code_length5);
   writeln("code length 6 = ", code_length6);
+  writeln("code length 7 = ", code_length7, " ", subtract);
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
 int main(const string[] argv) {
+  int[] a = [ 12, 13, 14, 15, 16, 17, 18, 19, 20 ];
+  cdf53_lift(a, 0);
+  cdf53_lift(a, 1);
+  writeln(a);
+  int v =0;
   try {
     //test_1(argv);
     //test_2(argv);

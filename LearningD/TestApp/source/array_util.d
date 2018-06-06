@@ -72,3 +72,46 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   }
 }
 
+/++ In-place replace each value in f by its difference from the previous value
+    Return: the first value +/
+T take_difference(T)(T[] f) {
+  assert(f.length >= 2);
+  for (size_t i = f.length-1; i >= 1; --i) {
+    f[i] -= f[i-1];
+  }
+  auto first = f[0];
+  f[0] = 0;
+  return first;
+}
+
+void cdf53_lift(T)(T[] f, int l) {
+  int n = cast(int)f.length;
+  int p = 1 << l;
+  int m = (n+p-1) / p;
+  if (m <= 1) {
+    return;
+  }
+  for (int x = 1; x < m; x += 2) {
+    T fleft  = f[x-1];
+    T fright = x<m-1 ? f[x+1] : fleft;
+    f[x] -= (fleft+fright) / 2;
+  }
+  for (int x = 0; x < m; x += 2) {
+    T fleft  = x>0 ? f[x-1] : f[x+1];
+    T fright = x<m-1 ? f[x+1] : fleft;
+    f[x] += (fleft+fright) / 4;
+  }
+  static T[] t;
+  t.length = m>>1;
+  int s = (m+1) >> 1;
+  for (int x = 1; x < m; x += 2) {
+    t[x>>1] = f[x];
+    f[x>>1] = f[x-1];
+  }
+  if ((m&1) != 0) {
+    f[m>>1] = f[m-1];
+  }
+  for (int x = 0; x < (m>>1); ++x) {
+    f[s+x] = t[x];
+  }
+}
