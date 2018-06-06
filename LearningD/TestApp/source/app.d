@@ -37,7 +37,7 @@ Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuf
   string dtype = dataset.metadata["dtype"].str;
   enforce(dtype=="float64", dtype ~ " not supported");
   /* quantize to 15 bit integers */
-  int bits = 14;
+  int bits = 20;
   auto f = dataset.data.get!(Array3D!double);
   auto fq = new Array3D!int(f.dims);
   quantize_midtread(f, bits, fq);
@@ -150,7 +150,7 @@ For extra credit, see what happens if you first randomly shuffle all residuals a
 */
 void test_1(const string[] argv) {
   writeln("Test 1");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv, true, false);
   /* build one binary tree from each block of 256 values */
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
@@ -283,7 +283,7 @@ void test_3() {
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  auto fq = read_and_process_array(argv, true, false);
+  auto fq = read_and_process_array(argv, true, true);
   //auto fq = generate_array_exponential(1);
   /* collect statistic */
   int block_size = 256;
@@ -435,16 +435,15 @@ double golomb_bits(int s, int m) {
   - exponential distribution across the entire level +/
 // TODO: plot the curve on top of the histogram
 // TODO: use a different method to approximate lambda (maximum spacing estimator or exponential regression)
-// TODO: estimate lambda only from half the numbers (the even numbers)
 // TODO: keep the laplace distribution, encode left-right conditioned on max(|left|, |right|)
 void test_6(const string[] argv) {
   import std.array : array;
   writeln("Test 6");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv, true, false);
   double lambda = 10000;
   //auto fq = generate_array_exponential(lambda);
-  lambda = ml_exponential(fq);
-  lambda *= 2;
+  lambda = ml_exponential_even(fq);
+  //lambda *= 2;
   writeln("maximum likelihood exponential = ", lambda);
   /* collect statistic */
   int block_size = 256;
@@ -502,6 +501,8 @@ void test_6(const string[] argv) {
   foreach (e; probs) {
     subtract += e*log2(1/e);
   }
+  //write_text("maxes.txt", maxes);
+  writeln("num maxes = ", maxes.length);
   subtract *= maxes.length;
   code_length7 -= subtract;
   writeln("code length 1 = ", code_length1);

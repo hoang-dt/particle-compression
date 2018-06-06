@@ -30,3 +30,13 @@ if (isSigned!T) {
   import std.math;
   //return std.math.abs(s);
 }
+
+bool is_even(T)(T v)
+if (isIntegral!T) {
+  return (v&1) == 0;
+}
+
+bool is_odd(T)(T v)
+if (isIntegral!T) {
+  return (v&1) != 0;
+}

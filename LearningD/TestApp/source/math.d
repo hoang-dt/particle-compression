@@ -61,12 +61,3 @@ double log2_C_n_m(int n, int m) {
   return s;
 }
 
-bool is_even(T)(T v)
-if (isIntegral!T) {
-  return (v&1) == 0;
-}
-
-bool is_odd(T)(T v)
-if (isIntegral!T) {
-  return (v&1) != 0;
-}

@@ -5,6 +5,7 @@ import std.math;
 import std.random;
 import std.range;
 import std.traits;
+import number;
 
 /++ Generate an exponential-distributed random variable +/
 double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
@@ -17,10 +18,24 @@ double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
 /++ Estimate the maximum likelihood of l in the exponential distribution f(x) = l*e^(-lx) +/
 double ml_exponential(R)(R vals) {
   double s = 0;
+  int count = 0;
   foreach (e; vals) {
     s += e;
   }
   return cast(double)vals.length / s;
+}
+
+double ml_exponential_even(R)(R vals)
+if (isIntegral!(ElementType!R)) {
+  double s = 0;
+  int count = 0;
+  foreach (e; vals) {
+    if (is_even(e)) {
+      s += e;
+      ++count;
+    }
+  }
+  return cast(double)count / s;
 }
 
 /++ Find the mode of an array (return a range of elements whose value is equal to the mode) +/
