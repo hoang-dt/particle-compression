@@ -29,8 +29,20 @@ double ml_exponential_even(R)(R vals)
 if (isIntegral!(ElementType!R)) {
   double s = 0;
   int count = 0;
+  for (size_t i = 0; i < vals.length; ++i) {
+    if (is_even(vals[i])) {
+      s += vals[i];
+      ++count;
+    }
+  }
+  return cast(double)count / s;
+}
+
+double ml_exponential_positive(R)(R vals) {
+  double s = 0;
+  int count = 0;
   foreach (e; vals) {
-    if (is_even(e)) {
+    if (e >= 0) {
       s += e;
       ++count;
     }

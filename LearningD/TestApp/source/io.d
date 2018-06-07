@@ -34,7 +34,7 @@ Expected!bool write_raw(T)(const string file_name, const T[] data) {
 }
 
 /++ Write an array to a raw text file +/
-Expected!bool write_text(T)(const string file_name, const T[] data) {
+Expected!bool write_text(R)(const string file_name, const R data) {
   try {
     auto file = File(file_name, "w");
     foreach (e; data) {

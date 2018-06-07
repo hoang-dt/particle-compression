@@ -26,9 +26,34 @@ import number;
 import stats;
 
 
+Array3D!double read_and_process_array2(const string[] argv, bool unsigned, bool shuffle) {
+  import std.array : array;
+  import std.stdio;
+  enforce(argv.length == 2, "Args: [json metadata file]");
+  string json_file = argv[1];
+  /* read json data set */
+  auto dataset = read_json(json_file);
+  enforce(dataset, dataset.exception().toString());
+  string dtype = dataset.metadata["dtype"].str;
+  enforce(dtype=="float64", dtype ~ " not supported");
+  auto f = dataset.data.get!(Array3D!double);
+  lorenzo_predict(f);
+
+  for (int i = 0; i < 10; ++i) {
+    //cdf53_lift(f, i);
+  }
+  double[] fp;
+  for (size_t i = 0; i < f.length; ++i) {
+    if (f[i] >= 0) {
+      fp ~= f[i];
+    }
+  }
+  return new Array3D!double(f.dims, fp);
+}
 /++ Read a raw data set and process it into 16-bit unsigned, shuffled array of residuals +/
 Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuffle) {
   import std.array : array;
+  import std.stdio;
   enforce(argv.length == 2, "Args: [json metadata file]");
   string json_file = argv[1];
   /* read json data set */
@@ -40,12 +65,13 @@ Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuf
   int bits = 20;
   auto f = dataset.data.get!(Array3D!double);
   auto fq = new Array3D!int(f.dims);
-  quantize_midtread(f, bits, fq);
+  //quantize_midtread(f, bits, fq);
+  auto emax = quantize(f, bits, fq);
   /* generate 16-bit residuals using the Lorenzo predictor */
   lorenzo_predict(fq);
   //take_difference(fq);
   for (int i = 0; i < 10; ++i) {
-    cdf53_lift(fq, i);
+    //cdf53_lift(fq, i);
   }
   //{
   //  auto rnd = Random(unpredictableSeed);
@@ -284,6 +310,10 @@ void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
   auto fq = read_and_process_array(argv, true, true);
+  //auto lambda = ml_exponential_even(fq);
+  auto lambda = ml_exponential(fq);
+  writeln("lambda = ", lambda);
+  write_text("residuals.txt", fq);
   //auto fq = generate_array_exponential(1);
   /* collect statistic */
   int block_size = 256;
@@ -291,14 +321,14 @@ void test_4(const string[] argv) {
   int nblocks = (nsamples+block_size-1) / block_size;
   //auto trees = build_binary_trees!(typeof(fq), (a,b)=>a+b)(block_size, nblocks, fq);
   auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq);
-  alias map = int[int];
+  alias map = int[double];
   auto counts = new map[](trees[0].nlevels); // one map per level
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     for (int l = 0; l < tree.nlevels; ++l) {
       auto be = tree.index_range(l);
       for (int i = be[0]; i < be[1]; ++i) {
-        int v = tree[i];
+        auto v = tree[i];
         ++counts[l][v];
       }
     }
@@ -308,39 +338,25 @@ void test_4(const string[] argv) {
   int[] modes = new int[](counts.length);
   for (int l = 0; l+1 < modes.length; ++l) {
     auto r = counts[l].byValue.array;
-    //if (l+2 >= modes.length-1) {
-      topN!"a>b"(r, 7);
-      modes[l] = r[7];
-    //}
-    //else {
-      //modes[l] = r.reduce!max;
-    //}
-
-    writeln(modes[l]);
+    topN!"a>b"(r, 7);
+    modes[l] = r[7];
+    writeln("mode ", l, " ", modes[l]);
   }
-  int[][] output = new int[][](modes.length); // one array per level, of samples whose parent is equal to the mode of the previous level
-  int[] m = new int[](modes.length);
+  auto output = new double[][](modes.length); // one array per level, of samples whose parent is equal to the mode of the previous level
+  double[] m = new double[](modes.length);
   for (int l = 1; l < m.length; ++l) {
     m[l] = counts[l-1].byKey.filter!(k=>counts[l-1][k]==modes[l-1]).array[0];
-    writeln(m[l]);
+    writeln("m ", l, " " ,m[l]);
   }
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     for (int l = 1; l < tree.nlevels; ++l) {
       auto be = tree.index_range(l);
       for (int i = be[0]; i < be[1]; i += 2) {
-        int p = tree[(i-1)/2];
+        auto p = tree[(i-1)/2];
         //enforce(p == (tree[i] + tree[i+1]));
         if (p == m[l]) {
-          //output[l] ~= tree[i]; // NOTE: this is used to plot the left child
-          //output[l] ~= abs(tree[i] - tree[i+1]); // NOTE: this is used to plot |left child - right child|
-          //auto diff = tree[i] - tree[i+1];
-          //if (is_odd(diff)) {
-            output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
-          //}
-          //if (tree[i+1] == p) {
-            //output[l] ~= tree[i];
-          //}
+          output[l] ~= tree[i] - tree[i+1]; // NOTE: this is used to plot (left child - right child)
         }
       }
     }
@@ -439,7 +455,7 @@ double golomb_bits(int s, int m) {
 void test_6(const string[] argv) {
   import std.array : array;
   writeln("Test 6");
-  auto fq = read_and_process_array(argv, true, false);
+  auto fq = read_and_process_array(argv, true, true);
   double lambda = 10000;
   //auto fq = generate_array_exponential(lambda);
   lambda = ml_exponential_even(fq);
@@ -458,6 +474,7 @@ void test_6(const string[] argv) {
   double code_length6 = 0;
   int[] diffs;
   int[] maxes;
+  double[int] code_length_per_max; // accumulate the code length per max
   for (int b = 0; b < nblocks; ++b) {
     auto tree = trees[b];
     int l = tree.nlevels - 1;
@@ -480,6 +497,7 @@ void test_6(const string[] argv) {
         }
         enforce(incr2 > 0);
         code_length2 += incr2;
+        code_length_per_max[M] += incr2;
         code_length3 += log2(1/integrate_exp(lambda, tree[i], tree[i]+1));
         code_length4 += exp_golomb_bits(map(M, n), 2);
         code_length5 += golomb_bits(map(M, n), 6);
@@ -501,8 +519,8 @@ void test_6(const string[] argv) {
   foreach (e; probs) {
     subtract += e*log2(1/e);
   }
-  //write_text("maxes.txt", maxes);
-  writeln("num maxes = ", maxes.length);
+  write_text("code_length_per_max.txt", code_length_per_max);
+  //writeln("num maxes = ", maxes.length);
   subtract *= maxes.length;
   code_length7 -= subtract;
   writeln("code length 1 = ", code_length1);
@@ -520,14 +538,17 @@ int main(const string[] argv) {
   cdf53_lift(a, 0);
   cdf53_lift(a, 1);
   writeln(a);
-  int v =0;
+  //auto fq = generate_array_exponential(10);
+  //auto lambda = ml_exponential(fq);
+  //writeln("lambda = ", lambda);
+  //return 0;
   try {
     //test_1(argv);
     //test_2(argv);
     //test_3();
-    //test_4(argv);
+    test_4(argv);
     //test_5(argv);
-    test_6(argv);
+    //test_6(argv);
   }
   catch (Exception e) {
     writeln(e);

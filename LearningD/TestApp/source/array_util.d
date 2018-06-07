@@ -37,6 +37,8 @@ if (isFloatingPoint!F && isIntegral!I && isSigned!I) {
   int emax;
   frexp(abs(max), emax);
   auto s = ldexp(1.0, bits-emax);
+  import std.stdio;
+  writeln("quantization scale = ", s);
   for (size_t i = 0; i < f.length; ++i) {
     g[i] = cast(I)(s*f[i]);
   }
