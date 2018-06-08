@@ -534,10 +534,7 @@ void test_6(const string[] argv) {
 
 // TODO: also estimate the exponential parameter and replot table 8
 int main(const string[] argv) {
-  int[] a = [ 12, 13, 14, 15, 16, 17, 18, 19, 20 ];
-  cdf53_lift(a, 0);
-  cdf53_lift(a, 1);
-  writeln(a);
+  read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
   //auto fq = generate_array_exponential(10);
   //auto lambda = ml_exponential(fq);
   //writeln("lambda = ", lambda);

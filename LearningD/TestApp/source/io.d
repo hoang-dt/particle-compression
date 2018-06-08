@@ -3,7 +3,9 @@ module io;
 import std.algorithm;
 import std.array;
 import std.conv;
+import std.exception;
 import std.file;
+import std.format;
 import std.json;
 import std.path;
 import std.stdio;
@@ -121,4 +123,36 @@ Expected!Dataset read_json(const string file_name) {
 }
 unittest {
   read_json("flame-64x64x64-float64.json");
+}
+
+/++ Read all the points from a hex mesh file (skip the hexes) +/
+Vec3!double[] read_hex_meshes(const string file_name) {
+  auto file = File(file_name, "r");
+  int npoints;
+  char[] buf;
+  file.readln(buf);
+  string temp;
+  buf.formattedRead!"# %s %s"(npoints, temp);
+  Vec3!double[] points;
+  while (true) {
+    if (!file.readln(buf)) {
+      break;
+    }
+    if (buf[0]=='#') {
+      continue;
+    }
+    else if (buf[0] == 'v') {
+      double x, y, z;
+      buf.formattedRead!"v %s %s %s"(x, y, z);
+      points ~= Vec3!double(x, y, z);
+    }
+    else if (points.length != npoints) {
+      continue;
+    }
+    else {
+      break;
+    }
+  }
+  enforce(points.length == npoints);
+  return points;
 }
