@@ -20,6 +20,7 @@ import binary_tree;
 import circular_queue;
 import expected;
 import io;
+import kdtree;
 import lorenzo;
 import math;
 import number;
@@ -532,18 +533,41 @@ void test_6(const string[] argv) {
   writeln("code length 7 = ", code_length7, " ", subtract);
 }
 
+void b(void delegate () pred) {
+  pred();
+}
+
+void recursive(int a) {
+  if (a <= 0) return;
+  auto pred = delegate() { writeln(a); };
+  b(pred);
+  recursive(a-1);
+  recursive(a-1);
+}
+
 // TODO: also estimate the exponential parameter and replot table 8
 int main(const string[] argv) {
-  read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
+  recursive(3);
+  auto points = read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
+  alias Vec3d = Vec3!double;
+  //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),
+  //               Vec3d(-1, -1, 1), Vec3d(1, 1, 1), Vec3d(1, -1, 1), Vec3d(-1, -1, -1)];
   //auto fq = generate_array_exponential(10);
   //auto lambda = ml_exponential(fq);
   //writeln("lambda = ", lambda);
   //return 0;
+  //auto arr = [1,2,3,4,5];
+  //auto first = std.algorithm.sorting.partition!"a>0"(arr);
+  //writeln("-----------");
+  //writeln(first);
+  auto tree = new KdTree!double();
+  tree.build!"xyz"(points);
+  int a = 0;
   try {
     //test_1(argv);
     //test_2(argv);
     //test_3();
-    test_4(argv);
+    //test_4(argv);
     //test_5(argv);
     //test_6(argv);
   }

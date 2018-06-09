@@ -6,12 +6,20 @@ import std.traits;
 /++ 3D vector (x, y, z) +/
 struct Vec3(T)
 if (isNumeric!T) {
-  T x, y, z;
+  T[3] p;
+  alias p this;
+  @property ref T x() { return p[0]; }
+  @property ref T y() { return p[1]; }
+  @property ref T z() { return p[2]; }
+  @property T x() const { return p[0]; }
+  @property T y() const { return p[1]; }
+  @property T z() const { return p[2]; }
+
   this(T x_, T y_, T z_) {
     x = x_; y = y_; z = z_;
   }
   this(T[3] v) {
-    x = v[0]; y = v[1], z = v[2];
+    p = v;
   }
 }
 
