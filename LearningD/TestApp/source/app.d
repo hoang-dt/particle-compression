@@ -90,8 +90,8 @@ Array3D!int read_and_process_array(const string[] argv) {
     e = sign_to_lsb(e);
   }
   /* shuffle */
-  //auto rnd = MinstdRand0(42);
-  //fq.buf_ = fq.buf_.randomShuffle(rnd);
+  auto rnd = MinstdRand0(42);
+  fq.buf_ = fq.buf_.randomShuffle(rnd);
   return fq;
 }
 
@@ -554,58 +554,52 @@ void test_7(const string[] argv) {
       auto m = tree[(i-1)/2];
       auto xleft = bsr(left^m) + 1;
       auto xright = bsr(right^m) + 1;
+      auto xor = bsr(left^right) + 1; // number of different bits from the right
+      auto bb = bsr(m)+1;
       if (m == 0) {
         continue;
       }
       if (left==m && right==m) {
-        output[0] += 1;
+        output[bb] += 1;
       }
-      else if (left == m) {
-        output[-xright] += 1;
-      }
-      else if (right == m) {
-        output[xleft] += 1;
+      else {
+        output[bb-xor] += 1;
       }
     }
   }
   int sum = reduce!((a,b) => a + b)(0, output.byValue());
   writeln(sum);
-  double code_length1 = 0;
-  double code_length2 = 0;
-  for (int b = 0; b < nblocks; ++b) {
-    auto tree = trees[b];
-    int l = tree.nlevels - 1;
-    auto be = tree.index_range(l);
-    for (int i = be[0]; i < be[1]; i += 2) {
-      auto left = tree[i];
-      auto right = tree[i+1];
-      auto m = tree[(i-1)/2];
-      auto bb = bsr(m)+1+1;
-      if (m == 0) {
-        continue;
-      }
-      auto xor = bsr(left^right) + 1; // number of different bits from the right
-      //auto xleft = bsr(left^m) + 1;
-      //auto xright = bsr(right^m) + 1;
-      if (left==m && right==m) {
-        //code_length2 += log2(sum) - log2(output[0]);
-        code_length2 += log2(bb) + 1;
-        //code_length2 += 1;
-      }
-      else if (left == m) {
-        //code_length2 += log2(sum) - log2(output[-xright]) + xright;
-        code_length2 += log2(bb)+1+xor;
-      }
-      else if (right == m) {
-        //code_length2 += log2(sum) - log2(output[xleft]) + xleft;
-        code_length2 += log2(bb)+1+xor;
-      }
-      //code_length2 += log2(37);
-      code_length1 += log2(2*m+1);
-    }
-  }
-  writeln(code_length1);
-  writeln(code_length2);
+  //double code_length1 = 0;
+  //double code_length2 = 0;
+  //for (int b = 0; b < nblocks; ++b) {
+  //  auto tree = trees[b];
+  //  int l = tree.nlevels - 1;
+  //  auto be = tree.index_range(l);
+  //  for (int i = be[0]; i < be[1]; i += 2) {
+  //    auto left = tree[i];
+  //    auto right = tree[i+1];
+  //    auto m = tree[(i-1)/2];
+  //    auto bb = bsr(m)+1+1;
+  //    if (m == 0) {
+  //      continue;
+  //    }
+  //    auto xor = bsr(left^right) + 1; // number of different bits from the right
+  //    auto bbb = bsr(m)+1;
+  //    if (left==m && right==m) {
+  //      code_length2 += log2(double(sum)/(output[bbb]));
+  //    }
+  //    else if (left == m) {
+  //      code_length2 += log2(double(sum)/(output[bbb-xor]))+1+xor;
+  //    }
+  //    else if (right == m) {
+  //      code_length2 += log2(double(sum)/(output[bbb-xor]))+1+xor;
+  //    }
+  //    //code_length2 += log2(37);
+  //    code_length1 += log2(2*m+1);
+  //  }
+  //}
+  //writeln(code_length1);
+  //writeln(code_length2);
   //for
   File file = File("test_7.txt", "w");
   foreach (e; output.byKeyValue().array.sort!"a.key<b.key") {
@@ -614,6 +608,7 @@ void test_7(const string[] argv) {
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
+// TODO: plot similar plots using actual exponential distributions
 int main(const string[] argv) {
   test_7(argv);
   auto points = read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
