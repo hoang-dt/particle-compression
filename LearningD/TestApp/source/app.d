@@ -52,7 +52,7 @@ Array3D!double read_and_process_array2(const string[] argv, bool unsigned, bool 
   return new Array3D!double(f.dims, fp);
 }
 /++ Read a raw data set and process it into 16-bit unsigned, shuffled array of residuals +/
-Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuffle) {
+Array3D!int read_and_process_array(const string[] argv) {
   import std.array : array;
   import std.stdio;
   enforce(argv.length == 2, "Args: [json metadata file]");
@@ -70,27 +70,28 @@ Array3D!int read_and_process_array(const string[] argv, bool unsigned, bool shuf
   auto emax = quantize(f, bits, fq);
   /* generate 16-bit residuals using the Lorenzo predictor */
   lorenzo_predict(fq);
+
   //take_difference(fq);
-  for (int i = 0; i < 10; ++i) {
+  /* wavelet transform */
+  //for (int i = 0; i < 10; ++i) {
     //cdf53_lift(fq, i);
-  }
-  //{
+  //}
+
+  //{ // randomly flip the sign bit
   //  auto rnd = Random(unpredictableSeed);
   //  foreach (ref e; fq) {
   //    auto a = uniform(0, 2, rnd);
   //    e *= (2*a-1);
   //  }
   //}
+
   /* turn signed residuals into unsigned ones */
-  if (unsigned) {
-    foreach (ref int e; fq) {
-      e = sign_to_lsb(e);
-    }
+  foreach (ref int e; fq) {
+    e = sign_to_lsb(e);
   }
-  if (shuffle) {
-    auto rnd = MinstdRand0(42);
-    fq.buf_ = fq.buf_.randomShuffle(rnd);
-  }
+  /* shuffle */
+  //auto rnd = MinstdRand0(42);
+  //fq.buf_ = fq.buf_.randomShuffle(rnd);
   return fq;
 }
 
@@ -177,7 +178,7 @@ For extra credit, see what happens if you first randomly shuffle all residuals a
 */
 void test_1(const string[] argv) {
   writeln("Test 1");
-  auto fq = read_and_process_array(argv, true, false);
+  auto fq = read_and_process_array(argv);
   /* build one binary tree from each block of 256 values */
   int block_size = 256;
   int nsamples = cast(int)product(fq.dims);
@@ -310,7 +311,7 @@ void test_3() {
 void test_4(const string[] argv) {
   import std.array : array;
   writeln("Test 4");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv);
   //auto lambda = ml_exponential_even(fq);
   auto lambda = ml_exponential(fq);
   writeln("lambda = ", lambda);
@@ -371,7 +372,7 @@ void test_4(const string[] argv) {
 void test_5(const string[] argv) {
   import std.array : array;
   writeln("Test 5");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv);
   //write_text("residuals.txt", fq);
   double lambda = ml_exponential(fq);
   //writeln("maximum likelihood exponential = ", lambda);
@@ -450,13 +451,12 @@ double golomb_bits(int s, int m) {
   - uniform distribution, conditioned on the parent
   - exponential distribution, conditioned on the parent
   - exponential distribution across the entire level +/
-// TODO: plot the curve on top of the histogram
 // TODO: use a different method to approximate lambda (maximum spacing estimator or exponential regression)
 // TODO: keep the laplace distribution, encode left-right conditioned on max(|left|, |right|)
 void test_6(const string[] argv) {
   import std.array : array;
   writeln("Test 6");
-  auto fq = read_and_process_array(argv, true, true);
+  auto fq = read_and_process_array(argv);
   double lambda = 10000;
   //auto fq = generate_array_exponential(lambda);
   lambda = ml_exponential_even(fq);
@@ -533,21 +533,89 @@ void test_6(const string[] argv) {
   writeln("code length 7 = ", code_length7, " ", subtract);
 }
 
-void b(void delegate () pred) {
-  pred();
-}
-
-void recursive(int a) {
-  if (a <= 0) return;
-  auto pred = delegate() { writeln(a); };
-  b(pred);
-  recursive(a-1);
-  recursive(a-1);
+/++ Given the max, we encode the difference between D(left, max) and D(right, max) where D is the
+function that computes how many bits its arguments agree (from the msb) +/
+void test_7(const string[] argv) {
+  import std.array : array;
+  writeln("Test 7");
+  auto fq = read_and_process_array(argv);
+  int block_size = 256;
+  int nsamples = cast(int)fq.length;
+  int nblocks = (nsamples+block_size-1) / block_size;
+  int[int] output; // map from bit plane differences to count
+  auto trees = build_binary_trees!(typeof(fq), (a,b)=>max(a,b))(block_size, nblocks, fq); // NOTE: use the max operator
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    int l = tree.nlevels - 1;
+    auto be = tree.index_range(l);
+    for (int i = be[0]; i < be[1]; i += 2) {
+      auto left = tree[i];
+      auto right = tree[i+1];
+      auto m = tree[(i-1)/2];
+      auto xleft = bsr(left^m) + 1;
+      auto xright = bsr(right^m) + 1;
+      if (m == 0) {
+        continue;
+      }
+      if (left==m && right==m) {
+        output[0] += 1;
+      }
+      else if (left == m) {
+        output[-xright] += 1;
+      }
+      else if (right == m) {
+        output[xleft] += 1;
+      }
+    }
+  }
+  int sum = reduce!((a,b) => a + b)(0, output.byValue());
+  writeln(sum);
+  double code_length1 = 0;
+  double code_length2 = 0;
+  for (int b = 0; b < nblocks; ++b) {
+    auto tree = trees[b];
+    int l = tree.nlevels - 1;
+    auto be = tree.index_range(l);
+    for (int i = be[0]; i < be[1]; i += 2) {
+      auto left = tree[i];
+      auto right = tree[i+1];
+      auto m = tree[(i-1)/2];
+      auto bb = bsr(m)+1+1;
+      if (m == 0) {
+        continue;
+      }
+      auto xor = bsr(left^right) + 1; // number of different bits from the right
+      //auto xleft = bsr(left^m) + 1;
+      //auto xright = bsr(right^m) + 1;
+      if (left==m && right==m) {
+        //code_length2 += log2(sum) - log2(output[0]);
+        code_length2 += log2(bb) + 1;
+        //code_length2 += 1;
+      }
+      else if (left == m) {
+        //code_length2 += log2(sum) - log2(output[-xright]) + xright;
+        code_length2 += log2(bb)+1+xor;
+      }
+      else if (right == m) {
+        //code_length2 += log2(sum) - log2(output[xleft]) + xleft;
+        code_length2 += log2(bb)+1+xor;
+      }
+      //code_length2 += log2(37);
+      code_length1 += log2(2*m+1);
+    }
+  }
+  writeln(code_length1);
+  writeln(code_length2);
+  //for
+  File file = File("test_7.txt", "w");
+  foreach (e; output.byKeyValue().array.sort!"a.key<b.key") {
+    file.writeln(e.key, " ", e.value);
+  }
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
 int main(const string[] argv) {
-  recursive(3);
+  test_7(argv);
   auto points = read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
   alias Vec3d = Vec3!double;
   //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),
