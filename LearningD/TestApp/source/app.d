@@ -65,9 +65,9 @@ Array3D!int read_and_process_array(const string[] argv) {
   /* quantize to 15 bit integers */
   int bits = 20;
   auto f = dataset.data.get!(Array3D!double);
-  auto ff = filter!(a=>a>0)(f.buf_).array;
-  auto ab = estimate_gamma_parameters(ff);
-  writeln(ab[0], " hehe ", ab[1]);
+  //auto ff = filter!(a=>a>0)(f.buf_).array;
+  //auto ab = estimate_gamma_parameters(ff);
+  //writeln(ab[0], " hehe ", ab[1]);
   //write_text("residuals.txt", ff);
   auto fq = new Array3D!int(f.dims);
   //quantize_midtread(f, bits, fq);
@@ -110,7 +110,7 @@ int[] generate_array_exponential(double l) {
   int[] fq = new int[](f.length);
   int bits = 8;
   quantize(f, bits, fq);
-  double lambda = ml_exponential(fq);
+  double lambda = estimate_exponential_parameter(fq);
   writeln("lambda = ", lambda);
   //for (int i = 0; i < fq.length; ++i) {
   //  fq[i] = cast(int)f[i];
@@ -125,7 +125,7 @@ double[] generate_array_exponential_double(double l) {
     f ~= r_exponential(l);
   }
   //write_text("out.txt", f);
-  double lambda = ml_exponential(f);
+  double lambda = estimate_exponential_parameter(f);
   writeln("lambda = ", lambda);
   return f;
 }
@@ -318,7 +318,7 @@ void test_4(const string[] argv) {
   writeln("Test 4");
   auto fq = read_and_process_array(argv);
   //auto lambda = ml_exponential_even(fq);
-  auto lambda = ml_exponential(fq);
+  auto lambda = estimate_exponential_parameter(fq);
   writeln("lambda = ", lambda);
   write_text("residuals.txt", fq);
   //auto fq = generate_array_exponential(1);
@@ -379,7 +379,7 @@ void test_5(const string[] argv) {
   writeln("Test 5");
   auto fq = read_and_process_array(argv);
   //write_text("residuals.txt", fq);
-  double lambda = ml_exponential(fq);
+  double lambda = estimate_exponential_parameter(fq);
   //writeln("maximum likelihood exponential = ", lambda);
   auto gen = generate_array_exponential_double(lambda);
   //write_text("exponential.txt", gen);
@@ -612,14 +612,16 @@ void test_7(const string[] argv) {
   }
 }
 
-/++ Estimate the gamma parameters +/
+/++ Estimate the gamma parameters and exponential parameter +/
 void test_8(const string[] argv) {
   import std.array : array;
   writeln("Test 8");
   auto fq = read_and_process_array(argv);
   auto fqf = filter!(a =>a>0)(fq).array;
   auto ab = estimate_gamma_parameters(fqf);
-  writeln(ab[0], " ", ab[1]);
+  auto lambda = estimate_exponential_parameter(fqf);
+  writeln("Gamma parameters ", ab[0], " ", ab[1]);
+  writeln("Exponential parameter ", lambda);
   write_text("residuals.txt", fqf);
 }
 

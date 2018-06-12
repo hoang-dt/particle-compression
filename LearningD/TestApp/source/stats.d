@@ -16,7 +16,7 @@ double r_exponential(RGen=Random)(double t, ref RGen gen=rndGen) {
 }
 
 /++ Estimate the maximum likelihood of l in the exponential distribution f(x) = l*e^(-lx) +/
-double ml_exponential(R)(R vals) {
+double estimate_exponential_parameter(R)(R vals) {
   double s = 0;
   int count = 0;
   foreach (e; vals) {
