@@ -65,6 +65,10 @@ Array3D!int read_and_process_array(const string[] argv) {
   /* quantize to 15 bit integers */
   int bits = 20;
   auto f = dataset.data.get!(Array3D!double);
+  auto ff = filter!(a=>a>0)(f.buf_).array;
+  auto ab = estimate_gamma_parameters(ff);
+  writeln(ab[0], " hehe ", ab[1]);
+  //write_text("residuals.txt", ff);
   auto fq = new Array3D!int(f.dims);
   //quantize_midtread(f, bits, fq);
   auto emax = quantize(f, bits, fq);
@@ -90,8 +94,9 @@ Array3D!int read_and_process_array(const string[] argv) {
     e = sign_to_lsb(e);
   }
   /* shuffle */
-  auto rnd = MinstdRand0(42);
-  fq.buf_ = fq.buf_.randomShuffle(rnd);
+  //auto rnd = MinstdRand0(42);
+  //fq.buf_ = fq.buf_.randomShuffle(rnd);
+  //write_text("residuals.txt", fq);
   return fq;
 }
 
@@ -607,10 +612,21 @@ void test_7(const string[] argv) {
   }
 }
 
+/++ Estimate the gamma parameters +/
+void test_8(const string[] argv) {
+  import std.array : array;
+  writeln("Test 8");
+  auto fq = read_and_process_array(argv);
+  auto fqf = filter!(a =>a>0)(fq).array;
+  auto ab = estimate_gamma_parameters(fqf);
+  writeln(ab[0], " ", ab[1]);
+  write_text("residuals.txt", fqf);
+}
+
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
 int main(const string[] argv) {
-  test_7(argv);
+  test_8(argv);
   auto points = read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
   alias Vec3d = Vec3!double;
   //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),

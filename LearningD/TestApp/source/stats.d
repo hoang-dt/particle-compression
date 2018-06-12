@@ -90,3 +90,23 @@ auto compute_probabilities(T)(T[] arr) {
   }
   return probs;
 }
+
+auto estimate_gamma_parameters(R)(R vals) {
+  auto digamma = function (double a) => log(a) - 1/(2*a);
+  auto digamma_deriv = function (double a) => 1/(2*a*a) + 1/a;
+  double log_x_bar = 0;
+  auto avg = reduce!((a,b)=>a+b)(0.0, vals) / double(vals.length);
+  auto log_avg = log(avg);
+  auto avg_log = reduce!((a,b)=>a+log(b))(0.0, vals) / double(vals.length);
+  double a = 0.5 / (log_avg-avg_log);
+  while (true) {
+    double old = a;
+    double one_over_a = 1/a + ((avg_log-log_avg+log(a)-digamma(a))/(a*a*(1/a-digamma_deriv(a))));
+    a = 1 / one_over_a;
+    if (abs(old-a) < 1e-3) {
+      break;
+    }
+  }
+  double b = avg / a;
+  return [a, b];
+}
