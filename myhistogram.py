@@ -33,24 +33,23 @@ fig, ax = plt.subplots()
 s = np.sum(h[0])
 print(np.average(h[0]))
 #plt.plot(h[1][:-1], h[0][:]/s)
-plt.plot(h[1][1:40], h[0][:39]/s, label='actual data')
-print(h[1][1])
-print(h[1][39])
+plt.plot(h[1][1:200], h[0][:199]/s, label='actual data')
+delta = h[1][199]-h[1][0]
+print(delta)
 m = 8
 #l = 0.0647637
-l = 0.000817401
+#l = 0.000817401
 l = 0.00073118
 #l = 0.00295633
 #l = 0.0529976
-x = np.linspace(h[1][1], h[1][39], 40)
-delta = h[1][39]-h[1][1]
+x = np.linspace(h[1][1], h[1][199], 200)
 #x = np.linspace(0, 286.630859375, 512)
 #x = np.linspace(0, 18362.0800781, 512)
 y = np.copy(x)
 z = np.copy(x)
 #sum = 0
 for i in range(0, len(y)):
-  z[i] = integrate_exp(l, x[i]-delta/39, x[i])
+  z[i] = integrate_exp(l, x[i]-delta/199, x[i])
   #sum += integrate_exp(l, x[i], x[i]+18362.0800781/512)
 #print(sum)
 
@@ -77,8 +76,8 @@ b = 4058.76
 sum = 0
 for i in range(0, len(y)):
   #y[i] = pow(x[i], (a-1))/(scipy.special.gamma(a)*pow(b,a))*math.exp(-x[i]/b)
-  y[i] = integrate_gamma(a,b,x[i]-delta/39,x[i])
-  sum += y[i]
+  y[i] = integrate_gamma(a,b,x[i]-delta/199,x[i])
+  #sum += y[i]
   #print(y[i])
 #print(x)
 plt.plot(x[:], y[:], label='gamma')

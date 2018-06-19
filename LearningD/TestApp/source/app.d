@@ -6,6 +6,7 @@ import std.conv;
 import std.datetime.stopwatch;
 import std.exception;
 import std.file;
+import std.format;
 import std.math;
 import std.outbuffer;
 import std.path;
@@ -628,9 +629,10 @@ void test_8(const string[] argv) {
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
 int main(const string[] argv) {
-  test_8(argv);
-  auto points = read_hex_meshes("D:/Datasets/hex-meshes/cylinder.hex");
-  alias Vec3d = Vec3!double;
+  //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
+  //int temp;
+  //line.formattedRead!"%d DZATO DZ %d"(temp, temp);
+  auto particles = parse_gro!float("D:/Datasets/output2.gro");
   //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),
   //               Vec3d(-1, -1, 1), Vec3d(1, 1, 1), Vec3d(1, -1, 1), Vec3d(-1, -1, -1)];
   //auto fq = generate_array_exponential(10);
@@ -641,8 +643,8 @@ int main(const string[] argv) {
   //auto first = std.algorithm.sorting.partition!"a>0"(arr);
   //writeln("-----------");
   //writeln(first);
-  auto tree = new KdTree!double();
-  tree.build!"xyz"(points);
+  //auto tree = new KdTree!double();
+  //tree.build!"xyz"(points);
   int a = 0;
   try {
     //test_1(argv);
