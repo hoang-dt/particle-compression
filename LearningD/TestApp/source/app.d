@@ -1,5 +1,6 @@
 import core.bitop;
 import std.algorithm;
+import std.algorithm.sorting;
 import std.array;
 import std.container.array;
 import std.conv;
@@ -129,6 +130,20 @@ double[] generate_array_exponential_double(double l) {
   double lambda = estimate_exponential_parameter(f);
   writeln("lambda = ", lambda);
   return f;
+}
+
+/++ Generate n random particles in the [0, 1] box +/
+ParticleArray!T generate_random_particles(T)(int n) {
+  auto rnd = MinstdRand0(42);
+  ParticleArray!T particles;
+  particles.position.length = 1;
+  for (int i = 0; i < n; ++i) {
+    double x = uniform01(rnd);
+    double y = uniform01(rnd);
+    double z = uniform01(rnd);
+    particles.position[0] ~= Vec3!T(x,y,z);
+  }
+  return particles;
 }
 
 BinaryTree!(T,op)[] build_binary_trees(R, alias op, T=ElementType!R)(int block_size, int nblocks, R fq) {
@@ -625,14 +640,97 @@ void test_8(const string[] argv) {
   writeln("Exponential parameter ", lambda);
   write_text("residuals.txt", fqf);
 }
+/++ Collect statistics on the kd-tree +/
+void test_9(const string[] argv) {
+  import std.array : array;
+  writeln("Test 9");
+
+  void traverse(T, int R)(KdTree!(T,R) parent, ref int[][int] stats) {
+    int N = parent.end_ - parent.begin_;
+    if (parent.left_ !is null) {
+      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+      stats[N] ~= n;
+    }
+    if (parent.left_ !is null) {
+      traverse(parent.left_, stats);
+    }
+    if (parent.right_ !is null) {
+      traverse(parent.right_, stats);
+    }
+  }
+
+  void traverse_code_length(T, int R)(int level, KdTree!(T,R) parent, ref double[] code_length1, ref double[] code_length2) {
+    int N = parent.end_ - parent.begin_;
+    if (N == 0) {
+      return;
+    }
+    int n = 0;
+    if (parent.left_ !is null) {
+      n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+    }
+    if (code_length1.length <= level) {
+      ++code_length1.length;
+      code_length1[level] = 0;
+    }
+    if (code_length2.length <= level) {
+      ++code_length2.length;
+      code_length2[level] = 0;
+    }
+    //if (level >= 12) {
+      code_length1[level] += N - log2_C_n_m(N, n);
+    //}
+    //else {
+    //  code_length1[level] += log2(N+1);
+    //}
+    code_length2[level] += log2(N+1);
+    if (parent.left_ !is null) {
+      traverse_code_length(level+1, parent.left_, code_length1, code_length2);
+    }
+    if (parent.right_ !is null) {
+      traverse_code_length(level+1, parent.right_, code_length1, code_length2);
+    }
+  }
+
+  /* read particles */
+  //auto particles = parse_gro!float(argv[1]);
+  //auto particles = parse_xyz!float(argv[1]);
+  auto particles = generate_random_particles!float(1000000);
+
+  double[] code_length1;
+  double[] code_length2;
+  for (size_t i = 0; i < particles.position.length; ++i) {
+    auto tree = new KdTree!float();
+    tree.build!"xyz"(particles.position[i], 1e-6); // build a tree from the first time step
+    traverse_code_length(0, tree, code_length1, code_length2);
+    //int[][int] stats;
+    //traverse(tree, stats);
+    //auto results = sort!((a,b)=>(a.value.length>b.value.length))(stats.byKeyValue().array);
+    //foreach (e; results) {
+    //  if (e.key == 15) {
+    //    foreach (v; e.value) {
+    //      writeln(v);
+    //    }
+    //  }
+    //}
+  }
+  writeln("code length 1 = ", code_length1);
+  writeln("code length 2 = ", code_length2);
+  for (size_t i = 0; i < code_length1.length; ++i) {
+    writeln(code_length1[i] / code_length2[i]);
+  }
+  writeln(reduce!((a,b)=>a+b)(code_length1));
+  writeln(reduce!((a,b)=>a+b)(code_length2));
+}
 
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
+// TODO: implement the subdivision until all points are resolved
+// TODO: consolidate testing results for multiple data sets
+//
 int main(const string[] argv) {
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;
   //line.formattedRead!"%d DZATO DZ %d"(temp, temp);
-  auto particles = parse_gro!float("D:/Datasets/output2.gro");
   //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),
   //               Vec3d(-1, -1, 1), Vec3d(1, 1, 1), Vec3d(1, -1, 1), Vec3d(-1, -1, -1)];
   //auto fq = generate_array_exponential(10);
@@ -643,9 +741,6 @@ int main(const string[] argv) {
   //auto first = std.algorithm.sorting.partition!"a>0"(arr);
   //writeln("-----------");
   //writeln(first);
-  //auto tree = new KdTree!double();
-  //tree.build!"xyz"(points);
-  int a = 0;
   try {
     //test_1(argv);
     //test_2(argv);
@@ -653,6 +748,8 @@ int main(const string[] argv) {
     //test_4(argv);
     //test_5(argv);
     //test_6(argv);
+    test_9(argv);
+    int a = 0;
   }
   catch (Exception e) {
     writeln(e);
