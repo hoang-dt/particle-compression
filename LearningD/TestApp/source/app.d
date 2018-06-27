@@ -700,7 +700,8 @@ void test_9(const string[] argv) {
   double[] code_length2;
   for (size_t i = 0; i < particles.position.length; ++i) {
     auto tree = new KdTree!float();
-    tree.build!"xyz"(particles.position[i], 1e-6); // build a tree from the first time step
+    tree.set_precision(23);
+    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     traverse_code_length(0, tree, code_length1, code_length2);
     //int[][int] stats;
     //traverse(tree, stats);
