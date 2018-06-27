@@ -664,10 +664,8 @@ void test_9(const string[] argv) {
     if (N == 0) {
       return;
     }
-    int n = 0;
-    if (parent.left_ !is null) {
-      n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
-    }
+    //assert(N > 0);
+    int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
     if (code_length1.length <= level) {
       ++code_length1.length;
       code_length1[level] = 0;
@@ -676,18 +674,24 @@ void test_9(const string[] argv) {
       ++code_length2.length;
       code_length2[level] = 0;
     }
-    //if (level >= 12) {
-      code_length1[level] += N - log2_C_n_m(N, n);
-    //}
-    //else {
-    //  code_length1[level] += log2(N+1);
-    //}
-    code_length2[level] += log2(N+1);
-    if (parent.left_ !is null) {
-      traverse_code_length(level+1, parent.left_, code_length1, code_length2);
+    if (N == 1) { // one particle
+      code_length1[level] += parent.bits_.length;
+      code_length2[level] += parent.bits_.length;
     }
-    if (parent.right_ !is null) {
-      traverse_code_length(level+1, parent.right_, code_length1, code_length2);
+    else {
+      //if (level >= 12) {
+        code_length1[level] += N - log2_C_n_m(N, n);
+      //}
+      //else {
+      //  code_length1[level] += log2(N+1);
+      //}
+      code_length2[level] += log2(N+1);
+      if (parent.left_ !is null) {
+        traverse_code_length(level+1, parent.left_, code_length1, code_length2);
+      }
+      if (parent.right_ !is null) {
+        traverse_code_length(level+1, parent.right_, code_length1, code_length2);
+      }
     }
   }
 
@@ -700,7 +704,8 @@ void test_9(const string[] argv) {
   double[] code_length2;
   for (size_t i = 0; i < particles.position.length; ++i) {
     auto tree = new KdTree!float();
-    tree.set_precision(23);
+    //tree.set_precision(16);
+    tree.set_accuracy(1e-3);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     traverse_code_length(0, tree, code_length1, code_length2);
     //int[][int] stats;
