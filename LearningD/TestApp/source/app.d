@@ -706,6 +706,7 @@ void test_9(const string[] argv) {
     auto tree = new KdTree!float();
     //tree.set_precision(16);
     tree.set_accuracy(1e-3);
+    writeln(tree.sizeof);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     traverse_code_length(0, tree, code_length1, code_length2);
     //int[][int] stats;
@@ -728,12 +729,43 @@ void test_9(const string[] argv) {
   writeln(reduce!((a,b)=>a+b)(code_length2));
 }
 
+/++ Test the kdtree to make sure it is working +/
+void test_10(const string[] argv) {
+  import std.array : array;
+  writeln("Test 10");
+
+  double particle_rmse(T)(const Vec3!T[] points1, const Vec3!T[] points2) {
+    assert(points1.length==points2.length && points1.length>0);
+    double rmse = 0;
+    for (size_t i = 0; i < points1.length; ++i) {
+      auto p = points1[i] - points2[i];
+      rmse += sqr_norm(p);
+    }
+    rmse /= (points1.length * 3);
+    return sqrt(rmse);
+  }
+
+  //auto particles = parse_xyz!float(argv[1]);
+  auto particles = generate_random_particles!float(10000);
+
+  Vec3!float[] output_particles;
+  for (size_t i = 0; i < particles.position.length; ++i) { // time step loop
+    auto tree = new KdTree!float();
+    tree.set_accuracy(1e-3);
+    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
+    kdtree_to_particles(tree, output_particles);
+  }
+  writeln("rmse = ", particle_rmse(particles.position[0], output_particles));
+}
+
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
 // TODO: implement the subdivision until all points are resolved
 // TODO: consolidate testing results for multiple data sets
 //
 int main(const string[] argv) {
+  import std.bitmanip;
+  writeln(BitArray.sizeof);
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;
   //line.formattedRead!"%d DZATO DZ %d"(temp, temp);
@@ -754,7 +786,8 @@ int main(const string[] argv) {
     //test_4(argv);
     //test_5(argv);
     //test_6(argv);
-    test_9(argv);
+    //test_9(argv);
+    test_10(argv);
     int a = 0;
   }
   catch (Exception e) {

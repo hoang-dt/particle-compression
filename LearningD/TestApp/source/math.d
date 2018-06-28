@@ -21,6 +21,14 @@ if (isNumeric!T) {
   this(T[3] v) {
     p = v;
   }
+
+  Vec3!T opBinary(string op)(const Vec3!T rhs) const {
+    return mixin("Vec3!T(x "~op~" rhs.x, y "~op~" rhs.y, z "~op~" rhs.z)");
+  }
+
+  Vec3!T opBinary(string op)(T v) const {
+    return mixin("Vec3!T(x "~op~" v, y "~op~" v, z "~op~" v)");
+  }
 }
 
 long xyz2i(T)(Vec3!T n, Vec3!T v) {
@@ -35,6 +43,10 @@ long product(T)(Vec3!T v) {
 
 T sum(T)(Vec3!T v) {
   return v.x + v.y + v.z;
+}
+
+T sqr_norm(T)(Vec3!T v) {
+  return v.x*v.x + v.y*v.y + v.z*v.z;
 }
 
 long product(T)(T[3] v) {
@@ -69,3 +81,6 @@ double log2_C_n_m(int n, int m) {
   return s;
 }
 
+T square(T)(T val) {
+  return val*val;
+}
