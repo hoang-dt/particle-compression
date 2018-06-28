@@ -121,6 +121,11 @@ template <typename T>
 Vec3<T> operator*(Vec3<T> u, T s) {
   return Vec3<T>{u.x*s, u.y*s, u.z*s};
 }
+struct ParticleArray {
+  std::vector<std::vector<Vec3<float>>> position;
+  std::vector<std::vector<Vec3<float>>> velocity;
+  std::vector<std::vector<float>> concentration;
+};
 
 std::vector<std::vector<Particle>> parse_gro(const char* file_name) {
   std::ifstream fs(file_name);
