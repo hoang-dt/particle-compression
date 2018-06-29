@@ -127,13 +127,14 @@ struct ParticleArray {
   std::vector<std::vector<float>> concentration;
 };
 
-std::vector<std::vector<Particle>> parse_gro(const char* file_name) {
+ParticleArray parse_gro(const char* file_name) {
   std::ifstream fs(file_name);
   if (!fs) {
     throw new std::runtime_error("Cannot open file " + std::string(file_name));
   }
-  std::vector<std::vector<Particle>> particles;
-  std::vector<Particle> particles_per_time_step;
+  ParticleArray particles;
+  std::vector<Vec3<float>> positions_per_time_step;
+  std::vector<Vec3<float>> velocities_per_time_step;
   std::string line;
   int nparticles = 0;
   int i = 0;
@@ -155,27 +156,30 @@ std::vector<std::vector<Particle>> parse_gro(const char* file_name) {
         int temp;
         sscanf(line.data(), "%dDZATO DZ%d %f %f %f %f %f %f", &temp, &temp, &px, &py, &pz, &vx, &vy, &vz);
         ++i;
-        particles_per_time_step.emplace_back(Particle{ Vec3<float>{px, py, pz}, Vec3<float>{vx, vy, vz} });
+        positions_per_time_step.emplace_back(Vec3<float>{px, py, pz});
+        velocities_per_time_step.emplace_back(Vec3<float>{vx, vy, vz});
       }
       else { // finished reading all particles in the current time step
         i = 0;
-        if (!particles_per_time_step.empty()) {
-          particles.push_back(particles_per_time_step);
+        if (!positions_per_time_step.empty()) {
+          particles.position.push_back(positions_per_time_step);
+          particles.velocity.push_back(velocities_per_time_step);
         }
-        particles_per_time_step.clear();
+        positions_per_time_step.clear();
+        velocities_per_time_step.clear();
       }
     }
   }
   return particles;
 }
 
-std::vector<std::vector<Particle>> parse_xyz(const char* file_name) {
+ParticleArray parse_xyz(const char* file_name) {
   std::ifstream fs(file_name);
   if (!fs) {
     throw new std::runtime_error("Cannot open file " + std::string(file_name));
   }
-  std::vector<std::vector<Particle>> particles;
-  std::vector<Particle> particles_per_time_step;
+  ParticleArray particles;
+  std::vector<Vec3<float>> positions_per_time_step;
   std::string line;
   std::getline(fs, line);
   int nparticles = std::stoi(line);
@@ -185,25 +189,56 @@ std::vector<std::vector<Particle>> parse_xyz(const char* file_name) {
     std::getline(fs, line);
     char c; float px, py, pz;
     sscanf(line.data(), "%s %f %f %f", &temp, &px, &py, &pz);
-    particles_per_time_step.emplace_back(Particle{ Vec3<float>{px, py, pz}, Vec3<float>{0, 0, 0} });
+    positions_per_time_step.emplace_back(Vec3<float>{px, py, pz});
   }
-  std::cout << particles_per_time_step.size() << "\n";
-  particles.push_back(particles_per_time_step);
+  particles.position.push_back(positions_per_time_step);
   return particles;
 }
 
-BoundingBox compute_bounding_box(const std::vector<std::vector<Particle>>& particles) {
+ParticleArray parse_vtu(const char* file_name) {
+  FILE *fp = fopen(file_name, "rb");
+  if (!fp) {
+    throw new std::runtime_error("Cannot open file " + std::string(file_name));
+  }
+  struct Header {
+    uint32_t pad3;
+    uint32_t size;
+    uint32_t pad1;
+    uint32_t step;
+    uint32_t pad2;
+    float time;
+  };
+  Header header;
+  int magic_offset = 4072;
+  fseek(fp, magic_offset, SEEK_SET);
+  fread(&header, sizeof header, 1, fp);
+  ParticleArray particles;
+  particles.position.resize(1, std::vector<Vec3<float>>(header.size));
+  particles.velocity.resize(1, std::vector<Vec3<float>>(header.size));
+  particles.concentration.resize(1, std::vector<float>(header.size));
+
+  fseek(fp, 4, SEEK_CUR);
+  fread(particles.position[0].data(), 3*header.size*sizeof(float), 1, fp);
+  fseek(fp, 4, SEEK_CUR);
+  fread(particles.velocity[0].data(), 3*header.size*sizeof(float), 1, fp);
+  fseek(fp, 4, SEEK_CUR);
+  fread(particles.concentration[0].data(), header.size*sizeof(float), 1, fp);
+  fclose(fp);
+  return particles;
+}
+
+BoundingBox compute_bounding_box(const std::vector<std::vector<Vec3<float>>>& particles) {
   BoundingBox bbox;
   bbox.min.x = bbox.min.y = bbox.min.z = std::numeric_limits<float>::max();
   bbox.max.x = bbox.max.y = bbox.max.z = -std::numeric_limits<float>::max();
   for (const auto& particles_per_time_step : particles) {
     for (const auto& p : particles_per_time_step) {
-      bbox.min.x = std::min(bbox.min.x, p.pos.x);
-      bbox.min.y = std::min(bbox.min.y, p.pos.y);
-      bbox.min.z = std::min(bbox.min.z, p.pos.z);
-      bbox.max.x = std::max(bbox.max.x, p.pos.x);
-      bbox.max.y = std::max(bbox.max.y, p.pos.y);
-      bbox.max.z = std::max(bbox.max.z, p.pos.z);
+      bbox.min.x = std::min(bbox.min.x, p.x);
+      bbox.min.y = std::min(bbox.min.y, p.y);
+      bbox.min.z = std::min(bbox.min.z, p.z);
+      bbox.max.x = std::max(bbox.max.x, p.x);
+      bbox.max.y = std::max(bbox.max.y, p.y);
+      bbox.max.z = std::max(bbox.max.z, p.z);
     }
   }
   return bbox;
@@ -211,12 +246,12 @@ BoundingBox compute_bounding_box(const std::vector<std::vector<Particle>>& parti
 
 /** Rescale the particle positions, given a maximum dimension, and translate them so that the center
 of the bounding box is at (0, 0, 0) */
-void rescale_particles(std::vector<std::vector<Particle>>& particles, float max_dim) {
+void rescale_particles(std::vector<std::vector<Vec3<float>>>& particles, float max_dim) {
   BoundingBox bbox = compute_bounding_box(particles);
   Vec3<float> center = (bbox.min+bbox.max) / 2.0f;
   for (auto& particles_per_time_step : particles) {
     for (auto& p : particles_per_time_step) {
-      p.pos = p.pos - center;
+      p = p - center;
     }
   }
   float dx = bbox.max.x - bbox.min.x;
@@ -226,12 +261,12 @@ void rescale_particles(std::vector<std::vector<Particle>>& particles, float max_
   float s = max_dim / dmax;
   for (auto& particles_per_time_step : particles) {
     for (auto& p : particles_per_time_step) {
-      p.pos = p.pos * s;
+      p = p * s;
     }
   }
 }
 
-std::vector<std::vector<Particle>> particles_;
+ParticleArray particles_;
 
 using Mat4 = float[16]; // column-major matrix
 
@@ -299,8 +334,9 @@ public:
     : entry::AppI(_name, _description)
   {
     //particles_ = parse_gro("D:/Datasets/output3.gro");
-    particles_ = parse_xyz("D:/Datasets/priya/785000.xyz");
-    rescale_particles(particles_, 200);
+    //particles_ = parse_xyz("D:/Datasets/priya/785000.xyz");
+    particles_ = parse_vtu("D:/Datasets/VisContest2016/sl0.20/raw/run12/120.vtu");
+    rescale_particles(particles_.position, 200);
   }
 
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) override
@@ -401,7 +437,7 @@ public:
       );
 
       showExampleDialog(this);
-      ImGui::SliderInt("Time", &timestep_, 0, particles_.size()-1, NULL);
+      ImGui::SliderInt("Time", &timestep_, 0, particles_.position.size()-1, NULL);
 
       imguiEndFrame();
 
@@ -492,7 +528,7 @@ public:
         // 80 bytes stride = 64 bytes for 4x4 matrix + 16 bytes for RGBA color.
         const uint16_t instanceStride = 80;
         // 11x11 cubes
-        const uint32_t numInstances = particles_[timestep_].size();
+        const uint32_t numInstances = particles_.position[timestep_].size();
 
         const bgfx::Stats* stats = bgfx::getStats();
         //bgfx::dbgTextPrintf(0, 2, 0x0f, "num instance = %d", bgfx::getAvailInstanceDataBuffer(numInstances, instanceStride));
@@ -508,9 +544,9 @@ public:
           {
             float* mtx = (float*)data;
             bx::mtxRotateXY(mtx, 0, 0);
-            mtx[12] = particles_[timestep_][yy].pos.x;
-            mtx[13] = particles_[timestep_][yy].pos.y;
-            mtx[14] = particles_[timestep_][yy].pos.z;
+            mtx[12] = particles_.position[timestep_][yy].x;
+            mtx[13] = particles_.position[timestep_][yy].y;
+            mtx[14] = particles_.position[timestep_][yy].z;
 
             float* color = (float*)&data[64];
             color[0] = bx::sin(11.0f)*0.5f + 0.5f;
