@@ -15,6 +15,7 @@ import std.random;
 import std.range;
 import std.stdio;
 import std.traits;
+import std.typecons;
 import dstats;
 import array;
 import array_util;
@@ -277,7 +278,7 @@ void test_2(const string[] argv) {
 }
 
 /+ Generate a binomial distribution and compute the code length of the sum +/
-void test_3() {
+void test_3(const string[] argv) {
   /* Generate binomial-distributed values between 0 and A, by approximating it with a Gaussian with
   muy = A/2 and sigma_squared = A/4 */
   int A = 1024;
@@ -644,48 +645,32 @@ void test_8(const string[] argv) {
 void test_9(const string[] argv) {
   import std.array : array;
   writeln("Test 9");
+  enforce(argv.length>=3, "usage: "~argv[0]~" [test_9] [particle file]");
 
-  void traverse(T, int R)(KdTree!(T,R) parent, ref int[][int] stats) {
+  void traverse_code_length(T, int R)(int level, KdTree!(T,R) parent, ref Tuple!(double[], double) code_length1, ref Tuple!(double[], double) code_length2) {
     int N = parent.end_ - parent.begin_;
-    if (parent.left_ !is null) {
-      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
-      stats[N] ~= n;
+    if (N == 1) { // leaf level
+      code_length1[1] += parent.bits_.length;
+      code_length2[1] += parent.bits_.length;
     }
-    if (parent.left_ !is null) {
-      traverse(parent.left_, stats);
-    }
-    if (parent.right_ !is null) {
-      traverse(parent.right_, stats);
-    }
-  }
-
-  void traverse_code_length(T, int R)(int level, KdTree!(T,R) parent, ref double[] code_length1, ref double[] code_length2) {
-    int N = parent.end_ - parent.begin_;
-    if (N == 0) {
-      return;
-    }
-    //assert(N > 0);
-    int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
-    if (code_length1.length <= level) {
-      ++code_length1.length;
-      code_length1[level] = 0;
-    }
-    if (code_length2.length <= level) {
-      ++code_length2.length;
-      code_length2[level] = 0;
-    }
-    if (N == 1) { // one particle
-      code_length1[level] += parent.bits_.length;
-      code_length2[level] += parent.bits_.length;
-    }
-    else {
+    else { // non leaf
+      if (code_length1[0].length <= level) {
+        ++code_length1[0].length;
+        code_length1[0][level] = 0;
+      }
+      if (code_length2[0].length <= level) {
+        ++code_length2[0].length;
+        code_length2[0][level] = 0;
+      }
+      int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       //if (level >= 12) {
-        code_length1[level] += N - log2_C_n_m(N, n);
+        code_length1[0][level] += N - log2_C_n_m(N, n);
+      //code_length1[level] += 1;
       //}
       //else {
       //  code_length1[level] += log2(N+1);
       //}
-      code_length2[level] += log2(N+1);
+      code_length2[0][level] += log2(N+1);
       if (parent.left_ !is null) {
         traverse_code_length(level+1, parent.left_, code_length1, code_length2);
       }
@@ -698,15 +683,40 @@ void test_9(const string[] argv) {
   /* read particles */
   //auto particles = parse_gro!float(argv[1]);
   //auto particles = parse_xyz!float(argv[1]);
-  auto particles = generate_random_particles!float(1000000);
+  //auto particles = generate_random_particles!float(1000000);
+  /* read particle files, or generate random particles */
+  ParticleArray!float particles;
+  if (argv[2]) {
+    auto ext = extension(argv[2]);
+    if (ext == ".gro") {
+      particles = parse_gro!float(argv[2]);
+    }
+    else if (ext == ".xyz") {
+      particles = parse_xyz!float(argv[2]);
+    }
+    else if (ext == ".vtu") {
+      particles = parse_vtu(argv[2]);
+    }
+    else if (ext == ".dat") {
+      particles = parse_cosmo(argv[2]);
+    }
+    else if (ext == ".hex") {
+      particles = convert_type!float(parse_hex_meshes(argv[2]));
+    }
+    else {
+      enforce(argv.length==4, "need number of particles to generate");
+      particles = generate_random_particles!float(to!int(argv[3]));
+    }
+  }
+  writeln("done parsing");
 
-  double[] code_length1;
-  double[] code_length2;
-  for (size_t i = 0; i < particles.position.length; ++i) {
+  Tuple!(double[], double) code_length1; code_length1[1] = 0;
+  Tuple!(double[], double) code_length2; code_length2[1] = 0;
+  for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
     auto tree = new KdTree!float();
-    //tree.set_precision(16);
-    tree.set_accuracy(1e-3);
-    writeln(tree.sizeof);
+    tree.set_accuracy(1e-6);
+    //tree.set_precision(23);
+    //tree.set_accuracy(1e-5);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     traverse_code_length(0, tree, code_length1, code_length2);
     //int[][int] stats;
@@ -722,11 +732,12 @@ void test_9(const string[] argv) {
   }
   writeln("code length 1 = ", code_length1);
   writeln("code length 2 = ", code_length2);
-  for (size_t i = 0; i < code_length1.length; ++i) {
-    writeln(code_length1[i] / code_length2[i]);
+  for (size_t i = 0; i < code_length1[0].length; ++i) {
+    writeln(code_length1[0][i] / code_length2[0][i]);
   }
-  writeln(reduce!((a,b)=>a+b)(code_length1));
-  writeln(reduce!((a,b)=>a+b)(code_length2));
+  writeln(code_length1[1] / code_length2[1]);
+  writeln(reduce!((a,b)=>a+b)(code_length1[0]) + code_length1[1]);
+  writeln(reduce!((a,b)=>a+b)(code_length2[0]) + code_length2[1]);
 }
 
 /++ Test the kdtree to make sure it is working +/
@@ -746,12 +757,13 @@ void test_10(const string[] argv) {
   }
 
   //auto particles = parse_xyz!float(argv[1]);
-  auto particles = generate_random_particles!float(10000);
+  //auto particles = generate_random_particles!float(10000);
+  auto particles = parse_cosmo(argv[1]);
 
   Vec3!float[] output_particles;
   for (size_t i = 0; i < particles.position.length; ++i) { // time step loop
     auto tree = new KdTree!float();
-    tree.set_accuracy(1e-3);
+    //tree.set_accuracy(1e-3);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     kdtree_to_particles(tree, output_particles);
   }
@@ -765,7 +777,19 @@ void test_10(const string[] argv) {
 //
 int main(const string[] argv) {
   import std.bitmanip;
-  writeln(BitArray.sizeof);
+  alias test_func = void function(const string[]);
+  test_func[string] func_map;
+  func_map["test_1"] = &test_1;
+  func_map["test_2"] = &test_2;
+  func_map["test_3"] = &test_3;
+  func_map["test_4"] = &test_4;
+  func_map["test_5"] = &test_5;
+  func_map["test_6"] = &test_6;
+  func_map["test_7"] = &test_7;
+  func_map["test_8"] = &test_8;
+  func_map["test_9"] = &test_9;
+  func_map["test_10"] = &test_10;
+  //writeln(b[0]);
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;
   //line.formattedRead!"%d DZATO DZ %d"(temp, temp);
@@ -780,15 +804,7 @@ int main(const string[] argv) {
   //writeln("-----------");
   //writeln(first);
   try {
-    //test_1(argv);
-    //test_2(argv);
-    //test_3();
-    //test_4(argv);
-    //test_5(argv);
-    //test_6(argv);
-    //test_9(argv);
-    test_10(argv);
-    int a = 0;
+    func_map[argv[1]](argv);
   }
   catch (Exception e) {
     writeln(e);

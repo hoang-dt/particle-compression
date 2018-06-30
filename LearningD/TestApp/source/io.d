@@ -126,14 +126,15 @@ unittest {
 }
 
 /++ Read all the points from a hex mesh file (skip the hexes) +/
-Vec3!double[] read_hex_meshes(const string file_name) {
+ParticleArray!double parse_hex_meshes(const string file_name) {
   auto file = File(file_name, "r");
   int npoints;
   char[] buf;
   file.readln(buf);
   string temp;
   buf.formattedRead!"# %s %s"(npoints, temp);
-  Vec3!double[] points;
+  ParticleArray!double particles;
+  particles.position.length = 1;
   while (true) {
     if (!file.readln(buf)) {
       break;
@@ -144,17 +145,17 @@ Vec3!double[] read_hex_meshes(const string file_name) {
     else if (buf[0] == 'v') {
       double x, y, z;
       buf.formattedRead!"v %s %s %s"(x, y, z);
-      points ~= Vec3!double(x, y, z);
+      particles.position[0] ~= Vec3!double(x, y, z);
     }
-    else if (points.length != npoints) {
+    else if (particles.position.length != npoints) {
       continue;
     }
     else {
       break;
     }
   }
-  enforce(points.length == npoints);
-  return points;
+  enforce(particles.position.length==npoints, "Number of particles mismatched");
+  return particles;
 }
 
 alias ParticlePos = Vec3!float;
@@ -163,6 +164,7 @@ alias ParticlePos = Vec3!float;
 struct ParticleArray(T) {
   Vec3!T[][] position;
   Vec3!T[][] velocity;
+  T[][] concentration;
 }
 
 /++ Read all particles from a GRO file +/
@@ -207,7 +209,6 @@ ParticleArray!T parse_gro(T)(const string file_name) {
   return particles;
 }
 
-
 /++ Read all particles from a XYZ file +/
 ParticleArray!T parse_xyz(T)(const string file_name) {
   auto file = File(file_name, "r");
@@ -229,4 +230,79 @@ ParticleArray!T parse_xyz(T)(const string file_name) {
   }
   //writeln(particles.position[0].length);
   return particles;
+}
+
+/++ Read particles in the vtu format (e.g., VIS 2016 contest
+// TODO: this function reads only one time step +/
+ParticleArray!float parse_vtu(const string file_name) {
+  struct Header {
+    uint pad3;
+    uint size;
+    uint pad1;
+    uint step;
+    uint pad2;
+    float time;
+  }
+  auto fp = File(file_name, "rb");
+
+  ParticleArray!float particles;
+  Header[1] header;
+  int magic_offset = 4072;
+  fp.seek(magic_offset, SEEK_SET);
+  fp.rawRead(header);
+  auto size = header[0].size;
+  writeln(header[0].size);
+  particles.position ~= new Vec3!float[](size);
+  particles.velocity ~= new Vec3!float[](size);
+  particles.concentration ~= new float[](size);
+  fp.seek(4, SEEK_CUR);
+  fp.rawRead(particles.position[0]);
+  fp.seek(4, SEEK_CUR);
+  fp.rawRead(particles.velocity[0]);
+  fp.seek(4, SEEK_CUR);
+  fp.rawRead(particles.concentration[0]);
+  return particles;
+}
+
+/++ Parse cosmology simulation data from Mengjiao +/
+ParticleArray!float parse_cosmo(const string file_name) {
+  struct CosmicWebHeader {
+    int np_local; // number of particles
+    float a, t, tau;
+    int nts;
+    float dt_f_acc, dt_pp_acc, dt_c_acc;
+    int cur_checkpoint, cur_projection, cur_halofind;
+    float massp;
+  }
+  auto fp = File(file_name, "rb");
+  CosmicWebHeader[1] header;
+  fp.rawRead(header);
+  writeln("number of particles = ", header[0].np_local);
+  ParticleArray!float particles;
+  particles.position ~= new Vec3!float[](header[0].np_local);
+  particles.velocity ~= new Vec3!float[](header[0].np_local);
+  for (int i = 0; i < header[0].np_local; ++i) {
+    fp.rawRead(particles.position[0][i..i+1]);
+    fp.rawRead(particles.velocity[0][i..i+1]);
+  }
+  return particles;
+}
+
+/++ Convert a ParticleArray from one type to another +/
+ParticleArray!T2 convert_type(T2, T1)(const ParticleArray!T1 particles) {
+  ParticleArray!T2 out_particles;
+  string s(string m)() {
+    return
+      "out_particles."~m~".length = particles."~m~".length;" ~
+      "for (size_t i = 0; i < particles."~m~".length; ++i) {" ~
+        "for (size_t j = 0; j < particles."~m~"[i].length; ++j) {" ~
+          "auto p = particles."~m~"[i][j];" ~
+          "out_particles."~m~"[i][j] = math.convert_type!(T2, T1)(p);" ~
+        "}" ~
+      "}";
+  }
+  foreach (m; __traits(allMembers, ParticleArray!float)) {
+    mixin (s!m());
+  }
+  return out_particles;
 }

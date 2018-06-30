@@ -31,6 +31,15 @@ if (isNumeric!T) {
   }
 }
 
+Vec3!T2 convert_type(T2, T1)(const Vec3!T1 p) {
+  return Vec3!T2(cast(T2)p.x, cast(T2)p.y, cast(T2)p.z);
+}
+
+T2 convert_type(T2, T1)(T2 v)
+if (isNumeric!T1) {
+  return cast(T2)v;
+}
+
 long xyz2i(T)(Vec3!T n, Vec3!T v) {
   auto vl = Vec3!long(v.x, v.y, v.z);
   return vl.z*n.x*n.y + vl.y*n.x + vl.x;
@@ -60,7 +69,7 @@ unittest {
   assert(i == 16781313000);
 }
 
-/++ Approixmate log2(C(n, m)) with Sterling formula +/
+/++ Approximate log2(C(n, m)) with Sterling formula +/
 double log2_C_n_m_sterling(int n, int m) {
   assert(n>=m);
   if (n == m) {
