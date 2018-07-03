@@ -641,6 +641,34 @@ void test_8(const string[] argv) {
   writeln("Exponential parameter ", lambda);
   write_text("residuals.txt", fqf);
 }
+
+ParticleArray!float load_particles(const string[] argv) {
+  ParticleArray!float particles;
+  auto ext = extension(argv[2]);
+  if (ext == ".gro") {
+    particles = parse_gro!float(argv[2]);
+  }
+  else if (ext == ".xyz") {
+    particles = parse_xyz!float(argv[2]);
+  }
+  else if (ext == ".vtu") {
+    particles = parse_vtu(argv[2]);
+  }
+  else if (ext == ".dat") {
+    particles = parse_cosmo(argv[2]);
+  }
+  else if (ext == ".hex") {
+    auto p = parse_hex_meshes(argv[2]);
+    particles = convert_type!float(p);
+  }
+  else {
+    enforce(argv.length==4, "need number of particles to generate");
+    particles = generate_random_particles!float(to!int(argv[3]));
+  }
+  writeln("done parsing");
+  return particles;
+}
+
 /++ Collect statistics on the kd-tree +/
 void test_9(const string[] argv) {
   import std.array : array;
@@ -663,14 +691,7 @@ void test_9(const string[] argv) {
         code_length2[0][level] = 0;
       }
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
-      //if (level >= 12) {
-        code_length1[0][level] += N - log2_C_n_m(N, n);
-      //code_length1[level] += 1;
-      //}
-      //else {
-      //  code_length1[level] += log2(N+1);
-      //}
-      code_length2[0][level] += log2(N+1);
+      code_length1[0][level] += N - log2_C_n_m(N, n);
       if (parent.left_ !is null) {
         traverse_code_length(level+1, parent.left_, code_length1, code_length2);
       }
@@ -680,41 +701,13 @@ void test_9(const string[] argv) {
     }
   }
 
-  /* read particles */
-  //auto particles = parse_gro!float(argv[1]);
-  //auto particles = parse_xyz!float(argv[1]);
-  //auto particles = generate_random_particles!float(1000000);
   /* read particle files, or generate random particles */
-  ParticleArray!float particles;
-  if (argv[2]) {
-    auto ext = extension(argv[2]);
-    if (ext == ".gro") {
-      particles = parse_gro!float(argv[2]);
-    }
-    else if (ext == ".xyz") {
-      particles = parse_xyz!float(argv[2]);
-    }
-    else if (ext == ".vtu") {
-      particles = parse_vtu(argv[2]);
-    }
-    else if (ext == ".dat") {
-      particles = parse_cosmo(argv[2]);
-    }
-    else if (ext == ".hex") {
-      particles = convert_type!float(parse_hex_meshes(argv[2]));
-    }
-    else {
-      enforce(argv.length==4, "need number of particles to generate");
-      particles = generate_random_particles!float(to!int(argv[3]));
-    }
-  }
-  writeln("done parsing");
-
+  auto particles = load_particles(argv);
   Tuple!(double[], double) code_length1; code_length1[1] = 0;
   Tuple!(double[], double) code_length2; code_length2[1] = 0;
   for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
     auto tree = new KdTree!float();
-    tree.set_accuracy(1e-6);
+    //tree.set_accuracy(1e-2);
     //tree.set_precision(23);
     //tree.set_accuracy(1e-5);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
@@ -756,10 +749,7 @@ void test_10(const string[] argv) {
     return sqrt(rmse);
   }
 
-  //auto particles = parse_xyz!float(argv[1]);
-  //auto particles = generate_random_particles!float(10000);
-  auto particles = parse_cosmo(argv[1]);
-
+  auto particles = load_particles(argv);
   Vec3!float[] output_particles;
   for (size_t i = 0; i < particles.position.length; ++i) { // time step loop
     auto tree = new KdTree!float();
@@ -770,12 +760,150 @@ void test_10(const string[] argv) {
   writeln("rmse = ", particle_rmse(particles.position[0], output_particles));
 }
 
+/++ Collect and print tree statistics +/
+void test_11(const string[] argv) {
+  import std.array : array;
+  writeln("Test 11");
+
+  void traverse(T, int R)(KdTree!(T,R) parent, ref int[][int] stats) {
+    int N = parent.end_ - parent.begin_;
+    if (parent.left_ !is null) {
+      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+      stats[N] ~= n;
+    }
+    if (parent.left_ !is null) {
+      traverse(parent.left_, stats);
+    }
+    if (parent.right_ !is null) {
+      traverse(parent.right_, stats);
+    }
+  }
+
+  auto particles = load_particles(argv);
+  for (size_t i = 0; i < 1; ++i) { // time step loop
+    auto tree = new KdTree!float();
+    //tree.set_accuracy(1e-3);
+    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
+    int[][int] stats;
+    traverse(tree, stats);
+    auto results = sort!((a,b)=>(a.value.length>b.value.length))(stats.byKeyValue().array);
+    foreach (e; take(results, 8).reverse) {
+      writeln(e.key, "---------------------------");
+      foreach (v; e.value) {
+        writeln(v);
+      }
+      break;
+    }
+  }
+}
+
+/++ Construct one histogram per tree, of the ratio between left/parent +/
+void test_12(const string[] argv) {
+  import std.array : array;
+  writeln("Test 12");
+
+  void traverse(T, int R)(KdTree!(T,R) parent, ref double[8] histogram) {
+    int N = parent.end_ - parent.begin_;
+    if (N < 8) {
+      return;
+    }
+    if (parent.left_ !is null) {
+      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+      int k = cast(int)(double(n) / double(N) * 7.0);
+      ++histogram[k];
+    }
+    if (parent.left_ !is null) {
+      traverse(parent.left_, histogram);
+    }
+    if (parent.right_ !is null) {
+      traverse(parent.right_, histogram);
+    }
+  }
+
+  auto particles = load_particles(argv);
+  for (size_t i = 0; i < 1; ++i) { // time step loop
+    auto tree = new KdTree!float();
+    //tree.set_accuracy(1e-3);
+    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
+    double[8] histogram = 0;
+    traverse(tree, histogram);
+    foreach (e; histogram) {
+      writeln(e);
+    }
+  }
+}
+
+/++ Write the x-component of the velocity field in depth-first order +/
+void test_13(const string[] argv) {
+  import std.array : array;
+  writeln("Test 13");
+
+  void traverse(T, int R)(KdTree!(T,R) parent, ref double[8] histogram) {
+    int N = parent.end_ - parent.begin_;
+    if (parent.left_ !is null) {
+      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+      int k = cast(int)(double(n) / double(N) * 7.0);
+      ++histogram[k];
+    }
+    if (parent.left_ !is null) {
+      traverse(parent.left_, histogram);
+    }
+    if (parent.right_ !is null) {
+      traverse(parent.right_, histogram);
+    }
+  }
+
+  auto particles = load_particles(argv);
+  for (size_t i = 0; i < 1; ++i) { // time step loop
+    auto tree = new KdTree!float();
+    //tree.set_accuracy(1e-3);
+    tree.build!"xyz"(particles.position[i], particles.velocity[i]); // build a tree from the first time step
+    //double[8] histogram = 0;
+    //traverse(tree, histogram);
+    //foreach (e; histogram) {
+    //  writeln(e);
+    //}
+  }
+
+}
+
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
-// TODO: implement the subdivision until all points are resolved
-// TODO: consolidate testing results for multiple data sets
-//
+// TODO: where to refine next? (plot the psnr curve)
+// TODO: 6D particle?
+// TODO: use velocity as input into kdtree
+// TODO: compression over time, maybe using 4-dimension kdtree?
+
 int main(const string[] argv) {
+  // test variadic template
+  import std.array : array;
+  void test(T, A...)(T t, A a) {
+    static if (a.length) {
+      zip(t, a).sort!((t1,t2)=>t1[0]<t2[0]);
+    }
+  }
+  auto a = [3,2,1];
+  auto b = [4,5,6];
+  auto c = [7,8,9];
+  alias T = typeof(zip(a,b,c).array);
+  alias E = typeof(zip(a,b,c)[0]);
+  auto pred = delegate(E e) { return e[0] < 2; };
+  auto pred2 = delegate(int e) { return e < 1; };
+  writeln(isRandomAccessRange!(T));
+  writeln(hasLength!T);
+  writeln(hasSlicing!T);
+  writeln(hasSwappableElements!T);
+  //auto right2 = std.algorithm.sorting.partition!(pred2, SwapStrategy.stable)(a);
+  auto right = my_partition!(pred)(zip(a,b,c)[0..3]);
+  writeln(a);
+  writeln(b);
+  writeln(c);
+  auto z = zip(a,b,c);
+  writeln(isDynamicArray!(typeof(z)));
+  z.swapAt(1, 2);
+  writeln(a);
+  writeln(b);
+  writeln(c);
   import std.bitmanip;
   alias test_func = void function(const string[]);
   test_func[string] func_map;
@@ -789,6 +917,8 @@ int main(const string[] argv) {
   func_map["test_8"] = &test_8;
   func_map["test_9"] = &test_9;
   func_map["test_10"] = &test_10;
+  func_map["test_11"] = &test_11;
+  func_map["test_12"] = &test_12;
   //writeln(b[0]);
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;

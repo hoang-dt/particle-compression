@@ -3,6 +3,7 @@ module kdtree;
 import std.algorithm;
 import std.bitmanip;
 import std.math;
+import std.range;
 import std.traits;
 import math;
 
@@ -12,6 +13,38 @@ public enum Mode { None, Precision, Accuracy };
 struct BoundingBox(T) {
   Vec3!T min;
   Vec3!T max;
+}
+
+// TODO: this is a hack, we should write to let the D people know about this
+Range my_partition(alias predicate, Range)(Range r)
+if (isRandomAccessRange!(Range) && hasLength!Range && hasSlicing!Range)
+{
+  //import std.algorithm.mutation : bringToFront;
+  import std.functional : unaryFun;
+  alias pred = unaryFun!(predicate);
+  import std.algorithm.mutation : swapAt;
+  // For dynamic arrays prefer index-based manipulation
+  if (!r.length) return r;
+  size_t lo = 0, hi = r.length - 1;
+  for (;;)
+  {
+    for (;;)
+    {
+      if (lo > hi) return r[lo .. r.length];
+      if (!pred(r[lo])) break;
+      ++lo;
+    }
+    // found the left bound
+    assert(lo <= hi);
+    for (;;)
+    {
+      if (lo == hi) return r[lo .. r.length];
+      if (pred(r[hi])) break;
+      --hi;
+    }
+    // found the right bound, swap & make progress
+    r.swapAt(lo++, hi--);
+  }
 }
 
 /++ A KdTree structure to store particles in 3D +/
@@ -56,11 +89,11 @@ public:
       );
     }
 
-    void build(string order, T)(Vec3!T[] points) {
+    void build(string order, T, A...)(Vec3!T[] points, A a) {
       order_ = order;
       points_ = points;
       bbox_ = compute_bbox(points);
-      build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0); // first split
+      build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
     }
   }
 
@@ -68,15 +101,24 @@ public:
   // TODO: this build routine would always proceed until there is one particle left, regardless of the
   // actual tolerance
   // We may want to have a control on the number of levels to keep
-  void build_helper(string order, T)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {
+  void build_helper(string order, T, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim, A a) {
     assert(begin < end); // this cannot be a leaf node
     begin_ = begin;
     end_ = end;
     left_ = right_ = null;
     int d = order[dim%3] - 'x';
     double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
-    auto pred = delegate (Vec3!T a) { return a[d] < middle; };
-    auto right = std.algorithm.sorting.partition!(pred)(root.points_[begin..end]);
+    int right_length = 0;
+    static if (a.length) { // partition other arrays beside the position
+      alias E = typeof(zip(root.points_, a)[0]);
+      auto pred = delegate (E e) { return e[0][d] < middle; };
+      auto right = my_partition!(pred)(zip(root.points_, a)[begin..end]);
+    }
+    else {
+      auto pred = delegate (Vec3!T a) { return a[d] < middle; };
+      auto right = std.algorithm.sorting.partition!(pred)(root.points_[begin..end]);
+      right_length = cast(int)right.length;
+    }
     int left_size = end-begin-cast(int)right.length;
     if (left_size > 0) {
       left_ = new KdTree!(T, Inner)();
@@ -86,7 +128,7 @@ public:
         left_.build_helper_leaf!order(root, bbox_left, begin, begin+left_size, dim+1);
       }
       else {
-        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1); // recurse on the left
+        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a); // recurse on the left
       }
     }
     if (begin+left_size < end) {
@@ -97,7 +139,7 @@ public:
         right_.build_helper_leaf!order(root, bbox_right, begin+left_size, end, dim+1);
       }
       else {
-        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1); // recurse on the right
+        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a); // recurse on the right
       }
     }
   }

@@ -147,14 +147,14 @@ ParticleArray!double parse_hex_meshes(const string file_name) {
       buf.formattedRead!"v %s %s %s"(x, y, z);
       particles.position[0] ~= Vec3!double(x, y, z);
     }
-    else if (particles.position.length != npoints) {
+    else if (particles.position[0].length != npoints) {
       continue;
     }
     else {
       break;
     }
   }
-  enforce(particles.position.length==npoints, "Number of particles mismatched");
+  enforce(particles.position[0].length==npoints, "Number of particles mismatched");
   return particles;
 }
 
@@ -293,11 +293,14 @@ ParticleArray!T2 convert_type(T2, T1)(const ParticleArray!T1 particles) {
   ParticleArray!T2 out_particles;
   string s(string m)() {
     return
-      "out_particles."~m~".length = particles."~m~".length;" ~
-      "for (size_t i = 0; i < particles."~m~".length; ++i) {" ~
-        "for (size_t j = 0; j < particles."~m~"[i].length; ++j) {" ~
-          "auto p = particles."~m~"[i][j];" ~
-          "out_particles."~m~"[i][j] = math.convert_type!(T2, T1)(p);" ~
+      "if (particles."~m~" !is null) {" ~
+        "out_particles."~m~".length = particles."~m~".length;" ~
+        "for (size_t i = 0; i < particles."~m~".length; ++i) {" ~
+          "out_particles."~m~"[i].length = particles."~m~"[i].length;" ~
+          "for (size_t j = 0; j < particles."~m~"[i].length; ++j) {" ~
+            "auto p = particles."~m~"[i][j];" ~
+            "out_particles."~m~"[i][j] = math.convert_type!(T2, T1)(p);" ~
+          "}" ~
         "}" ~
       "}";
   }
