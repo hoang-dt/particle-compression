@@ -1,11 +1,15 @@
 module kdtree;
 
 import std.algorithm;
+import std.array;
 import std.bitmanip;
+import std.exception;
 import std.math;
 import std.range;
 import std.traits;
 import math;
+
+// TODO: use appender where possible
 
 public enum { Root, Inner };
 public enum Mode { None, Precision, Accuracy };
@@ -235,4 +239,89 @@ void kdtree_to_particles(T)(const KdTree!(T, Root) root, ref Vec3!T[] points) {
     }
   }
   traverse(root.order_, root, root.bbox_, 0, points);
+}
+
+/++ Return true if the given node is a leaf (either null or contains 1 particle) +/
+bool is_leaf(T, int R)(const KdTree!(T, R) node) {
+  return ((node is null) || (node.begin_+1 == node.end_));
+}
+
+/++ Return true if the two given leaves node are of the same type (both null or both containing 1 particle) +/
+bool is_same_leaf_type(T, int R1, int R2)(const KdTree!(T, R1) leaf1, const KdTree!(T, R2) leaf2) {
+  if (leaf1 is null) {
+    return leaf2 is null;
+  }
+  else if (leaf2 is null) {
+    return false;
+  }
+  return leaf1.begin_+1==leaf1.end_ && leaf2.begin_+1==leaf2.end_;
+}
+
+/++ Compare two kdtrees and output the differences, in terms of the leaf nodes of the first tree:
+  - If a leaf node is still there, output SAME
+  - If a leaf node is no longer there, output GONE
+  - If a leaf node now has children, output SPLIT +/
+enum LeafChange { Same, Switch, Split }
+void compare_kdtrees(T)(const KdTree!(T, Root) tree1, const KdTree!(T, Root) tree2, ref LeafChange[] changes) {
+  import std.stdio;
+  RefAppender!(LeafChange[]) app = appender(&changes);
+  /++ recursive function that traverse the two trees and compare the leaf nodes +/
+  void traverse(int R1, int R2)(const KdTree!(T, R1) node1, const KdTree!(T, R2) node2, RefAppender!(LeafChange[]) app) {
+    if (node1 is null) {
+      if (node2 is null) {
+        app ~= LeafChange.Same;
+      }
+      else if (node2.begin_+1 == node2.end_) {
+        app ~= LeafChange.Switch;
+      }
+      else {
+        app ~= LeafChange.Split;
+      }
+    }
+    else if (node1.begin_+1 == node1.end_) {
+      if (node2 is null) {
+        app ~= LeafChange.Switch;
+      }
+      else if (node2.begin_+1 == node2.end_) {
+        app ~= LeafChange.Same;
+      }
+      else {
+        app ~= LeafChange.Split;
+      }
+    }
+    else {
+      if (node2 is null) {
+        traverse(node1.left_, node2, app);
+        traverse(node1.right_, node2, app);
+      }
+      else if (node2.begin_+1 == node2.end_) {
+        traverse(node1.left_, node2, app);
+        enforce(node2.right_ is null);
+        traverse(node1.right_, node2.right_, app); // node2.right_ should be null
+      }
+      else {
+        traverse(node1.left_, node2.left_, app);
+        traverse(node1.right_, node2.right_, app);
+      }
+    }
+  }
+  traverse(tree1, tree2, app);
+}
+
+/++ Count the number of leaf nodes who are not null (== the number of particles) +/
+int count_leaves(T)(const KdTree!(T, Root) tree) {
+  int traverse(int R)(const KdTree!(T, R) node) {
+    int sum;
+    if (is_leaf(node)) {
+      if (node !is null) {
+        return 1;
+      }
+    }
+    else {
+      sum = traverse(node.left_);
+      sum += traverse(node.right_);
+    }
+    return sum;
+  }
+  return traverse(tree.left_) + traverse(tree.right_);
 }

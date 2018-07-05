@@ -833,38 +833,48 @@ void test_12(const string[] argv) {
   }
 }
 
-/++ Write the x-component of the velocity field in depth-first order +/
+/++ Write the x-component of the velocity/concentration field in depth-first order +/
 void test_13(const string[] argv) {
   import std.array : array;
   writeln("Test 13");
 
-  void traverse(T, int R)(KdTree!(T,R) parent, ref double[8] histogram) {
-    int N = parent.end_ - parent.begin_;
-    if (parent.left_ !is null) {
-      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
-      int k = cast(int)(double(n) / double(N) * 7.0);
-      ++histogram[k];
-    }
-    if (parent.left_ !is null) {
-      traverse(parent.left_, histogram);
-    }
-    if (parent.right_ !is null) {
-      traverse(parent.right_, histogram);
-    }
-  }
-
   auto particles = load_particles(argv);
-  for (size_t i = 0; i < 1; ++i) { // time step loop
-    auto tree = new KdTree!float();
-    //tree.set_accuracy(1e-3);
-    tree.build!"xyz"(particles.position[i], particles.velocity[i]); // build a tree from the first time step
-    //double[8] histogram = 0;
-    //traverse(tree, histogram);
-    //foreach (e; histogram) {
-    //  writeln(e);
-    //}
+  if (extension(argv[2]) == ".gro") {
+    enforce((particles.velocity !is null) && (particles.velocity.length == particles.position.length));
+    for (size_t i = 0; i < 1; ++i) { // time step loop
+      auto tree = new KdTree!float();
+      tree.build!"xyz"(particles.position[i], particles.velocity[i]); // build a tree from the first time step
+      foreach (e; particles.velocity[i]) {
+        writeln(e.x);
+      }
+    }
   }
+  else if (extension(argv[2]) == ".vtu") {
+    enforce((particles.concentration !is null) && (particles.concentration.length == particles.concentration.length));
+    for (size_t i = 0; i < 1; ++i) { // time step loop
+      auto tree = new KdTree!float();
+      foreach (e; particles.concentration[i]) {
+        writeln(e);
+      }
+      tree.build!"xyz"(particles.position[i], particles.concentration[i]); // build a tree from the first time step
+    }
+  }
+  else {
+    enforce(false);
+  }
+}
 
+/++ Build two kdtree and output the differences between them +/
+void test_14(const string[] argv) {
+  writeln("Test 14");
+  auto particles = parse_gro!float("D:/Datasets/particles/alfredo/t100-t101.gro");
+  auto tree1 = new KdTree!float(); tree1.build!"xyz"(particles.position[0]);
+  auto tree2 = new KdTree!float(); tree2.build!"xyz"(particles.position[1]);
+  LeafChange[] changes;
+  compare_kdtrees(tree1, tree2, changes);
+  foreach (e; changes) {
+    writeln(cast(int)(e));
+  }
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
@@ -875,36 +885,6 @@ void test_13(const string[] argv) {
 // TODO: compression over time, maybe using 4-dimension kdtree?
 
 int main(const string[] argv) {
-  // test variadic template
-  import std.array : array;
-  void test(T, A...)(T t, A a) {
-    static if (a.length) {
-      zip(t, a).sort!((t1,t2)=>t1[0]<t2[0]);
-    }
-  }
-  auto a = [3,2,1];
-  auto b = [4,5,6];
-  auto c = [7,8,9];
-  alias T = typeof(zip(a,b,c).array);
-  alias E = typeof(zip(a,b,c)[0]);
-  auto pred = delegate(E e) { return e[0] < 2; };
-  auto pred2 = delegate(int e) { return e < 1; };
-  writeln(isRandomAccessRange!(T));
-  writeln(hasLength!T);
-  writeln(hasSlicing!T);
-  writeln(hasSwappableElements!T);
-  //auto right2 = std.algorithm.sorting.partition!(pred2, SwapStrategy.stable)(a);
-  auto right = my_partition!(pred)(zip(a,b,c)[0..3]);
-  writeln(a);
-  writeln(b);
-  writeln(c);
-  auto z = zip(a,b,c);
-  writeln(isDynamicArray!(typeof(z)));
-  z.swapAt(1, 2);
-  writeln(a);
-  writeln(b);
-  writeln(c);
-  import std.bitmanip;
   alias test_func = void function(const string[]);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;
@@ -919,6 +899,8 @@ int main(const string[] argv) {
   func_map["test_10"] = &test_10;
   func_map["test_11"] = &test_11;
   func_map["test_12"] = &test_12;
+  func_map["test_13"] = &test_13;
+  func_map["test_14"] = &test_14;
   //writeln(b[0]);
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;
@@ -933,8 +915,14 @@ int main(const string[] argv) {
   //auto first = std.algorithm.sorting.partition!"a>0"(arr);
   //writeln("-----------");
   //writeln(first);
+  int[] a;
+  auto app = appender(&a);
+  app ~= 1;
+  app ~= 2;
+  writeln(a);
   try {
     func_map[argv[1]](argv);
+    int stop = 0;
   }
   catch (Exception e) {
     writeln(e);
