@@ -7,6 +7,8 @@ import std.exception;
 import std.math;
 import std.range;
 import std.traits;
+import std.typecons;
+import circular_queue;
 import math;
 
 // TODO: use appender where possible
@@ -97,6 +99,13 @@ public:
       order_ = order;
       points_ = points;
       bbox_ = compute_bbox(points);
+      build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
+    }
+
+    void build_with_bbox(string order, T, A...)(Vec3!T[] points, BoundingBox!T bbox, A a) {
+      order_ = order;
+      points_ = points;
+      bbox_ = bbox;
       build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
     }
   }
@@ -306,6 +315,54 @@ void compare_kdtrees(T)(const KdTree!(T, Root) tree1, const KdTree!(T, Root) tre
     }
   }
   traverse(tree1, tree2, app);
+}
+
+/++ Traverse the two trees in bread-first manner, and store the per-node differences +/
+void compare_kdtrees_values(T)(KdTree!(T, Root) tree1, KdTree!(T, Root) tree2, ref int[] diffs) {
+  import std.stdio;
+  writeln("hello");
+  RefAppender!(int[]) app = appender(&diffs);
+  alias Node = KdTree!(T, Inner);
+  alias NodePair = Tuple!(Node, Node);
+  CircularQueue!NodePair q;
+  q.push(tuple(tree1.left_, tree2.left_));
+  writeln("hello2");
+  q.push(tuple(tree1.right_, tree2.right_));
+  writeln("hello3");
+  while (!q.empty()) {
+    //writeln("length ", q.length);
+    auto nodes = q.pop();
+    if (nodes[0] is null) {
+      if (nodes[1] is null) {
+        app ~= 0;
+      }
+    }
+    else if (nodes[0].begin_+1 == nodes[0].end_) {
+      if (nodes[1] is null) {
+        app ~= -1;
+      }
+      else if (nodes[1].begin_+1 == nodes[1].end_) {
+        app ~= 0;
+      }
+      else {
+        app ~= (nodes[1].end_-nodes[1].begin_) - 1;
+      }
+    }
+    else {
+      if (nodes[1] is null) {
+        app ~= 0 - (nodes[0].end_ - nodes[0].begin_);
+      }
+      else if (nodes[1].begin_+1 == nodes[1].end_) {
+        app ~= 1 - (nodes[0].end_ - nodes[0].begin_);
+      }
+      else {
+        app ~= (nodes[1].end_-nodes[1].begin_) - (nodes[0].end_-nodes[0].begin_);
+        q.push(tuple(nodes[0].left_, nodes[1].left_));
+        q.push(tuple(nodes[0].right_, nodes[1].right_));
+      }
+    }
+  }
+  writeln("end");
 }
 
 /++ Count the number of leaf nodes who are not null (== the number of particles) +/

@@ -218,18 +218,26 @@ ParticleArray!T parse_xyz(T)(const string file_name) {
   file.readln(line);
   int nparticles = to!int(line[0..$-1]);
   file.readln(line); // dummy second line
-  int i = 0;
   int timestep = 0;
   particles.position.length = 1;
   string c;
-  while (!file.eof) {
+  for (int i = 0; i<nparticles && !file.eof; ++i) {
     file.readln(line);
     float px, py, pz;
     line.formattedRead!"%s %s %s %s"(c, px, py, pz);
     particles.position[0] ~= Vec3!T(px, py, pz);
   }
-  //writeln(particles.position[0].length);
   return particles;
+}
+
+void dump_xyz(T)(const string file_name, ParticleArray!T particles) {
+  auto file = File(file_name, "w");
+  int nparticles = cast(int)particles.position[0].length;
+  file.writeln(nparticles);
+  file.writeln("dummy");
+  for (int i = 0; i < nparticles; ++i) {
+    file.writeln("C ", particles.position[0][i].x, " ", particles.position[0][i].y, " ", particles.position[0][i].z);
+  }
 }
 
 /++ Read particles in the vtu format (e.g., VIS 2016 contest

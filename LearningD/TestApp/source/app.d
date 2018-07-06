@@ -707,7 +707,7 @@ void test_9(const string[] argv) {
   Tuple!(double[], double) code_length2; code_length2[1] = 0;
   for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
     auto tree = new KdTree!float();
-    //tree.set_accuracy(1e-2);
+    tree.set_accuracy(0.4);
     //tree.set_precision(23);
     //tree.set_accuracy(1e-5);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
@@ -750,14 +750,18 @@ void test_10(const string[] argv) {
   }
 
   auto particles = load_particles(argv);
+  writeln(particles.position[0].length);
   Vec3!float[] output_particles;
   for (size_t i = 0; i < particles.position.length; ++i) { // time step loop
     auto tree = new KdTree!float();
     //tree.set_accuracy(1e-3);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
     kdtree_to_particles(tree, output_particles);
+    writeln(output_particles.length);
+    writeln(particles.position[i].length);
+    enforce(output_particles.length == particles.position[i].length);
+    writeln("rmse = ", particle_rmse(particles.position[i], output_particles));
   }
-  writeln("rmse = ", particle_rmse(particles.position[0], output_particles));
 }
 
 /++ Collect and print tree statistics +/
@@ -864,22 +868,53 @@ void test_13(const string[] argv) {
   }
 }
 
-/++ Build two kdtree and output the differences between them +/
+/++ Rendering test +/
 void test_14(const string[] argv) {
   writeln("Test 14");
+  enforce(argv.length == 4);
+  auto particles = load_particles(argv);
+  auto tree = new KdTree!float();
+  tree.set_precision(23);
+  tree.build!"xyz"(particles.position[0]);
+  Vec3!float[] points;
+  kdtree_to_particles(tree, points);
+  ParticleArray!float new_particles;
+  new_particles.position ~= points;
+  dump_xyz(argv[3], new_particles);
+}
+
+
+/++ Build two kdtree and output the differences between them +/
+void test_15(const string[] argv) {
+  writeln("Test 15");
   auto particles = parse_gro!float("D:/Datasets/particles/alfredo/t100-t101.gro");
   auto tree1 = new KdTree!float(); tree1.build!"xyz"(particles.position[0]);
-  auto tree2 = new KdTree!float(); tree2.build!"xyz"(particles.position[1]);
+  auto tree2 = new KdTree!float(); tree2.build_with_bbox!"xyz"(particles.position[1], tree1.bbox_);
   LeafChange[] changes;
   compare_kdtrees(tree1, tree2, changes);
   foreach (e; changes) {
-    writeln(cast(int)(e));
+    //writeln(cast(int)(e));
   }
+  writeln("abc");
+  int[] diffs;
+  compare_kdtrees_values(tree1, tree2, diffs);
+  foreach (e; diffs) {
+    writeln(e);
+  }
+}
+/++ Convert every format to xyz +/
+void test_16(const string[] argv) {
+  writeln("Test 16 (format conversion)");
+  enforce(argv.length == 4);
+  auto particles = load_particles(argv);
+  dump_xyz(argv[3], particles);
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
 // TODO: where to refine next? (plot the psnr curve)
+// TODO: serialize the tree
+// TODO: encode tree differences across time steps
 // TODO: 6D particle?
 // TODO: use velocity as input into kdtree
 // TODO: compression over time, maybe using 4-dimension kdtree?
@@ -901,6 +936,8 @@ int main(const string[] argv) {
   func_map["test_12"] = &test_12;
   func_map["test_13"] = &test_13;
   func_map["test_14"] = &test_14;
+  func_map["test_15"] = &test_15;
+  func_map["test_16"] = &test_16;
   //writeln(b[0]);
   //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
   //int temp;
