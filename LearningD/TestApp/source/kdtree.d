@@ -82,25 +82,25 @@ public:
       mode_ = Mode.Accuracy;
     }
 
-    BoundingBox!T compute_bbox(T)(Vec3!T[] points) {
+    BoundingBox!T compute_bbox(Vec3!T[] points) {
       return BoundingBox!T (
         Vec3!T(minElement!"a.x"(points).x, minElement!"a.y"(points).y, minElement!"a.z"(points).z),
         Vec3!T(maxElement!"a.x"(points).x, maxElement!"a.y"(points).y, maxElement!"a.z"(points).z)
       );
     }
 
-    void build(string order, T, A...)(Vec3!T[] points, A a) {
+    void build(string order, A...)(Vec3!T[] points, A a) {
       order_ = order;
       points_ = points;
       bbox_ = compute_bbox(points);
-      build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
+      build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
     }
 
-    void build_with_bbox(string order, T, A...)(Vec3!T[] points, BoundingBox!T bbox, A a) {
+    void build_with_bbox(string order, A...)(Vec3!T[] points, BoundingBox!T bbox, A a) {
       order_ = order;
       points_ = points;
       bbox_ = bbox;
-      build_helper!(order, T)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
+      build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
     }
   }
 
@@ -108,7 +108,7 @@ public:
   // TODO: this build routine would always proceed until there is one particle left, regardless of the
   // actual tolerance
   // We may want to have a control on the number of levels to keep
-  void build_helper(string order, T, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim, A a) {
+  void build_helper(string order, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim, A a) {
     assert(begin < end); // this cannot be a leaf node
     begin_ = begin;
     end_ = end;
@@ -149,7 +149,7 @@ public:
     }
   }
 
-  void build_helper_leaf(string order, T)(const KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {
+  void build_helper_leaf(string order)(const KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {
     import std.stdio;
     assert(begin+1 == end);
     begin_ = begin;

@@ -916,6 +916,7 @@ void test_17(const string[] argv) {
   auto particles = load_particles(argv);
   auto tree = new KdTreeHaar!float();
   tree.build!"xyz"(particles.position[0]);
+  tree.haar_transform();
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
