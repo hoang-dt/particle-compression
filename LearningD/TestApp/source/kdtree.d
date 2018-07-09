@@ -23,27 +23,21 @@ struct BoundingBox(T) {
 
 // TODO: this is a hack, we should write to let the D people know about this
 Range my_partition(alias predicate, Range)(Range r)
-if (isRandomAccessRange!(Range) && hasLength!Range && hasSlicing!Range)
-{
-  //import std.algorithm.mutation : bringToFront;
+if (isRandomAccessRange!(Range) && hasLength!Range && hasSlicing!Range) {
   import std.functional : unaryFun;
   alias pred = unaryFun!(predicate);
   import std.algorithm.mutation : swapAt;
-  // For dynamic arrays prefer index-based manipulation
   if (!r.length) return r;
   size_t lo = 0, hi = r.length - 1;
-  for (;;)
-  {
-    for (;;)
-    {
+  for (;;) {
+    for (;;) {
       if (lo > hi) return r[lo .. r.length];
       if (!pred(r[lo])) break;
       ++lo;
     }
     // found the left bound
     assert(lo <= hi);
-    for (;;)
-    {
+    for (;;) {
       if (lo == hi) return r[lo .. r.length];
       if (pred(r[hi])) break;
       --hi;
@@ -121,7 +115,6 @@ public:
     left_ = right_ = null;
     int d = order[dim%3] - 'x';
     double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
-    int right_length = 0;
     static if (a.length) { // partition other arrays beside the position
       alias E = typeof(zip(root.points_, a)[0]);
       auto pred = delegate (E e) { return e[0][d] < middle; };
@@ -130,9 +123,8 @@ public:
     else {
       auto pred = delegate (Vec3!T a) { return a[d] < middle; };
       auto right = std.algorithm.sorting.partition!(pred)(root.points_[begin..end]);
-      right_length = cast(int)right.length;
     }
-    int left_size = end-begin-cast(int)right.length;
+    int left_size = end-begin - cast(int)right.length;
     if (left_size > 0) {
       left_ = new KdTree!(T, Inner)();
       auto bbox_left = bbox;
@@ -177,7 +169,6 @@ public:
       tolerance[1] = ldexp(epsilon, e[1]);
       tolerance[2] = ldexp(epsilon, e[2]);
     }
-    // TODO: check that middle == bbox.min/bbox.max
     while (!(stop[0] && stop[1] && stop[2])) {
       int d = order[dim%3] - 'x';
       auto dd = bbox.max[d] - bbox.min[d];
@@ -209,7 +200,6 @@ public:
       ++dim;
     }
   }
-
 }
 
 /++ Build a particle array from a kdtree +/

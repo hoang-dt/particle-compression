@@ -24,6 +24,7 @@ import circular_queue;
 import expected;
 import io;
 import kdtree;
+import kdtree_haar;
 import lorenzo;
 import math;
 import number;
@@ -874,7 +875,6 @@ void test_14(const string[] argv) {
   enforce(argv.length == 4);
   auto particles = load_particles(argv);
   auto tree = new KdTree!float();
-  tree.set_precision(23);
   tree.build!"xyz"(particles.position[0]);
   Vec3!float[] points;
   kdtree_to_particles(tree, points);
@@ -910,6 +910,14 @@ void test_16(const string[] argv) {
   dump_xyz(argv[3], particles);
 }
 
+/++ Build the Haar-based KdTree +/
+void test_17(const string[] argv) {
+  writeln("Test 17 (Haar-based Kdtree)");
+  auto particles = load_particles(argv);
+  auto tree = new KdTreeHaar!float();
+  tree.build!"xyz"(particles.position[0]);
+}
+
 // TODO: also estimate the exponential parameter and replot table 8
 // TODO: plot similar plots using actual exponential distributions
 // TODO: where to refine next? (plot the psnr curve)
@@ -938,25 +946,7 @@ int main(const string[] argv) {
   func_map["test_14"] = &test_14;
   func_map["test_15"] = &test_15;
   func_map["test_16"] = &test_16;
-  //writeln(b[0]);
-  //string line = "  266DZATO   DZ  266  15.187   9.295  17.351 -1.5178 -0.2475  0.0601";
-  //int temp;
-  //line.formattedRead!"%d DZATO DZ %d"(temp, temp);
-  //auto points = [Vec3d(-1, 1, 1), Vec3d(1, 1 , -1), Vec3d(-1, 1, -1), Vec3d(1, -1, -1),
-  //               Vec3d(-1, -1, 1), Vec3d(1, 1, 1), Vec3d(1, -1, 1), Vec3d(-1, -1, -1)];
-  //auto fq = generate_array_exponential(10);
-  //auto lambda = ml_exponential(fq);
-  //writeln("lambda = ", lambda);
-  //return 0;
-  //auto arr = [1,2,3,4,5];
-  //auto first = std.algorithm.sorting.partition!"a>0"(arr);
-  //writeln("-----------");
-  //writeln(first);
-  int[] a;
-  auto app = appender(&a);
-  app ~= 1;
-  app ~= 2;
-  writeln(a);
+  func_map["test_17"] = &test_17;
   try {
     func_map[argv[1]](argv);
     int stop = 0;

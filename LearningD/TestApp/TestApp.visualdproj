@@ -873,6 +873,7 @@
   <File path="source\expected.d" />
   <File path="source\io.d" />
   <File path="source\kdtree.d" />
+  <File path="source\kdtree_haar.d" />
   <File path="source\lorenzo.d" />
   <File path="source\math.d" />
   <File path="source\number.d" />
