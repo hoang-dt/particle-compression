@@ -73,7 +73,7 @@ public:
       val_ = left_.val_;
       haar(val_, right_.val_);
       int d = root.nlevels_ - level;
-      if (d >= 3) {
+      if (d%3 != 2) {
         // left-right ~ right-right
         assert(left_.right_ && right_.right_);
         haar(left_.right_.val_, right_.right_.val_);
