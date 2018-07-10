@@ -27,7 +27,7 @@ public:
     }
 
     void haar_transform() {
-      haar_transform_helper(this, 0, cast(int)points_.length);
+      haar_transform_helper(this, 0, 0, cast(int)points_.length);
     }
 
     void pad() {
@@ -53,22 +53,39 @@ public:
     return lvl + 1;
   }
 
-  Vec3!T haar_transform_helper(KdTreeHaar!T root, int begin, int end) {
+  void haar_transform_helper(KdTreeHaar!T root, int level, int begin, int end) {
+    void haar(ref Vec3!T left, ref Vec3!T right) {
+      auto mid = (left+right) / 2;
+      left = mid;
+      right = right - mid;
+    }
     /* for each node, we compute and store the average of the two children */
-    assert(begin < end);
-    if (begin+1 == end) {
-      assert(right_ is null && left_ is null);
+    assert(begin <= end);
+    if (left_ is null) {
+      assert(level == root.nlevels_-1);
       val_ = root.points_[begin];
-      return val_;
     }
     else { // inner node, recurse
       assert(left_ !is null && right_ !is null);
       int mid = (end-begin) / 2;
-      Vec3!T left_val = left_.haar_transform_helper(root, begin, begin+mid);
-      Vec3!T right_val = right_.haar_transform_helper(root, begin+mid, end);
-      val_ = (left_val+right_val) / T(2);
-      right_.val_ = right_val - val_;
-      return val_;
+      left_.haar_transform_helper(root, level+1, begin, begin+mid);
+      right_.haar_transform_helper(root, level+1, begin+mid, end);
+      val_ = left_.val_;
+      haar(val_, right_.val_);
+      int d = root.nlevels_ - level;
+      if (d >= 3) {
+        // left-right ~ right-right
+        assert(left_.right_ && right_.right_);
+        haar(left_.right_.val_, right_.right_.val_);
+      }
+      if (d%3 == 1) {
+        // left-left-right ~ right-left-right
+        assert(left_.left_.right_ && right_.left_.right_);
+        haar(left_.left_.right_.val_, right_.left_.right_.val_);
+        // left-right-right ~ right-right-right
+        assert(left_.right_.right_ && right_.right_.right_);
+        haar(left_.right_.right_.val_, right_.right_.right_.val_);
+      }
     }
   }
 
@@ -80,7 +97,6 @@ public:
         assert(level+2 == root.nlevels_);
         left_ = new KdTreeHaar!(T, Inner)();
         right_ = new KdTreeHaar!(T, Inner)();
-        left_.val_ = right_.val_ = val_;
       }
     }
     else {
