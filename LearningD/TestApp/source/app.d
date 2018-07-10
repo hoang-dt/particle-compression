@@ -921,6 +921,7 @@ void test_17(const string[] argv) {
   tree.invert_haar_transform();
   Vec3!float[] out_particles;
   tree.to_particles(out_particles);
+  writeln(out_particles.length);
   dump_xyz(argv[3], out_particles);
   //tree.list_vals(vals);
   //writeln("done");

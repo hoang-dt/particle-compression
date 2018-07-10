@@ -45,11 +45,9 @@ public:
 
   void to_particles_helper(int begin, int end, ref Vec3!T[] points) {
     if (end-begin > 1) { // non-leaf
-      if (left_) {
-        int mid = (begin+end) / 2;
-        left_.to_particles_helper(begin, begin+mid, points);
-        right_.to_particles_helper(begin+mid, end, points);
-      }
+      int mid = (end-begin) / 2;
+      left_.to_particles_helper(begin, begin+mid, points);
+      right_.to_particles_helper(begin+mid, end, points);
     }
     else { // leaf
       points ~= val_;
