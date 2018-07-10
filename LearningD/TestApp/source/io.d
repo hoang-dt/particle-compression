@@ -230,13 +230,13 @@ ParticleArray!T parse_xyz(T)(const string file_name) {
   return particles;
 }
 
-void dump_xyz(T)(const string file_name, ParticleArray!T particles) {
+void dump_xyz(T)(const string file_name, Vec3!T[] particles) {
   auto file = File(file_name, "w");
-  int nparticles = cast(int)particles.position[0].length;
+  int nparticles = cast(int)particles.length;
   file.writeln(nparticles);
   file.writeln("dummy");
   for (int i = 0; i < nparticles; ++i) {
-    file.writeln("C ", particles.position[0][i].x, " ", particles.position[0][i].y, " ", particles.position[0][i].z);
+    file.writeln("C ", particles[i].x, " ", particles[i].y, " ", particles[i].z);
   }
 }
 

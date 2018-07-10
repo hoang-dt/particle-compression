@@ -880,7 +880,7 @@ void test_14(const string[] argv) {
   kdtree_to_particles(tree, points);
   ParticleArray!float new_particles;
   new_particles.position ~= points;
-  dump_xyz(argv[3], new_particles);
+  dump_xyz(argv[3], new_particles.position[0]);
 }
 
 
@@ -907,7 +907,7 @@ void test_16(const string[] argv) {
   writeln("Test 16 (format conversion)");
   enforce(argv.length == 4);
   auto particles = load_particles(argv);
-  dump_xyz(argv[3], particles);
+  dump_xyz(argv[3], particles.position[0]);
 }
 
 /++ Build the Haar-based KdTree +/
@@ -918,12 +918,15 @@ void test_17(const string[] argv) {
   tree.build!"xyz"(particles.position[0]);
   tree.pad();
   tree.haar_transform();
-  Vec3!float[] vals;
-  tree.list_vals(vals);
-  writeln("done");
-  write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
-  write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
-  write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));
+  tree.invert_haar_transform();
+  Vec3!float[] out_particles;
+  tree.to_particles(out_particles);
+  dump_xyz(argv[3], out_particles);
+  //tree.list_vals(vals);
+  //writeln("done");
+  //write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
+  //write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
+  //write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
