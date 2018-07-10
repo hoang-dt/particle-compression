@@ -262,31 +262,24 @@ bool is_same_leaf_type(T, int R1, int R2)(const KdTree!(T, R1) leaf1, const KdTr
   - If a leaf node now has children, output SPLIT +/
 enum LeafChange { Same, Switch, Split }
 void compare_kdtrees(T)(const KdTree!(T, Root) tree1, const KdTree!(T, Root) tree2, ref LeafChange[] changes) {
-  import std.stdio;
   RefAppender!(LeafChange[]) app = appender(&changes);
   /++ recursive function that traverse the two trees and compare the leaf nodes +/
   void traverse(int R1, int R2)(const KdTree!(T, R1) node1, const KdTree!(T, R2) node2, RefAppender!(LeafChange[]) app) {
     if (node1 is null) {
-      if (node2 is null) {
+      if (node2 is null)
         app ~= LeafChange.Same;
-      }
-      else if (node2.begin_+1 == node2.end_) {
+      else if (node2.begin_+1 == node2.end_)
         app ~= LeafChange.Switch;
-      }
-      else {
+      else
         app ~= LeafChange.Split;
-      }
     }
     else if (node1.begin_+1 == node1.end_) {
-      if (node2 is null) {
+      if (node2 is null)
         app ~= LeafChange.Switch;
-      }
-      else if (node2.begin_+1 == node2.end_) {
+      else if (node2.begin_+1 == node2.end_)
         app ~= LeafChange.Same;
-      }
-      else {
+      else
         app ~= LeafChange.Split;
-      }
     }
     else {
       if (node2 is null) {
@@ -309,42 +302,31 @@ void compare_kdtrees(T)(const KdTree!(T, Root) tree1, const KdTree!(T, Root) tre
 
 /++ Traverse the two trees in bread-first manner, and store the per-node differences +/
 void compare_kdtrees_values(T)(KdTree!(T, Root) tree1, KdTree!(T, Root) tree2, ref int[] diffs) {
-  import std.stdio;
-  writeln("hello");
   RefAppender!(int[]) app = appender(&diffs);
   alias Node = KdTree!(T, Inner);
   alias NodePair = Tuple!(Node, Node);
   CircularQueue!NodePair q;
   q.push(tuple(tree1.left_, tree2.left_));
-  writeln("hello2");
   q.push(tuple(tree1.right_, tree2.right_));
-  writeln("hello3");
   while (!q.empty()) {
-    //writeln("length ", q.length);
     auto nodes = q.pop();
-    if (nodes[0] is null) {
-      if (nodes[1] is null) {
+    if (nodes[0] is null) { // left side is null
+      if (nodes[1] is null)
         app ~= 0;
-      }
     }
-    else if (nodes[0].begin_+1 == nodes[0].end_) {
-      if (nodes[1] is null) {
+    else if (nodes[0].begin_+1 == nodes[0].end_) { // left side is one particle
+      if (nodes[1] is null)
         app ~= -1;
-      }
-      else if (nodes[1].begin_+1 == nodes[1].end_) {
+      else if (nodes[1].begin_+1 == nodes[1].end_)
         app ~= 0;
-      }
-      else {
+      else
         app ~= (nodes[1].end_-nodes[1].begin_) - 1;
-      }
     }
-    else {
-      if (nodes[1] is null) {
+    else { // left side is an inner node
+      if (nodes[1] is null)
         app ~= 0 - (nodes[0].end_ - nodes[0].begin_);
-      }
-      else if (nodes[1].begin_+1 == nodes[1].end_) {
+      else if (nodes[1].begin_+1 == nodes[1].end_)
         app ~= 1 - (nodes[0].end_ - nodes[0].begin_);
-      }
       else {
         app ~= (nodes[1].end_-nodes[1].begin_) - (nodes[0].end_-nodes[0].begin_);
         q.push(tuple(nodes[0].left_, nodes[1].left_));
@@ -352,7 +334,6 @@ void compare_kdtrees_values(T)(KdTree!(T, Root) tree1, KdTree!(T, Root) tree2, r
       }
     }
   }
-  writeln("end");
 }
 
 /++ Count the number of leaf nodes who are not null (== the number of particles) +/
@@ -360,9 +341,7 @@ int count_leaves(T)(const KdTree!(T, Root) tree) {
   int traverse(int R)(const KdTree!(T, R) node) {
     int sum;
     if (is_leaf(node)) {
-      if (node !is null) {
-        return 1;
-      }
+      if (node !is null) return 1;
     }
     else {
       sum = traverse(node.left_);

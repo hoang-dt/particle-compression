@@ -917,6 +917,12 @@ void test_17(const string[] argv) {
   auto tree = new KdTreeHaar!float();
   tree.build!"xyz"(particles.position[0]);
   tree.haar_transform();
+  Vec3!float[] vals;
+  tree.list_vals(vals);
+  writeln("done");
+  write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
+  write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
+  write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));
 }
 
 // TODO: also estimate the exponential parameter and replot table 8

@@ -1,4 +1,8 @@
 import std.algorithm;
+import std.array;
+import std.math;
+import std.typecons;
+import circular_queue;
 import math;
 
 public enum { Root, Inner }
@@ -44,18 +48,42 @@ public:
 
   Vec3!T haar_transform_helper(KdTreeHaar!T root, int begin, int end) {
     /* for each node, we compute and store the average of the two children */
+    assert(begin < end);
     if (begin+1 == end) {
       assert(right_ is null && left_ is null);
-      return root.points_[begin];
+      val_ = root.points_[begin];
+      return val_;
     }
     else { // inner node, recurse
       assert(left_ !is null && right_ !is null);
       int mid = (end-begin) / 2;
-      Vec3!T left_val = haar_transform_helper(root, begin, mid);
-      Vec3!T right_val = haar_transform_helper(root, begin+mid, end);
+      Vec3!T left_val = left_.haar_transform_helper(root, begin, begin+mid);
+      Vec3!T right_val = right_.haar_transform_helper(root, begin+mid, end);
       val_ = (left_val+right_val) / T(2);
-      right_.val_ = right_.val_ - val_;
+      right_.val_ = right_val - val_;
       return val_;
+    }
+  }
+
+  /++ List the values per level +/
+  void list_vals(ref Vec3!T[] vals) {
+    RefAppender!(Vec3!T[]) app = appender(&vals);
+    alias Node = KdTreeHaar!(T, Inner);
+    enum Tag : bool { Left, Right }
+    alias NodeTag = Tuple!(Node, Tag);
+    CircularQueue!NodeTag q;
+    q.push(tuple(this.left_, Tag.Left));
+    q.push(tuple(this.right_, Tag.Right));
+    while (!q.empty()) {
+      auto elem = q.pop();
+      if (elem[1] == Tag.Right) {
+        app ~= elem[0].val_;
+      }
+      if (elem[0].left_ !is null) {
+        assert(elem[0].right_ !is null);
+        q.push(tuple(elem[0].left_, Tag.Left));
+        q.push(tuple(elem[0].right_, Tag.Right));
+      }
     }
   }
 }
