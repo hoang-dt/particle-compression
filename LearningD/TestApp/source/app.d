@@ -917,6 +917,7 @@ void test_17(const string[] argv) {
   auto tree = new KdTreeHaar!float();
   tree.build!"xyz"(particles.position[0]);
   tree.haar_transform();
+  tree.pad();
   Vec3!float[] vals;
   tree.list_vals(vals);
   writeln("done");
