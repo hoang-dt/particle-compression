@@ -224,12 +224,10 @@ void kdtree_to_particles(T)(const KdTree!(T, Root) root, ref Vec3!T[] points) {
         for (size_t i = 0; i < node.bits_.length; ++i) {
           int d = order[dim%3] - 'x';
           double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
-          if (node.bits_[i]) {
+          if (node.bits_[i])
             bbox.max[d] = middle;
-          }
-          else {
+          else
             bbox.min[d] = middle;
-          }
           ++dim;
         }
       }

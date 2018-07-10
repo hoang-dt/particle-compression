@@ -23,15 +23,36 @@ public:
     void build(string order)(Vec3!T[] points) {
       order_ = order;
       points_ = points;
-      nlevels_ = build_helper!(order)(this, 0, cast(int)points.length, 0);
+      nlevels_ = build_helper!(order)(this, 0, cast(int)points_.length, 0);
     }
 
     void haar_transform() {
       haar_transform_helper(this, 0, 0, cast(int)points_.length);
     }
 
+    void invert_haar_transform() {
+      invert_haar_transform_helper(this, 0, 0, cast(int)points_.length);
+    }
+
     void pad() {
       pad_helper(this, 0, 0, cast(int)points_.length);
+    }
+
+    void to_particles(ref Vec3!T[] points) {
+      to_particles_helper(0, cast(int)points_.length, points);
+    }
+  }
+
+  void to_particles_helper(int begin, int end, ref Vec3!T[] points) {
+    if (end-begin > 1) { // non-leaf
+      if (left_) {
+        int mid = (begin+end) / 2;
+        left_.to_particles_helper(begin, begin+mid, points);
+        right_.to_particles_helper(begin+mid, end, points);
+      }
+    }
+    else { // leaf
+      points ~= val_;
     }
   }
 
@@ -86,6 +107,41 @@ public:
         assert(left_.right_.right_ && right_.right_.right_);
         haar(left_.right_.right_.val_, right_.right_.right_.val_);
       }
+    }
+  }
+
+  /++ Invert the Haar process +/
+  void invert_haar_transform_helper(KdTreeHaar!T root, int level, int begin, int end) {
+    void invert_haar(ref Vec3!T left, ref Vec3!T right) {
+      right = (left+right) / 2;
+      left = left * 2 - right;
+    }
+    assert(begin <= end);
+    if (left_ is null) {
+      assert(level == root.nlevels_-1);
+      return;
+    }
+    else { // inner node
+      assert(left_ && right_);
+      int d = root.nlevels_ - level;
+      if (d%3 == 1) {
+        // left-right-right ~ right-right-right
+        assert(left_.right_.right_ && right_.right_.right_);
+        invert_haar(left_.right_.right_.val_, right_.right_.right_.val_);
+        // left-left-right ~ right-left-right
+        assert(left_.left_.right_ && right_.left_.right_);
+        invert_haar(left_.left_.right_.val_, right_.left_.right_.val_);
+      }
+      if (d%3 != 2) {
+        // left-right ~ right-right
+        assert(left_.right_ && right_.right_);
+        invert_haar(left_.right_.val_, right_.right_.val_);
+      }
+      invert_haar(val_, right_.val_);
+      left_.val_ = val_;
+      int mid = (end-begin) / 2;
+      left_.haar_transform_helper(root, level+1, begin, begin+mid);
+      right_.haar_transform_helper(root, level+1, begin+mid, end);
     }
   }
 
