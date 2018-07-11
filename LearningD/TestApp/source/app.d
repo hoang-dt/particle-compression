@@ -928,17 +928,29 @@ void test_17(const string[] argv) {
   writeln("--------------");
   out_particles.length = 0;
   Vec3!float[] out_particles2;
-  tree.invert_haar_transform();
-  tree.to_particles(out_particles2);
-  writeln(out_particles2[0]);
-  writeln(out_particles2[1]);
+  //tree.zero_out_levels(1);
+  Subband!float[int] items;
+  tree.organize_subbands(items);
+  writeln(items.length);
+  for (int i = 1; i <= items.length; ++i) {
+    //auto item = items[i];
+    //sort!((a,b)=>a[0]<b[0])(item);
+    //write_text("x-level.txt", std.algorithm.iteration.map!"a[1].x"(item), "a");
+    //write_text("y-level.txt", std.algorithm.iteration.map!"a[1].y"(item), "a");
+    //write_text("z-level.txt", std.algorithm.iteration.map!"a[1].z"(item), "a");
+  }
+  //tree.invert_haar_transform();
+  //tree.to_particles(out_particles2);
+  //writeln(out_particles2[0]);
+  //writeln(out_particles2[1]);
   //writeln(out_particles.length);
-  dump_xyz(argv[3], out_particles2);
-  //tree.list_vals(vals);
+  //dump_xyz(argv[3], out_particles2);
+  Vec3!float vals[];
+  tree.list_vals(vals);
   //writeln("done");
-  //write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
-  //write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
-  //write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));
+  write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
+  write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
+  write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
