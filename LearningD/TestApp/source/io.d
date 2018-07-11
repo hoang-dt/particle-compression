@@ -317,3 +317,13 @@ ParticleArray!T2 convert_type(T2, T1)(const ParticleArray!T1 particles) {
   }
   return out_particles;
 }
+
+Vec3!T2[] convert_particle_type(T2, T1)(Vec3!T1[] particles) {
+  Vec3!T2[] out_particles;
+  out_particles.length = particles.length;
+  for (size_t i = 0; i < particles.length; ++i) {
+    auto p = particles[i];
+    out_particles[i] = math.convert_type!(T2, T1)(p);
+  }
+  return out_particles;
+}

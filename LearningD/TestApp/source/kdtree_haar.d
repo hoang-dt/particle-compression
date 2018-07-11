@@ -91,6 +91,7 @@ public:
       right_.haar_transform_helper(root, level+1, begin+mid, end);
       val_ = left_.val_;
       haar(val_, right_.val_);
+
       int d = root.nlevels_ - level;
       if (d%3 != 2) {
         // left-right ~ right-right
@@ -111,7 +112,7 @@ public:
   /++ Invert the Haar process +/
   void invert_haar_transform_helper(KdTreeHaar!T root, int level, int begin, int end) {
     void invert_haar(ref Vec3!T left, ref Vec3!T right) {
-      right = (left+right) / 2;
+      right = (left+right);
       left = left * 2 - right;
     }
     assert(begin <= end);
@@ -138,8 +139,8 @@ public:
       invert_haar(val_, right_.val_);
       left_.val_ = val_;
       int mid = (end-begin) / 2;
-      left_.haar_transform_helper(root, level+1, begin, begin+mid);
-      right_.haar_transform_helper(root, level+1, begin+mid, end);
+      left_.invert_haar_transform_helper(root, level+1, begin, begin+mid);
+      right_.invert_haar_transform_helper(root, level+1, begin+mid, end);
     }
   }
 
@@ -182,7 +183,4 @@ public:
       }
     }
   }
-
-
-
 }
