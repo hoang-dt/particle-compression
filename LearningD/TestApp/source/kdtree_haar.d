@@ -221,7 +221,6 @@ public:
     }
   }
 
-
   void organize_subbands_helper(KdTreeHaar!T root, int level, ref Subband!T[int] items) {
     if (left_ is null) {
       assert(level == root.nlevels_-1);

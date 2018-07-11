@@ -932,12 +932,15 @@ void test_17(const string[] argv) {
   Subband!float[int] items;
   tree.organize_subbands(items);
   writeln(items.length);
+  std.file.remove("x-level.txt");
+  std.file.remove("y-level.txt");
+  std.file.remove("z-level.txt");
   for (int i = 1; i <= items.length; ++i) {
-    //auto item = items[i];
-    //sort!((a,b)=>a[0]<b[0])(item);
-    //write_text("x-level.txt", std.algorithm.iteration.map!"a[1].x"(item), "a");
-    //write_text("y-level.txt", std.algorithm.iteration.map!"a[1].y"(item), "a");
-    //write_text("z-level.txt", std.algorithm.iteration.map!"a[1].z"(item), "a");
+    auto item = items[i].dup;
+    sort!((a,b)=>a[0]<b[0])(item);
+    write_text("x-level.txt", std.algorithm.iteration.map!"a[1].x"(item), "a");
+    write_text("y-level.txt", std.algorithm.iteration.map!"a[1].y"(item), "a");
+    write_text("z-level.txt", std.algorithm.iteration.map!"a[1].z"(item), "a");
   }
   //tree.invert_haar_transform();
   //tree.to_particles(out_particles2);
