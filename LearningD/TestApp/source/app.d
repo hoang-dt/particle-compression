@@ -942,15 +942,31 @@ void test_17(const string[] argv) {
     write_text("y-level.txt", std.algorithm.iteration.map!"a[1].y"(item), "a");
     write_text("z-level.txt", std.algorithm.iteration.map!"a[1].z"(item), "a");
   }
+
+  Vec3!float[][14] items2;
+  for (int i = 1; i <= items.length; ++i) {
+    auto item = items[i].dup;
+    for (int j = 0; j < item.length; ++j) {
+      enforce(item[j][0] != SubbandType.INVALID);
+      items2[item[j][0]] ~= item[j][1];
+    }
+  }
+  for (int i = 0; i < 14; ++i) {
+    write_text("x-subband"~to!string(i)~".txt", std.algorithm.iteration.map!"a.x"(items2[i]));
+    write_text("y-subband"~to!string(i)~".txt", std.algorithm.iteration.map!"a.y"(items2[i]));
+    write_text("z-subband"~to!string(i)~".txt", std.algorithm.iteration.map!"a.z"(items2[i]));
+  }
+
+
   //tree.invert_haar_transform();
   //tree.to_particles(out_particles2);
   //writeln(out_particles2[0]);
   //writeln(out_particles2[1]);
   //writeln(out_particles.length);
   //dump_xyz(argv[3], out_particles2);
-  Vec3!float vals[];
+
+  Vec3!float[] vals;
   tree.list_vals(vals);
-  //writeln("done");
   write_text("vals_x.txt", std.algorithm.iteration.map!"a.x"(vals));
   write_text("vals_y.txt", std.algorithm.iteration.map!"a.y"(vals));
   write_text("vals_z.txt", std.algorithm.iteration.map!"a.z"(vals));

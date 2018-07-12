@@ -7,7 +7,7 @@ import math;
 
 public enum { Root, Inner }
 
-public enum SubbandType : char { L, H, LL, LH, HL, HH, LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH };
+public enum SubbandType : char { L, H, LL, LH, HL, HH, LLL, LLH, LHL, LHH, HLL, HLH, HHL, HHH, INVALID };
 alias Subband(T) = Tuple!(SubbandType, Vec3!T)[];
 
 class KdTreeHaar(T, int R=Root) {
@@ -15,7 +15,7 @@ public:
   KdTreeHaar!(T, Inner) left_ = null;
   KdTreeHaar!(T, Inner) right_ = null;
   Vec3!T val_;
-  SubbandType subband_type_;
+  SubbandType subband_type_ = SubbandType.INVALID;
 
   static if (R == Root) {
     string order_;
