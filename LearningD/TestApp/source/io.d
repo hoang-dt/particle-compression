@@ -328,7 +328,7 @@ Vec3!T2[] convert_particle_type(T2, T1)(Vec3!T1[] particles) {
   return out_particles;
 }
 
-/++ Group particles every kth time steps +/
+/++ Group particles every k time steps. TODO: we probably don't need to explicitly perform this concatenation. +/
 ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
   ParticleArray!T out_particles;
   string s(string m)() {
@@ -345,3 +345,23 @@ ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
   }
   return out_particles;
 }
+
+/++ Assuming particles are grouped every k time steps, create a surrogate particle data set, by averaging
+the positions of the particles in n consecutive time steps +/
+ParticleArray!T create_surrogate_particles(T)(const ParticleArrayy!T particles, int n) {
+  ParticleArray!T out_particles;
+  out_particles.position.length = (particles.position.length + k-1) / k;
+  for (int i = 0; i < out_particles.position.length; ++i) {
+    out_particles.position[i].length = particles.position[i].length;
+    for (int j = 0; j < out_particles.position[i].length; ++j) {
+      out_particles.position[i][j] = 0;
+      int m = min(out_particles.position.length-i*n, n);
+      for (int k = 0; k < m; ++k) {
+        out_particles.position[i][j] += particles.position[i*n+k][j];
+      }
+      out_particles.position[i][j] /= T(m);
+    }
+  }
+  return out_particles;
+}
+
