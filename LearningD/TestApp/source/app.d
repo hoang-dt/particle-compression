@@ -982,7 +982,10 @@ void test_17(const string[] argv) {
 // TODO: compression over time, maybe using 4-dimension kdtree?
 
 int main(const string[] argv) {
+  float[] a = new float[](3);
+  //a[] = 0;
   alias test_func = void function(const string[]);
+  writeln(a);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;
   func_map["test_2"] = &test_2;

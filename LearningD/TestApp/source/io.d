@@ -347,21 +347,35 @@ ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
 }
 
 /++ Assuming particles are grouped every k time steps, create a surrogate particle data set, by averaging
-the positions of the particles in n consecutive time steps +/
-ParticleArray!T create_surrogate_particles(T)(const ParticleArrayy!T particles, int n) {
+the positions of the particles in n consecutive time steps.
+Return: a tuple of the surrogate particles and the maximum distance among k same particles +/
+Tuple!(ParticleArray!T, Vec3!T) create_surrogate_particles(T)(const ParticleArrayy!T particles, int n) {
   ParticleArray!T out_particles;
+  Vec3!T max_dist = Vec3!T(T.max, T.max, T.max);
   out_particles.position.length = (particles.position.length + k-1) / k;
-  for (int i = 0; i < out_particles.position.length; ++i) {
+  for (int i = 0; i < out_particles.position.length; ++i) { // time step loop
     out_particles.position[i].length = particles.position[i].length;
-    for (int j = 0; j < out_particles.position[i].length; ++j) {
-      out_particles.position[i][j] = 0;
-      int m = min(out_particles.position.length-i*n, n);
-      for (int k = 0; k < m; ++k) {
+    out_particles.position[i][] = 0;
+    int m = min(out_particles.position.length-i*n, n);
+    for (int k = 0; k < m; ++k) { // inner time step loop
+      for (int j = 0; j < out_particles.position[i].length; ++j) { // particle loop
         out_particles.position[i][j] += particles.position[i*n+k][j];
       }
+    }
+    for (int j = 0; j < out_particles.position[i].length; ++j) { // particle loop
       out_particles.position[i][j] /= T(m);
     }
+    /* update the maximum distance */
+    for (int k = 0; k < m; ++k) {
+      for (int j = 0; j < out_particles.position[i].length; ++j) {
+        auto p = particles.position[i*n+k];
+        auto mid = out_particles.position[i];
+        max_dist.x = max(max_dist.x, abs(p.x-mid.x));
+        max_dist.y = max(max_dist.y, abs(p.y-mid.y));
+        max_dist.z = max(max_dist.z, abs(p.z-mid.z));
+      }
+    }
   }
-  return out_particles;
+  return tuple(out_particles, dist);
 }
 
