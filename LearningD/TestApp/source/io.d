@@ -327,3 +327,21 @@ Vec3!T2[] convert_particle_type(T2, T1)(Vec3!T1[] particles) {
   }
   return out_particles;
 }
+
+/++ Group particles every kth time steps +/
+ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
+  ParticleArray!T out_particles;
+  string s(string m)() {
+    return
+      "out_particles."~m~".length = (particles."~m~".length + k-1) / k;" ~
+      "for (int i = 0; i < out_particles."~m~".length; ++i) {" ~
+        "for (int j = 0; j < k; ++j) {" ~
+          "out_particles."~m~"[i] ~= particles."~position~"[i*k+j];" ~
+        "}" ~
+      "}";
+  }
+  foreach (m; __traits(allMembers, ParticleArray!float)) {
+    mixin (s!m());
+  }
+  return out_particles;
+}
