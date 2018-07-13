@@ -346,8 +346,8 @@ ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
   return out_particles;
 }
 
-/++ Assuming particles are grouped every k time steps, create a surrogate particle data set, by averaging
-the positions of the particles in n consecutive time steps.
+/++ Assuming particles are grouped every k time steps, create a surrogate particle data set, by
+averaging the positions of the particles in n consecutive time steps.
 Return: a tuple of the surrogate particles and the maximum distance among k same particles +/
 Tuple!(ParticleArray!T, Vec3!T) create_surrogate_particles(T)(const ParticleArrayy!T particles, int n) {
   ParticleArray!T out_particles;

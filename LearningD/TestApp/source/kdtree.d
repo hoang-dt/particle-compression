@@ -238,6 +238,42 @@ void kdtree_to_particles(T)(const KdTree!(T, Root) root, ref Vec3!T[] points) {
   traverse(root.order_, root, root.bbox_, 0, points);
 }
 
+/++ Build a list of bounding box sizes from a kdtree +/
+void kdtree_to_bbox_sizes(T)(const KdTree!(T, Root) root, ref Vec3!T[] points) {
+  void traverse(T, int R)(const string order, const KdTree!(T, R) node, BoundingBox!T bbox, int dim, ref Vec3!T[] dist) {
+    if (node.end_-node.begin_ > 1) { // non-leaf
+      int d = order[dim%3] - 'x';
+      double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
+      if (node.left_ !is null) {
+        auto bbox_left = bbox;
+        bbox_left.max[d] = middle;
+        traverse(order, node.left_, bbox_left, dim+1, points);
+      }
+      if (node.right_ !is null) {
+        auto bbox_right = bbox;
+        bbox_right.min[d] = middle;
+        traverse(order, node.right_, bbox_right, dim+1, points);
+      }
+    }
+    else { // leaf
+      if (root.mode_ != Mode.None) { // further subdivide
+        for (size_t i = 0; i < node.bits_.length; ++i) {
+          int d = order[dim%3] - 'x';
+          double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
+          if (node.bits_[i])
+            bbox.max[d] = middle;
+          else
+            bbox.min[d] = middle;
+          ++dim;
+        }
+      }
+      auto p = bbox.max - bbox.min;
+      points ~= p;
+    }
+  }
+  traverse(root.order_, root, root.bbox_, 0, points);
+}
+
 /++ Return true if the given node is a leaf (either null or contains 1 particle) +/
 bool is_leaf(T, int R)(const KdTree!(T, R) node) {
   return ((node is null) || (node.begin_+1 == node.end_));
