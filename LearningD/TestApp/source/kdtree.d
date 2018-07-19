@@ -274,12 +274,12 @@ void kdtree_to_bbox_sizes(T)(const KdTree!(T, Root) root, ref Vec3!T[] bbox_size
   traverse(root.order_, root, root.bbox_, 0, bbox_sizes);
 }
 
-Vec3!T avg_bounding_box(T)(const Vec3!T bbox_sizes) {
+Vec3!T avg_bbox_size(T)(const Vec3!T[] bbox_sizes) {
   Vec3!T avg = Vec3!T(0, 0, 0);
   foreach (b; bbox_sizes) {
-    avg += b;
+    avg = avg + b;
   }
-  avg /= T(bbox_sizes.length);
+  avg = avg / T(bbox_sizes.length);
   return avg;
 }
 

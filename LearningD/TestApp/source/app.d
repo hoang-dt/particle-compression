@@ -29,6 +29,7 @@ import lorenzo;
 import math;
 import number;
 import stats;
+import bit_stream;
 
 
 Array3D!double read_and_process_array2(const string[] argv, bool unsigned, bool shuffle) {
@@ -977,12 +978,12 @@ averaging the positions of the particles in n consecutive time steps.
 Return: a tuple of the surrogate particles and the maximum distance among k same particles +/
 Tuple!(ParticleArray!T, Vec3!T) create_surrogate_particles(T)(ParticleArray!T particles, int n) {
   ParticleArray!T out_particles;
-  Vec3!T max_dist = Vec3!T(T.max, T.max, T.max);
+  Vec3!T max_dist = Vec3!T(0, 0, 0);
   out_particles.position.length = (particles.position.length + n-1) / n;
   for (int i = 0; i < out_particles.position.length; ++i) { // time step loop
     out_particles.position[i].length = particles.position[i].length;
     out_particles.position[i][] = Vec3!T(0, 0, 0);
-    int m = min(out_particles.position.length-i*n, n);
+    int m = min(particles.position.length-i*n, n);
     for (int k = 0; k < m; ++k) { // inner time step loop
       for (int j = 0; j < out_particles.position[i].length; ++j) { // particle loop
         out_particles.position[i][j] = out_particles.position[i][j] + particles.position[i*n+k][j];
@@ -992,13 +993,21 @@ Tuple!(ParticleArray!T, Vec3!T) create_surrogate_particles(T)(ParticleArray!T pa
       out_particles.position[i][j] = out_particles.position[i][j] / T(m);
     }
     /* update the maximum distance */
-    for (int k = 0; k < m; ++k) {
+    if (i == 0) {// TODO: swap the two for statements
       for (int j = 0; j < out_particles.position[i].length; ++j) {
-        auto p = particles.position[i*n+k][j];
-        auto mid = out_particles.position[i][j];
-        max_dist.x = max(max_dist.x, abs(p.x-mid.x));
-        max_dist.y = max(max_dist.y, abs(p.y-mid.y));
-        max_dist.z = max(max_dist.z, abs(p.z-mid.z));
+        Vec3!T local_max = Vec3!T(0, 0, 0);
+        for (int k = 0; k < m; ++k) {
+        //int j = 0; {
+          auto p = particles.position[i*n+k][j];
+          auto mid = out_particles.position[i][j];
+          max_dist.x = max(max_dist.x, abs(p.x-mid.x));
+          max_dist.y = max(max_dist.y, abs(p.y-mid.y));
+          max_dist.z = max(max_dist.z, abs(p.z-mid.z));
+          local_max.x = max(local_max.x, abs(p.x-mid.x));
+          local_max.y = max(local_max.y, abs(p.y-mid.y));
+          local_max.z = max(local_max.z, abs(p.z-mid.z));
+        }
+        writeln(j, " ", local_max.x);
       }
     }
   }
@@ -1008,13 +1017,25 @@ Tuple!(ParticleArray!T, Vec3!T) create_surrogate_particles(T)(ParticleArray!T pa
 /++ Compare the distance among particles spatially and temporally +/
 void test_18(const string[] argv) {
   writeln("Test 18 (grouping of particles)");
-  enforce(argv.length == 3, "Usage: [exe] [data file] [group size]");
+  enforce(argv.length == 4, "Usage: [exe] [test] [data file] [group size]");
   auto particles = load_particles(argv);
-  int group_size = to!int(argv[2]);
+  int group_size = to!int(argv[3]);
   enforce(particles.position.length > 1, "not enough particles");
   auto tree = new KdTree!float();
-  auto combined_particles = create_surrogate_particles(particles, group_size);
-  tree.build!"xyz"(particles.position[0]);
+  auto result = create_surrogate_particles(particles, group_size);
+  auto combined_particles = result[0];
+  auto max_dist = result[1];
+  tree.build!"xyz"(combined_particles.position[0]);
+  Vec3!float[] bbox_sizes;
+  kdtree_to_bbox_sizes(tree, bbox_sizes);
+  auto avg_size = avg_bbox_size(bbox_sizes);
+  writeln("group size = ", group_size);
+  writeln("max dist = ", max_dist);
+  writeln("avg size = ", avg_size);
+}
+
+void test_19(const string[] argv) {
+  writeln("Test 19");
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
@@ -1027,28 +1048,59 @@ void test_18(const string[] argv) {
 // TODO: compression over time, maybe using 4-dimension kdtree?
 
 int main(const string[] argv) {
-  float[] a = new float[](3);
-  a[] = 0;
+  //float[] a = new float[](3);
+  //a[] = 0;
   alias test_func = void function(const string[]);
-  writeln(a);
+  //writeln(a);
   test_func[string] func_map;
-  func_map["test_1"] = &test_1;
-  func_map["test_2"] = &test_2;
-  func_map["test_3"] = &test_3;
-  func_map["test_4"] = &test_4;
-  func_map["test_5"] = &test_5;
-  func_map["test_6"] = &test_6;
-  func_map["test_7"] = &test_7;
-  func_map["test_8"] = &test_8;
-  func_map["test_9"] = &test_9;
-  func_map["test_10"] = &test_10;
-  func_map["test_11"] = &test_11;
-  func_map["test_12"] = &test_12;
-  func_map["test_13"] = &test_13;
-  func_map["test_14"] = &test_14;
-  func_map["test_15"] = &test_15;
-  func_map["test_16"] = &test_16;
-  func_map["test_17"] = &test_17;
+  //func_map["test_1"] = &test_1;
+  //func_map["test_2"] = &test_2;
+  //func_map["test_3"] = &test_3;
+  //func_map["test_4"] = &test_4;
+  //func_map["test_5"] = &test_5;
+  //func_map["test_6"] = &test_6;
+  //func_map["test_7"] = &test_7;
+  //func_map["test_8"] = &test_8;
+  //func_map["test_9"] = &test_9;
+  //func_map["test_10"] = &test_10;
+  //func_map["test_11"] = &test_11;
+  //func_map["test_12"] = &test_12;
+  //func_map["test_13"] = &test_13;
+  //func_map["test_14"] = &test_14;
+  //func_map["test_15"] = &test_15;
+  //func_map["test_16"] = &test_16;
+  //func_map["test_17"] = &test_17;
+  //func_map["test_18"] = &test_18;
+  BitStream bs;
+  bs.init_write(100);
+  bs.write(0xABCDEF, 25);
+  bs.write(0xABABABAB, 33);
+  bs.write(0xABCDEF, 25);
+  bs.write(0xFFF, 13);
+  bs.write(0xEE, 0);
+  bs.write(0xAAAAAAAAAAAAAA, 57);
+  bs.write(0xB, 5);
+  bs.flush();
+  //bs.rewind();
+  bs.init_read();
+  writefln("%x", bs.peek(25));
+  bs.consume(25);
+  bs.refill();
+  writefln("%x", bs.peek(33));
+  bs.consume(33);
+  bs.refill();
+  writefln("%x", bs.peek(25));
+  bs.consume(25);
+  bs.refill();
+  writefln("%x", bs.peek(13));
+  bs.consume(13);
+  bs.refill();
+  writefln("%x", bs.peek(57));
+  bs.consume(57);
+  bs.refill();
+  writefln("%x", bs.peek(5));
+  bs.consume(5);
+  int a= 0;
   try {
     func_map[argv[1]](argv);
     int stop = 0;
