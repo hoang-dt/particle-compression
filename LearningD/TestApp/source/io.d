@@ -6,6 +6,7 @@ import std.conv;
 import std.exception;
 import std.file;
 import std.format;
+import std.math;
 import std.json;
 import std.path;
 import std.stdio;
@@ -162,6 +163,7 @@ alias ParticlePos = Vec3!float;
 
 /++ Store particle data in all time steps +/
 struct ParticleArray(T) {
+  BoundingBox!T bbox;
   Vec3!T[][] position;
   Vec3!T[][] velocity;
   T[][] concentration;
@@ -203,9 +205,13 @@ ParticleArray!T parse_gro(T)(const string file_name) {
       else { // finished reading all particles in the current time step
         i = 0;
         ++timestep;
+        T bx, by, bz;
+        line.formattedRead!" %f %f %f"(bx, by, bz);
+        particles.bbox.max = Vec3!T(bx, by, bz);
       }
     }
   }
+  particles.bbox.min = Vec3!T(0, 0, 0);
   return particles;
 }
 
@@ -313,7 +319,9 @@ ParticleArray!T2 convert_type(T2, T1)(const ParticleArray!T1 particles) {
       "}";
   }
   foreach (m; __traits(allMembers, ParticleArray!float)) {
-    mixin (s!m());
+    static if (m != "bbox") {
+      mixin (s!m());
+    }
   }
   return out_particles;
 }
@@ -346,3 +354,26 @@ ParticleArray!T concat_time_steps(T)(const ParticleArray!T particles, int k) {
   return out_particles;
 }
 
+/++ Undo the process that makes a particle enter the boundary from the other side if it goes out of the simulation box +/
+void undo_periodic_boundary(T)(ref ParticleArray!T particles) {
+  assert(particles.position.length > 0); // has at least one time step
+  auto full_box = particles.bbox.max - particles.bbox.min;
+  auto half_box = full_box / 2;
+  for (int i = 0; i < particles.position[0].length; ++i) { // each particle
+    for (int j = 1; j < particles.position.length; ++j) { // each time step
+      Vec3!T* pos_curr = &particles.position[j  ][i];
+      Vec3!T* pos_prev = &particles.position[j-1][i];
+      for (int k = 0; k < 3; ++k) {
+        T d = (*pos_curr)[k] - (*pos_prev)[k];
+        if (abs(d) >= half_box[k]) {
+          if (d < 0) {
+            (*pos_curr)[k] = (*pos_prev)[k] + full_box[k] + d;
+          }
+          else {
+            (*pos_curr)[k] = (*pos_prev)[k] - full_box[k] + d;
+          }
+        }
+      }
+    }
+  }
+}

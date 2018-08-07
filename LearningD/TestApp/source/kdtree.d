@@ -16,11 +16,6 @@ import math;
 public enum { Root, Inner };
 public enum Mode { None, Precision, Accuracy };
 
-struct BoundingBox(T) {
-  Vec3!T min;
-  Vec3!T max;
-}
-
 // TODO: this is a hack, we should write to let the D people know about this
 Range my_partition(alias predicate, Range)(Range r)
 if (isRandomAccessRange!(Range) && hasLength!Range && hasSlicing!Range) {

@@ -333,9 +333,9 @@ public:
   ExampleInstancing(const char* _name, const char* _description)
     : entry::AppI(_name, _description)
   {
-    //particles_ = parse_gro("D:/Datasets/output3.gro");
+    particles_ = parse_gro("D:/Datasets/particles/alfredo/t0-t192000-s1000.gro");
     //particles_ = parse_xyz("D:/Datasets/priya/785000.xyz");
-    particles_ = parse_vtu("D:/Datasets/VisContest2016/sl0.20/raw/run12/120.vtu");
+    //particles_ = parse_vtu("D:/Datasets/VisContest2016/sl0.20/raw/run12/120.vtu");
     rescale_particles(particles_.position, 200);
   }
 

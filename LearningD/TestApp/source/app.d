@@ -709,7 +709,7 @@ void test_9(const string[] argv) {
   Tuple!(double[], double) code_length2; code_length2[1] = 0;
   for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
     auto tree = new KdTree!float();
-    tree.set_accuracy(0.4);
+    tree.set_accuracy(0.2);
     //tree.set_precision(23);
     //tree.set_accuracy(1e-5);
     tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
@@ -873,9 +873,11 @@ void test_13(const string[] argv) {
 /++ Rendering test +/
 void test_14(const string[] argv) {
   writeln("Test 14");
-  enforce(argv.length == 4);
+  enforce(argv.length == 5);
   auto particles = load_particles(argv);
   auto tree = new KdTree!float();
+  float accuracy = to!float(argv[4]);
+  tree.set_accuracy(accuracy);
   tree.build!"xyz"(particles.position[0]);
   Vec3!float[] points;
   kdtree_to_particles(tree, points);
@@ -1034,8 +1036,71 @@ void test_18(const string[] argv) {
   writeln("avg size = ", avg_size);
 }
 
+/++ Output x trajectory +/
 void test_19(const string[] argv) {
-  writeln("Test 19");
+  writeln("Test 19 (x trajectory)");
+  enforce(argv.length == 3);
+  auto particles = parse_gro!float(argv[2]);
+  undo_periodic_boundary(particles);
+  float[] x_trajectory;
+  float[] y_trajectory;
+  float[] z_trajectory;
+  //for (int i = 0; i < particles.position.length; ++i) {
+  //  x_trajectory ~= particles.position[i][8000].x;
+  //  y_trajectory ~= particles.position[i][8000].y;
+  //  z_trajectory ~= particles.position[i][8000].z;
+  //}
+  //write_text("x-trajectories.txt", x_trajectory);
+  //write_text("y-trajectories.txt", y_trajectory);
+  //write_text("z-trajectories.txt", z_trajectory);
+  //x_trajectory[] = [];
+  //y_trajectory[] = [];
+  //z_trajectory[] = [];
+  for (int i = 0; i < particles.velocity.length; ++i) {
+    x_trajectory ~= particles.velocity[i][8000].x;
+    y_trajectory ~= particles.velocity[i][8000].y;
+    z_trajectory ~= particles.velocity[i][8000].z;
+  }
+  write_text("x-velocities.txt", x_trajectory);
+  write_text("y-velocities.txt", y_trajectory);
+  write_text("z-velocities.txt", z_trajectory);
+}
+
+/++  +/
+void test_20(const string[] argv) {
+  writeln("Test 20");
+  auto particles = load_particles(argv);
+  auto tree1 = new KdTree!float();
+  tree1.build!"xyz"(particles.position[0]);
+  Vec3!float[] particles1;
+  kdtree_to_particles(tree1, particles1);
+  auto tree2 = new KdTree!float();
+  tree2.set_accuracy(1e-4);
+  tree2.build!"xyz"(particles.position[0]);
+  Vec3!float[] particles2;
+  kdtree_to_particles(tree2, particles2);
+  auto particles3 = new Vec3!float[](particles1.length);
+  for (size_t i = 0; i < particles1.length; ++i) {
+    particles3[i] = particles1[i] - particles2[i];
+    auto p = particles3[i];
+    particles3[i].x = sqrt(p.x*p.x+p.y*p.y+p.z*p.z);
+  }
+  write_text("diff_x.txt", std.algorithm.iteration.map!"a.x"(particles3));
+  write_text("diff_y.txt", std.algorithm.iteration.map!"a.y"(particles3));
+  write_text("diff_z.txt", std.algorithm.iteration.map!"a.z"(particles3));
+}
+
+void test_random() {
+  auto rnd = Random(unpredictableSeed);
+
+  // Generate a float in [0, 1)
+  float[] v = new float[](100000);
+  for (int i = 0; i < 100000; ++i) {
+    auto a = uniform(0.0f, 1.0f, rnd);
+    auto b = uniform(0.0f, 1.0f, rnd);
+    v[i] = (a-0.5)*(a-0.5) + (b-0.5)*(b-0.5);
+  }
+  write_text("v.txt", v);
 }
 
 // TODO: also estimate the exponential parameter and replot table 8
@@ -1047,59 +1112,82 @@ void test_19(const string[] argv) {
 // TODO: use velocity as input into kdtree
 // TODO: compression over time, maybe using 4-dimension kdtree?
 
+
 int main(const string[] argv) {
+  ulong n1 = ~(ulong(true)-1);
+  ulong n2 = ~(ulong(false)-1);
+  writefln("%64b", n1);
+  writefln("%64b", 14);
+  BitStream bs;
+  bs.init_write(100);
+  bs.repeated_write(true, 172);
+  bs.flush();
+  bs.rewind();
+  bs.init_read();
+  ulong n = 0;
+  n = bs.read(57);
+  writefln("%64b", n);
+  n = bs.read(57);
+  writefln("%64b", n);
+  n = bs.read(57);
+  writefln("%64b", n);
+  n = bs.read(2);
+  writefln("%64b", n);
+  return 0;
   //float[] a = new float[](3);
   //a[] = 0;
   alias test_func = void function(const string[]);
   //writeln(a);
   test_func[string] func_map;
-  //func_map["test_1"] = &test_1;
-  //func_map["test_2"] = &test_2;
-  //func_map["test_3"] = &test_3;
-  //func_map["test_4"] = &test_4;
-  //func_map["test_5"] = &test_5;
-  //func_map["test_6"] = &test_6;
-  //func_map["test_7"] = &test_7;
-  //func_map["test_8"] = &test_8;
-  //func_map["test_9"] = &test_9;
-  //func_map["test_10"] = &test_10;
-  //func_map["test_11"] = &test_11;
-  //func_map["test_12"] = &test_12;
-  //func_map["test_13"] = &test_13;
-  //func_map["test_14"] = &test_14;
-  //func_map["test_15"] = &test_15;
-  //func_map["test_16"] = &test_16;
-  //func_map["test_17"] = &test_17;
-  //func_map["test_18"] = &test_18;
-  BitStream bs;
-  bs.init_write(100);
-  bs.write(0xABCDEF, 25);
-  bs.write(0xABABABAB, 33);
-  bs.write(0xABCDEF, 25);
-  bs.write(0xFFF, 13);
-  bs.write(0xEE, 0);
-  bs.write(0xAAAAAAAAAAAAAA, 57);
-  bs.write(0xB, 5);
-  bs.flush();
-  //bs.rewind();
-  bs.init_read();
-  writefln("%x", bs.peek(25));
-  bs.consume(25);
-  bs.refill();
-  writefln("%x", bs.peek(33));
-  bs.consume(33);
-  bs.refill();
-  writefln("%x", bs.peek(25));
-  bs.consume(25);
-  bs.refill();
-  writefln("%x", bs.peek(13));
-  bs.consume(13);
-  bs.refill();
-  writefln("%x", bs.peek(57));
-  bs.consume(57);
-  bs.refill();
-  writefln("%x", bs.peek(5));
-  bs.consume(5);
+  func_map["test_1"] = &test_1;
+  func_map["test_2"] = &test_2;
+  func_map["test_3"] = &test_3;
+  func_map["test_4"] = &test_4;
+  func_map["test_5"] = &test_5;
+  func_map["test_6"] = &test_6;
+  func_map["test_7"] = &test_7;
+  func_map["test_8"] = &test_8;
+  func_map["test_9"] = &test_9;
+  func_map["test_10"] = &test_10;
+  func_map["test_11"] = &test_11;
+  func_map["test_12"] = &test_12;
+  func_map["test_13"] = &test_13;
+  func_map["test_14"] = &test_14;
+  func_map["test_15"] = &test_15;
+  func_map["test_16"] = &test_16;
+  func_map["test_17"] = &test_17;
+  func_map["test_18"] = &test_18;
+  func_map["test_19"] = &test_19;
+  func_map["test_20"] = &test_20;
+  //BitStream bs;
+  //bs.init_write(100);
+  //bs.write(0xABCDEF, 25);
+  //bs.write(0xABABABAB, 33);
+  //bs.write(0xABCDEF, 25);
+  //bs.write(0xFFF, 13);
+  //bs.write(0xEE, 0);
+  //bs.write(0xAAAAAAAAAAAAAA, 57);
+  //bs.write(0xB, 5);
+  //bs.flush();
+  ////bs.rewind();
+  //bs.init_read();
+  //writefln("%x", bs.peek(25));
+  //bs.consume(25);
+  //bs.refill();
+  //writefln("%x", bs.peek(33));
+  //bs.consume(33);
+  //bs.refill();
+  //writefln("%x", bs.peek(25));
+  //bs.consume(25);
+  //bs.refill();
+  //writefln("%x", bs.peek(13));
+  //bs.consume(13);
+  //bs.refill();
+  //writefln("%x", bs.peek(57));
+  //bs.consume(57);
+  //bs.refill();
+  //writefln("%x", bs.peek(5));
+  //bs.consume(5);
   int a= 0;
   try {
     func_map[argv[1]](argv);

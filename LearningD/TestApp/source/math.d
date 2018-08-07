@@ -31,6 +31,11 @@ if (isNumeric!T) {
   }
 }
 
+struct BoundingBox(T) {
+  Vec3!T min;
+  Vec3!T max;
+}
+
 Vec3!T2 convert_type(T2, T1)(const Vec3!T1 p) {
   return Vec3!T2(cast(T2)p.x, cast(T2)p.y, cast(T2)p.z);
 }

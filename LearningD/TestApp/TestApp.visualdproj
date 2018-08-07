@@ -866,6 +866,7 @@
  </Config>
  <Folder name="TestApp">
   <File path="source\app.d" />
+  <File path="source\arithmetic_coder.d" />
   <File path="source\array.d" />
   <File path="source\array_util.d" />
   <File path="source\binary_tree.d" />
