@@ -1,5 +1,6 @@
 module bit_stream;
 
+// TODO: add file input/output
 
 /++ Bitstream_ supports only either reading or writing, not both at the same time +/
 struct BitStream {
@@ -28,7 +29,7 @@ struct BitStream {
     assert(!stream || stream.length>0);
     if (stream) stream_ = stream;
     bitptr_ = &stream_[0];
-    bitpos_ = 0;
+    bitbuf_ = bitpos_ = 0;
     refill();
   }
 
@@ -68,18 +69,22 @@ struct BitStream {
   /* ---------------- Write functions ---------------- */
 
   void init_write(size_t bytes) {
+    assert(bytes >= bitbuf_.sizeof); // TODO
     stream_ = new ubyte[](bytes);
     bitptr_ = &stream_[0];
+    bitbuf_ = bitpos_ = 0;
   }
 
   /++ Flush the written bits in our buffer +/
   void flush() {
+    import std.stdio;
     assert(bitpos_ <= 64);
     *(cast(ulong*)bitptr_) = bitbuf_;
     int bytepos = bitpos_ >> 3;
     bitbuf_ = (bitbuf_>>1) >> ((bytepos<<3)-1);
     bitptr_ += bytepos;
     bitpos_ &= 7;
+    writeln("total size = ", bitptr_-&stream_[0]);
   }
 
   /++ Put "count" bits into the buffer
@@ -104,7 +109,7 @@ struct BitStream {
     assert(count >= 0);
     ulong n = ~(ulong(b)-1);
     if (count <= 64-7) { // write at most 57 bits
-      write(b, count);
+      write(n, count);
     }
     else { // write more than 57 bits
       while (true) {
@@ -120,5 +125,56 @@ struct BitStream {
         }
       }
     }
+  }
+}
+
+/++ An implementation of BitStream that uses a bool array +/
+struct BitStreamNaive {
+  bool[] stream_; // array
+  int bitpos_ = 0;
+
+  void rewind() {
+    bitpos_ = 0;
+  }
+
+  /* ---------------- Read functions ---------------- */
+  void init_read(ubyte[] stream = null) {
+    bitpos_ = 0;
+  }
+
+  /++ Extract "count" bits from the stream
+  count must be at most 64-7 +/
+  ulong read() {
+    ulong result = stream_[bitpos_];
+    ++bitpos_;
+    return result;
+  }
+
+  /* ---------------- Write functions ---------------- */
+
+  void init_write(size_t bytes) {
+    stream_.length = bytes*8;
+    bitpos_ = 0;
+  }
+
+  /++ Flush the written bits in our buffer +/
+  void flush() {
+    // do nothing
+  }
+
+  /++ Write 1 bit into the stream
+  count must be at most 64-7 +/
+  void write(ulong n) {
+    stream_[bitpos_] = n != 0;
+    ++bitpos_;
+  }
+
+  /++ Write "count" bits into the stream
+  count has no restriction +/
+  void repeated_write(bool b, int count) {
+    for (int i = 0; i < count; ++i) {
+      stream_[bitpos_+i] = b;
+    }
+    bitpos_ += count;
   }
 }

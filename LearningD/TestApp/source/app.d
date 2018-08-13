@@ -17,6 +17,7 @@ import std.stdio;
 import std.traits;
 import std.typecons;
 import dstats;
+import arithmetic_coder;
 import array;
 import array_util;
 import binary_tree;
@@ -1112,8 +1113,33 @@ void test_random() {
 // TODO: use velocity as input into kdtree
 // TODO: compression over time, maybe using 4-dimension kdtree?
 
+struct Test(int n) { static const int N = n; int b; }
+
+
+char[] my_filter(string s) {
+  char[] output;
+  foreach (c; s) {
+    if (0<=c && c<=127) {
+      output ~= c;
+    }
+  }
+  return output;
+}
 
 int main(const string[] argv) {
+  string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
+  char[] contents = my_filter(raw_contents);
+  alias Model = CharModel!(uint, 17, 15);
+  Model m;
+  m.collect_probs(contents);
+  ArithmeticCoder!Model coder;
+  coder.set_model(m);
+  coder.encode(contents);
+  char[] output;
+  coder.decode(output);
+  writeln(output);
+  Test!1 test;
+  writeln(test.N);
   ulong n1 = ~(ulong(true)-1);
   ulong n2 = ~(ulong(false)-1);
   writefln("%64b", n1);
