@@ -77,14 +77,14 @@ struct BitStream {
 
   /++ Flush the written bits in our buffer +/
   void flush() {
-    import std.stdio;
     assert(bitpos_ <= 64);
     *(cast(ulong*)bitptr_) = bitbuf_;
     int bytepos = bitpos_ >> 3;
     bitbuf_ = (bitbuf_>>1) >> ((bytepos<<3)-1);
     bitptr_ += bytepos;
     bitpos_ &= 7;
-    writeln("total size = ", bitptr_-&stream_[0]);
+    //import std.stdio;
+    //writeln("total size = ", bitptr_-&stream_[0]);
   }
 
   /++ Put "count" bits into the buffer

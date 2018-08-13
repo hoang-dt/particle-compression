@@ -32,24 +32,19 @@ if (FreqBits+2<=CodeValBits && CodeVal.sizeof*8>=CodeValBits+FreqBits) {
 
   /++ Get probability of a symbol s +/
   Prob!CodeVal get_prob(int s) {
-    //int i = s - 'a';
-    int i = s;
-    //assert(0<=i && i<='z'-'a');
-    assert(0<=i && i <=127);
-    if (i == 0)
-      return Prob!CodeVal(0, cdf_table_[i], count_);
-    return Prob!CodeVal(cdf_table_[i-1], cdf_table_[i], count_);
+    assert(0<=s && s <=127);
+    if (s == 0)
+      return Prob!CodeVal(0, cdf_table_[s], count_);
+    return Prob!CodeVal(cdf_table_[s-1], cdf_table_[s], count_);
   }
 
   /++ Get the symbol with a given code value +/
   Prob!CodeVal get_val(CodeVal v, ref int s) {
-    int i = 0;
-    for (; i<cdf_table_.length && cdf_table_[i]<=v; ++i) {}
-    //s = 'a' + i;
-    s = i;
-    if (i == 0)
-      return Prob!CodeVal(0, cdf_table_[i], count_);
-    return Prob!CodeVal(cdf_table_[i-1], cdf_table_[i], count_);
+    s = 0;
+    for (; s<cdf_table_.length && cdf_table_[s]<=v; ++s) {}
+    if (s == 0)
+      return Prob!CodeVal(0, cdf_table_[s], count_);
+    return Prob!CodeVal(cdf_table_[s-1], cdf_table_[s], count_);
   }
 
   /++ Collect probabilities from a string +/
@@ -57,16 +52,13 @@ if (FreqBits+2<=CodeValBits && CodeVal.sizeof*8>=CodeValBits+FreqBits) {
     // TODO: deal with overflow
     count_ = 0;
     foreach (c; s) {
-      //if ('a'<=c && c<='z') {
       if (0<=c && c<=127) {
         ++count_;
-        //++cdf_table_[c-'a'];
         ++cdf_table_[c];
       }
     }
-    for (int i = 1; i < cdf_table_.length; ++i) {
+    for (int i = 1; i < cdf_table_.length; ++i)
       cdf_table_[i] += cdf_table_[i-1];
-    }
   }
 }
 
@@ -95,10 +87,8 @@ struct ArithmeticCoder(Model) {
 
   /++ Encode an array of integers +/
   void encode_init(T)(T[] s) {
-    //write("encode init        ");
     low_ = 0;
     high_ = model_.Max_code_;
-    //writeln(low_, " ", high_);
     pending_bits_ = 0;
     bit_stream_.init_write(s.length*int.sizeof);
     bit_stream_.write(s.length, 64-7); // write the number of symbols in the beginning of the stream
@@ -116,17 +106,13 @@ struct ArithmeticCoder(Model) {
 
   /++ Encode a single symbol +/
   void encode(int s) {
-    //write("encode             ");
     auto p = model_.get_prob(s);
     model_.CodeVal range = high_ - low_ + 1;
     high_ = low_ + (range*p.high/p.count) - 1;
     low_ = low_ + (range*p.low/p.count);
-    //writeln(low_, " ", high_);
-
   }
 
   void encode_renormalize() {
-    //write("encode renormalize ");
     while (true) {
       if (high_ < model_.One_half_)
         put_bits_plus_pending(0);
@@ -145,73 +131,55 @@ struct ArithmeticCoder(Model) {
       low_ <<= 1;
       low_ &= model_.Max_code_; // remove the already shifted bits on the left
     }
-    //writeln(low_, " ", high_);
   }
 
   void put_bits_plus_pending(bool bit) {
     bit_stream_.write(bit); // TODO: optimize?
     write(int(bit));
-    for (int i = 0; i < pending_bits_; ++i) {
+    for (int i = 0; i < pending_bits_; ++i)
       write(int(!bit));
-    }
     bit_stream_.repeated_write(!bit, pending_bits_);
     pending_bits_ = 0;
   }
 
   /++ Decode an entire bit stream +/
   void decode(T)(ref T[] output) {
-    //alias T = ElementType!R;
-    writeln("-----------------------\n");
     ulong nsymbols = decode_init();
     output.length = nsymbols;
     for (size_t i = 0; i < output.length; ++i) {
       int s = decode();
       output[i] = to!T(s);
-      //writeln(to!T(s));
       decode_renormalize();
     }
   }
 
   ulong decode_init() {
-    //write("decode init        ");
     high_ = model_.Max_code_;
     low_ = 0;
-    //writeln(low_, " ", high_);
     val_ = 0;
     bit_stream_.init_read();
-    for (int i = 0; i < 47; ++i) {
-      write(int(bit_stream_.read() > 0));
-    }
-    writeln("hello");
-    bit_stream_.init_read();
     ulong nsymbols = bit_stream_.read(64-7); // read the number of symbols
-    //ulong nsymbols = 14;
     for (int i = 0; i < model_.Code_val_bits_; ++i) {
       val_ <<= 1;
       auto b = bit_stream_.read() > 0;
       write(int(b));
-      //val_ += bit_stream_.read(); // TODO: optimize?
       val_ += b;
     }
-    //writeln(val_);
     return nsymbols;
   }
 
   /++ Decode a single symbol +/
   int decode() {
-    //write("decode             ");
     CodeVal range = high_ - low_ + 1;
     CodeVal scaled_val = ((val_-low_+1) * model_.count_ - 1) / range;
     int s;
     auto p = model_.get_val(scaled_val, s);
     high_ = low_ + (range*p.high) / p.count - 1;
     low_ = low_ + (range*p.low) / p.count;
-    //writeln(low_, " ", high_);
     return s;
   }
 
   void decode_renormalize() {
-    //write("decode renormalize ");
     while (true) {
       if (high_ < model_.One_half_) {
         // do nothing
@@ -234,9 +202,7 @@ struct ArithmeticCoder(Model) {
       val_ <<= 1;
       auto b = bit_stream_.read();
       write(int(b > 0));
-      //val_ += bit_stream_.read(); // TODO: optimize?
       val_ += b;
     }
-    //writeln(low_, " ", high_);
   }
 }
