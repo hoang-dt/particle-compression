@@ -879,6 +879,7 @@
   <File path="source\lorenzo.d" />
   <File path="source\math.d" />
   <File path="source\number.d" />
+  <File path="source\particle_compression.d" />
   <File path="source\stats.d" />
  </Folder>
 </DProject>

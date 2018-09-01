@@ -24,12 +24,15 @@ struct BitStream {
     bitbuf_ = bitpos_ = 0;
   }
 
+  size_t size() {
+    return bitptr_ - &stream_[0];
+  }
+
   /* ---------------- Read functions ---------------- */
   void init_read(ubyte[] stream = null) {
     assert(!stream || stream.length>0);
     if (stream) stream_ = stream;
-    bitptr_ = &stream_[0];
-    bitbuf_ = bitpos_ = 0;
+    rewind();
     refill();
   }
 

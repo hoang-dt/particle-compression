@@ -1043,28 +1043,62 @@ void test_19(const string[] argv) {
   enforce(argv.length == 3);
   auto particles = parse_gro!float(argv[2]);
   undo_periodic_boundary(particles);
-  float[] x_trajectory;
-  float[] y_trajectory;
-  float[] z_trajectory;
-  //for (int i = 0; i < particles.position.length; ++i) {
-  //  x_trajectory ~= particles.position[i][8000].x;
-  //  y_trajectory ~= particles.position[i][8000].y;
-  //  z_trajectory ~= particles.position[i][8000].z;
-  //}
-  //write_text("x-trajectories.txt", x_trajectory);
-  //write_text("y-trajectories.txt", y_trajectory);
-  //write_text("z-trajectories.txt", z_trajectory);
-  //x_trajectory[] = [];
-  //y_trajectory[] = [];
-  //z_trajectory[] = [];
-  for (int i = 0; i < particles.velocity.length; ++i) {
-    x_trajectory ~= particles.velocity[i][8000].x;
-    y_trajectory ~= particles.velocity[i][8000].y;
-    z_trajectory ~= particles.velocity[i][8000].z;
+  int pid = 8000; // particle id
+  float[] x_trajectory, y_trajectory, z_trajectory;
+  for (int i = 0; i < particles.position.length; ++i) {
+    x_trajectory ~= particles.position[i][pid].x;
+    y_trajectory ~= particles.position[i][pid].y;
+    z_trajectory ~= particles.position[i][pid].z;
   }
-  write_text("x-velocities.txt", x_trajectory);
-  write_text("y-velocities.txt", y_trajectory);
-  write_text("z-velocities.txt", z_trajectory);
+  write_text("x-trajectories.txt", x_trajectory);
+  write_text("y-trajectories.txt", y_trajectory);
+  write_text("z-trajectories.txt", z_trajectory);
+  float[] x_velocity, y_velocity, z_velocity;
+
+  for (int i = 0; i < particles.velocity.length; ++i) {
+    x_velocity ~= particles.velocity[i][pid].x;
+    y_velocity ~= particles.velocity[i][pid].y;
+    z_velocity ~= particles.velocity[i][pid].z;
+  }
+  write_text("x-velocities.txt", x_velocity);
+  write_text("y-velocities.txt", y_velocity);
+  write_text("z-velocities.txt", z_velocity);
+
+  float[] x_velocity_predict = new float[](x_velocity.length);
+  float[] y_velocity_predict = new float[](y_velocity.length);
+  float[] z_velocity_predict = new float[](z_velocity.length);
+  float dt = 0.001;
+  for (int i = 0; i+1 < x_velocity.length; ++i) {
+    x_velocity_predict[i] = 2 * (x_trajectory[i+1]-x_trajectory[i])/dt - x_velocity[i];
+    y_velocity_predict[i] = 2 * (y_trajectory[i+1]-y_trajectory[i])/dt - y_velocity[i];
+    z_velocity_predict[i] = 2 * (z_trajectory[i+1]-z_trajectory[i])/dt - z_velocity[i];
+  }
+  /* normalize the predicted velocities */
+  for (int i = 0; i+1 < x_velocity.length; ++i) {
+    float x = x_velocity_predict[i], y = y_velocity_predict[i], z = z_velocity_predict[i];
+    //float length = sqrt(x*x + y*y + z*z);
+    //if (length > 0) {
+    //  x_velocity_predict[i] /= length;
+    //  y_velocity_predict[i] /= length;
+    //  z_velocity_predict[i] /= length;
+    //}
+  }
+  write_text("x-velocities-predicted.txt", x_velocity_predict);
+  write_text("y-velocities-predicted.txt", y_velocity_predict);
+  write_text("z-velocities-predicted.txt", z_velocity_predict);
+  /* normalize the original velocities */
+  for (int i = 0; i < x_velocity.length; ++i) {
+    float x = x_velocity[i], y = y_velocity[i], z = z_velocity[i];
+    //float length = sqrt(x*x + y*y + z*z);
+    //if (length > 0) {
+    //  x_velocity[i] /= length;
+    //  y_velocity[i] /= length;
+    //  z_velocity[i] /= length;
+    //}
+  }
+  write_text("x-velocities-normalized.txt", x_velocity);
+  write_text("y-velocities-normalized.txt", y_velocity);
+  write_text("z-velocities-normalized.txt", z_velocity);
 }
 
 /++  +/
@@ -1126,40 +1160,49 @@ char[] my_filter(string s) {
   return output;
 }
 
-int main(const string[] argv) {
-  string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
-  char[] contents = my_filter(raw_contents);
-  alias Model = CharModel!(uint, 17, 15);
-  Model m;
-  m.collect_probs(contents);
-  ArithmeticCoder!Model coder;
-  coder.set_model(m);
-  coder.encode(contents);
-  char[] output;
-  coder.decode(output);
-  writeln(output);
-  Test!1 test;
-  writeln(test.N);
-  ulong n1 = ~(ulong(true)-1);
-  ulong n2 = ~(ulong(false)-1);
-  writefln("%64b", n1);
-  writefln("%64b", 14);
+void test_21(const string[] argv) {
+  import particle_compression;
+  writeln("Test 21");
+  auto particles = load_particles(argv);
   BitStream bs;
-  bs.init_write(100);
-  bs.repeated_write(true, 172);
-  bs.flush();
-  bs.rewind();
-  bs.init_read();
-  ulong n = 0;
-  n = bs.read(57);
-  writefln("%64b", n);
-  n = bs.read(57);
-  writefln("%64b", n);
-  n = bs.read(57);
-  writefln("%64b", n);
-  n = bs.read(2);
-  writefln("%64b", n);
-  return 0;
+  encode(particles.position[0], bs);
+  writeln(bs.size());
+}
+
+int main(const string[] argv) {
+  //string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
+  //char[] contents = my_filter(raw_contents);
+  //alias Model = CharModel!(uint, 17, 15);
+  //Model m;
+  //m.collect_probs(contents);
+  //ArithmeticCoder!Model coder;
+  //coder.set_model(m);
+  //coder.encode(contents);
+  //char[] output;
+  //coder.decode(output);
+  //writeln(output);
+  //Test!1 test;
+  //writeln(test.N);
+  //ulong n1 = ~(ulong(true)-1);
+  //ulong n2 = ~(ulong(false)-1);
+  //writefln("%64b", n1);
+  //writefln("%64b", 14);
+  //BitStream bs;
+  //bs.init_write(100);
+  //bs.repeated_write(true, 172);
+  //bs.flush();
+  //bs.rewind();
+  //bs.init_read();
+  //ulong n = 0;
+  //n = bs.read(57);
+  //writefln("%64b", n);
+  //n = bs.read(57);
+  //writefln("%64b", n);
+  //n = bs.read(57);
+  //writefln("%64b", n);
+  //n = bs.read(2);
+  //writefln("%64b", n);
+  //return 0;
   //float[] a = new float[](3);
   //a[] = 0;
   alias test_func = void function(const string[]);
@@ -1185,6 +1228,7 @@ int main(const string[] argv) {
   func_map["test_18"] = &test_18;
   func_map["test_19"] = &test_19;
   func_map["test_20"] = &test_20;
+  func_map["test_21"] = &test_21;
   //BitStream bs;
   //bs.init_write(100);
   //bs.write(0xABCDEF, 25);
@@ -1214,7 +1258,6 @@ int main(const string[] argv) {
   //bs.refill();
   //writefln("%x", bs.peek(5));
   //bs.consume(5);
-  int a= 0;
   try {
     func_map[argv[1]](argv);
     int stop = 0;
