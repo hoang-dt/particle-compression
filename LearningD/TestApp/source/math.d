@@ -1,6 +1,7 @@
 module math;
 
 import std.math;
+import std.mathspecial;
 import std.traits;
 
 /++ 3D vector (x, y, z) +/
@@ -97,4 +98,9 @@ double log2_C_n_m(int n, int m) {
 
 T square(T)(T val) {
   return val*val;
+}
+
+/++ We use erf function to achieve better accuracy for small x +/
+real erfc(real x) {
+  return 1 - erf(x);
 }
