@@ -1164,34 +1164,39 @@ void test_21(const string[] argv) {
   import particle_compression;
   writeln("Test 21");
   auto particles = load_particles(argv);
-  BitStream bs;
+  BitStreamNaive bs;
   encode(particles.position[0], bs);
   writeln(bs.size());
 }
 
 import math;
 
+// find the bin width on the horizontal axis for binomial coding using arithmetic coding
+void test() {
+
+}
+
 // TODO: 1 gives infinity
 int main(const string[] argv) {
-  const int N = 1024*1024*1024;
-  float m = float(N) / 2; // mean
-  float s = sqrt(float(N)) / 2; // standard deviation
-  const float bin_width = 0.5f * (math.erfc(-0.5f/s/sqrt(2.0f)) - math.erfc(0.5f/s/sqrt(2.0f)));
-  int nb = cast(int)(1.0f / bin_width);
-  const int nbits = 6;
-  const int nbins = 1<<nbits;
-  float[nbins] lookup_table;
-  float step = 1.0f / nbins;
-  for (int i = 0; i < nbins; ++i) {
-    float y = (i+1) * step;
-    lookup_table[i] = erfinv(2*y-1) * sqrt(2.0f);
-  }
-  auto file = File("table.txt", "w");
-  for (int i = 0; i < nbins; ++i) {
-    float y = (i+1) * step;
-    file.writeln(y, " ", lookup_table[i]);
-  }
-  return 0;
+  //const int N = 1024;
+  //float m = float(N) / 2; // mean
+  //float s = sqrt(float(N)) / 2; // standard deviation
+  //const float bin_width = 0.5f * (math.erfc(-0.5f/s/sqrt(2.0f)) - math.erfc(0.5f/s/sqrt(2.0f)));
+  //int nb = cast(int)(1.0f / bin_width);
+  //const int nbits = 10;
+  //const int nbins = 1<<nbits;
+  //float[nbins] lookup_table;
+  //float step = 1.0f / nbins;
+  //for (int i = 0; i < nbins; ++i) {
+  //  float y = (i+1) * step;
+  //  lookup_table[i] = erfinv(2*y-1) * sqrt(2.0f);
+  //}
+  //auto file = File("table.txt", "w");
+  //for (int i = 0; i < nbins; ++i) {
+  //  float y = (i+1) * step;
+  //  file.writeln(y, " ", lookup_table[i]);
+  //}
+  //return 0;
   //string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
   //char[] contents = my_filter(raw_contents);
   //alias Model = CharModel!(uint, 17, 15);

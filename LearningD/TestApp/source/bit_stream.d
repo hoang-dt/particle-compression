@@ -172,6 +172,11 @@ struct BitStreamNaive {
     ++bitpos_;
   }
 
+  void write(ulong n, int nbits) {
+    //stream_[bitpos_] = n != 0;
+    bitpos_ += nbits;
+  }
+
   /++ Write "count" bits into the stream
   count has no restriction +/
   void repeated_write(bool b, int count) {
@@ -179,5 +184,9 @@ struct BitStreamNaive {
       stream_[bitpos_+i] = b;
     }
     bitpos_ += count;
+  }
+
+  size_t size() {
+    return (bitpos_ + 7) / 8;
   }
 }
