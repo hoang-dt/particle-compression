@@ -2,10 +2,103 @@ module particle_compression;
 
 import core.bitop;
 import std.math;
+import std.typecons;
+import arithmetic_coder;
 import bit_stream;
 import kdtree;
 import math;
 import stats;
+
+const double sqrt2 = sqrt(2.0);
+const long all_nbins = 1 << 30;
+const double epsilon = 1.0 / cast(double)(all_nbins);
+
+/++ The Gaussian CDF. m = mean, s = standard deviation +/
+double F(double m, double s, double x) {
+  return 0.5 * std.math.erfc((m-x)/(s*sqrt2));
+}
+
+/++ The inverse Gaussian CDF. m = mean, s = standard deviation +/
+double Finv(double m, double s, double y) {
+
+}
+
+/++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
+into bins and return the probability of the bin containing c +/
+tuple!(Prob!long, double[2]) get_prob(double m, double s, double a, double b, double c) {
+  assert(a < b);
+  /* compute F(a) and F(b) */
+  double l = b - a;
+  double fa = F(m, s, a); // should be close to 0
+  double fb = F(m, s, b); // should be close to 1
+  double e = (fb-fa) * epsilon;
+  if (a<=m && m<=b) {
+    /* compute d = F^-1(F(a)+e)) where e = (F(b)-F(a))/2^30 */
+    double d = Finv(fa+e);
+    assert(d > a);
+    /* partition [a,b] from the left and the right simultaneously by a step size of w=(d-a). */
+    double w = d - a;
+    int nbins = cast(int)(l / w); // total number of bins-1
+    assert(nbins > 0);
+    if ((nbins&1) == 0) { // nbins is even
+      double fl = F(m, s, a+w*(nbins/2));
+      double fr = F(m, s, b-w*(nbins/2));
+      if ((fr-fl) <= e) // the middle bin is too small
+        nbins -= 2; // merge the two middle bins
+    }
+    else { // nbins is odd
+      nbins -= 1;
+    }
+    double mw = l - w*nbins; // width of the middle bin
+    if (c-a < a+nbins/2*w) { // c is in the first set of bins
+      int bin = cast(int)((c-a)/w);
+      double begin = F(a + bin*w);
+      double end   = F(a + (bin+1)*w);
+      long low = min(cast(long)((begin-fa)/e), all_nbins); // TODO: do we need this min() operator?
+      long high = min(cast(long)((end-fa)/e), all_nbins);
+      return tuple(Prob!long(low, high, all_nbins), [begin, end]);
+    }
+    else if (c-a < a+nbins/2*w+mw) { // c is in the middle bin
+      int bin = nbins/2;
+      double begin = F(a + bin*w);
+      double end = F(a + bin*w + mw);
+      long low = min(cast(long)((begin-fa)/e), all_nbins);
+      long high = min(cast(long)((end-fa)/e), all-nbins);
+      return tuple(Prob!long(low, high, all_nbins), [begin, end]);
+    }
+    else { // c is in the third set of bins
+      int bin = cast(int)((c-mw-a)/w);
+      double begin = F(a + bin*w + mw);
+      double end   = F(a + (bin+1)*w + mw);
+      long low = min(cast(long)((begin-fa)/e), all_nbins); // TODO: do we need this min() operator?
+      long high = min(cast(long)((end-fa)/e), all_nbins);
+      return tuple(Prob!long(low, high, all_nbins), [begin, end]);
+    }
+  } else if (b < m) {
+    double d = Finv(fa+(fb-fa)/epsilon);
+    assert(d > a);
+    double w = d - a;
+    int nbins = cast(int)(l / w);
+    assert(nbins > 0);
+    double fl = F(m, s, a+w*(nbins/2));
+    double fr = fb;
+    if ((fr-fl) <= (fb-fa)*epsilon)
+      nbins -= 1;
+  } else if (m < a) {
+    double d = Finv(fb-(fb-fa)/epsilon);
+    assert(d < b);
+    double w = b - d;
+    int nbins = cast(int)(l / w);
+    assert(nbins > 0);
+    double fl = fa;
+    double fr = F(m, s, b-w*(nbins/2));
+    if ((fr-fl) <= (fb-fa)*epsilon)
+      nbins -= 1;
+  } else {
+    assert(false);
+  }
+  /* compute F(a+e) */
+}
 
 /++ v is from 0 to n-1 +/
 void encode_centered_minimal(int v, int n, ref BitStream bs) {
