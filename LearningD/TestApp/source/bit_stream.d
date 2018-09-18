@@ -2,7 +2,8 @@ module bit_stream;
 
 // TODO: add file input/output
 
-/++ Bitstream_ supports only either reading or writing, not both at the same time +/
+/++ Bits are stored from the LSB to the MSB
+Support only either reading or writing, not both at the same time +/
 struct BitStream {
   ubyte[] stream_; // array
   ubyte* bitptr_; // Pointer to current byte
