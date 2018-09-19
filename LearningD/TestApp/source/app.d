@@ -1160,6 +1160,8 @@ char[] my_filter(string s) {
   return output;
 }
 
+//Vec3!T[] generate
+
 void test_21(const string[] argv) {
   import particle_compression;
   writeln("Test 21");
@@ -1174,27 +1176,27 @@ import math;
 
 // TODO: 1 gives infinity
 int main(const string[] argv) {
-  import particle_compression;
-  BitStream bs;
-  bs.init_write(10000);
-  bs.write(16384, 32);
-  File file1 = File("file1.txt", "w");
-  for (int i = 0; i < 1638; ++i) {
-    //writeln(i);
-    encode_centered_minimal(i, 1639, bs);
-    file1.writeln(i);
-  }
-  bs.flush();
-  bs.init_read();
-  int N = cast(int)bs.read(32);
-  File file2 = File("file2.txt", "w");
-  for (int i = 0; i < 1638; ++i) {
-    //writeln(i);
-    int n = decode_centered_minimal(1639, bs);
-    file2.writeln(n);
-  }
-  writeln(N);
-  return 0;
+  //import particle_compression;
+  //BitStream bs;
+  //bs.init_write(10000);
+  //bs.write(16384, 32);
+  //File file1 = File("file1.txt", "w");
+  //for (int i = 0; i < 1638; ++i) {
+  //  //writeln(i);
+  //  encode_centered_minimal(i, 1639, bs);
+  //  file1.writeln(i);
+  //}
+  //bs.flush();
+  //bs.init_read();
+  //int N = cast(int)bs.read(32);
+  //File file2 = File("file2.txt", "w");
+  //for (int i = 0; i < 1638; ++i) {
+  //  //writeln(i);
+  //  int n = decode_centered_minimal(1639, bs);
+  //  file2.writeln(n);
+  //}
+  //writeln(N);
+  //return 0;
   //const int N = 2;
   //float m = float(N) / 2; // mean
   //float s = sqrt(float(N)) / 2; // standard deviation
