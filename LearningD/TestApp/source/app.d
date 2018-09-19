@@ -1170,17 +1170,20 @@ KdTree!(T, kdtree.Root) generate_tree_gaussian(T)(int nparticles) {
       return;
     float m = float(N) / 2; // mean
     float s = sqrt(float(N)) / 2; // standard deviation
-    double fa = F(m, s, 0);
-    double fb = F(m, s, N);
-    // generate a Gaussian-distributed random number between 0 and N (inclusively)
-    double r = uniform01();
-    while (r<fa || r>fb) {
-      r = uniform01();
-    }
-    // invert r
-    double x = Finv(m, s, r);
-    int n = cast(int)(x+0.5);
-    assert(n>=0 && n<=N);
+    //double fa = F(m, s, 0);
+    //double fb = F(m, s, N);
+    //// generate a Gaussian-distributed random number between 0 and N (inclusively)
+    //double r = uniform01();
+    //while (r<fa || r>fb) {
+    //  r = uniform01();
+    //}
+    //// invert r
+    //double x = Finv(m, s, r);
+    int n = cast(int)(rNormal(m, s)+0.5);
+    while (n<0 || n>N)
+      n = cast(int)(rNormal(m, s)+0.5);
+    //int n = cast(int)(x+0.5);
+    //assert(n>=0 && n<=N);
     if (n > 0) {
       parent.left_ = new KdTree!(T, kdtree.Inner)();
       parent.left_.begin_ = 0;
@@ -1209,10 +1212,41 @@ void test_21(const string[] argv) {
   //auto tree = new KdTree!float();
   //tree.build!"xyz"(particles.position[0]);
   auto tree = generate_tree_gaussian!float(1000000);
+  //print_tree_statistics(tree);
   BitStream bs;
   encode(tree, bs);
   writeln(bs.size());
   decode(bs);
+}
+
+void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
+  import std.array : array;
+
+  void traverse(T, int R)(KdTree!(T,R) parent, ref int[][int] stats) {
+    int N = parent.end_ - parent.begin_;
+    if (parent.left_ !is null) {
+      int n = parent.left_.end_ - parent.left_.begin_; // number of particles in the parent
+      stats[N] ~= n;
+    }
+    if (parent.left_ !is null) {
+      traverse(parent.left_, stats);
+    }
+    if (parent.right_ !is null) {
+      traverse(parent.right_, stats);
+    }
+  }
+
+  int[][int] stats;
+  traverse(tree, stats);
+  auto results = sort!((a,b)=>(a.value.length>b.value.length))(stats.byKeyValue().array);
+  File file = File("tree_stats.txt", "w");
+  foreach (e; take(results, 32).reverse) {
+    file.writeln(e.key, "---------------------------");
+    foreach (v; e.value) {
+      file.writeln(v);
+    }
+    break;
+  }
 }
 
 import math;

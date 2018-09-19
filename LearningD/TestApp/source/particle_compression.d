@@ -156,8 +156,8 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      encode_range(m, s, 0, N, n, bs);
-      //encode_centered_minimal(n, N+1, bs); // uniform
+      //encode_range(m, s, 0, N, n, bs);
+      encode_centered_minimal(n, N+1, bs); // uniform
       enc_file.writeln(n);
       if (parent.left_)
         traverse_encode(parent.left_, bs);
@@ -184,8 +184,8 @@ void decode(ref BitStream bs) {
     else { // non leaf
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      //int n = decode_centered_minimal(N+1, bs); // uniform
-      int n = decode_range(m, s, 0, N, bs);
+      //int n = decode_range(m, s, 0, N, bs);
+      int n = decode_centered_minimal(N+1, bs); // uniform
       dec_file.writeln(n);
       if (n > 0)
         traverse_decode!T(n, bs);
