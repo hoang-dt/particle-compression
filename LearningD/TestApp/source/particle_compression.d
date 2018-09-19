@@ -8,10 +8,13 @@ import bit_stream;
 import kdtree;
 import math;
 import stats;
+import bit_ops;
 
 const double sqrt2 = sqrt(2.0);
 const long all_nbins = 1 << 30;
 const double epsilon = 1.0 / cast(double)(all_nbins);
+
+// TODO: count the number of bits per level
 
 /++ The Gaussian CDF. m = mean, s = standard deviation +/
 double F(double m, double s, double x) {
@@ -27,17 +30,19 @@ double Finv(double m, double s, double y) {
 into two bins of equal probability +/
 void encode(double m, double s, double a, double b, double c, ref BitStream bs) {
   assert(a < b);
+  int beg = cast(int)ceil(a);
+  int end = cast(int)floor(b);
+  if (beg == end) return;
   /* compute F(a) and F(b) */
   double fa = F(m, s, a);
   double fb = F(m, s, b);
   /* compute F^-1((fa+fb)/2) */
   double mid = Finv(m, s, (fa+fb)*0.5);
+  assert(a<=mid && mid<=b);
   if (a==mid || b==mid) {
-    int beg = cast(int)ceil(a);
-    int end = cast(int)floor(b);
     int v = cast(int)c-beg;
     int n = end - beg + 1;
-    return encode_centered_minimal(v, n, bs);
+    //return encode_centered_minimal(v, n, bs);
   }
   assert(a<=mid && mid<=b);
   if (c < mid) {
@@ -45,43 +50,62 @@ void encode(double m, double s, double a, double b, double c, ref BitStream bs) 
     if (a+1 < mid)
       return encode(m, s, a, mid, c, bs);
   }
-  else {
+  else { // c >= mid
     bs.write(1);
     if (mid+1 < b)
       return encode(m, s, mid, b, c, bs);
+    if (mid+1 == b)
+      return encode(m, s, mid, b, c, bs);
+      //bs.write(1);
   }
 }
 
-/++ v is from 0 to n-1 +/
-void encode_centered_minimal(int v, int n, ref BitStream bs) {
-  assert(n > 0);
-  assert(v<n && v>=0);
-  import std.stdio;
-  int l1 = bsr(n);
-  int l2 = ((1<<l1)==n) ? l1 : l1+1;
-  int d = (1<<l2) - n;
-  int m = (n-d) / 2;
-  // TODO: reverse the bits before writing to the stream
-  if (v < m)
-    bs.write(v, l2);
-    //writefln("%04b", v);
-  else if (v >= m+d)
-    bs.write(v-d, l2);
-    //writefln("%04b", v-d);
-  else  // middle
-    bs.write(v, l1);
-    //writefln("%03b", v);
+/++ The  +/
+void decode() {
+
 }
 
-int decode_centered_minimal(int n, ref BitStream bs) {
+/++ v is from 0 to n-1 +/
+void encode_centered_minimal(uint v, uint n, ref BitStream bs) {
   assert(n > 0);
+  assert(v < n);
   import std.stdio;
   int l1 = bsr(n);
   int l2 = ((1<<l1)==n) ? l1 : l1+1;
   int d = (1<<l2) - n;
   int m = (n-d) / 2;
+  if (v < m) {
+    bool print = false;
+    v = bit_reverse(v);
+    v >>= v.sizeof*8 - l2;
+    bs.write(v, l2);
+    //writefln("%04b", v);
+  }
+  else if (v >= m+d) {
+    v = bit_reverse(v-d);
+    v >>= v.sizeof*8 - l2;
+    bs.write(v, l2);
+    //writefln("%04b", v-d);
+  }
+  else { // middle
+    v = bit_reverse(v);
+    v >>= v.sizeof*8 - l1;
+    bs.write(v, l1);
+    //writefln("%03b", v);
+  }
+}
+
+int decode_centered_minimal(uint n, ref BitStream bs) {
+  assert(n > 0);
+  import std.stdio;
+  int l1 = bsr(n);
+  int l2 = ((1<<l1)==n) ? l1 : l1+1;
+  uint d = (1<<l2) - n;
+  uint m = (n-d) / 2;
   bs.refill(); // TODO: minimize the number of refill
-  int v = cast(int)bs.peek(l2);
+  uint v = cast(int)bs.peek(l2);
+  v <<= v.sizeof*8 - l2;
+  v = bit_reverse(v);
   if (v < m) {
     bs.consume(l2);
     return v;
@@ -107,20 +131,49 @@ void encode(T)(Vec3!T[] positions, ref BitStream bs) {
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      encode(m, s, 0, N, n, bs);
+      //encode(m, s, 0, N, n, bs);
+      encode_centered_minimal(n, N+1, bs); // uniform
+      enc_file.writeln(n);
       if (parent.left_)
         traverse_encode(parent.left_, bs);
       if (parent.right_)
         traverse_encode(parent.right_, bs);
     }
   }
-  float[] lookup_table = new float[](1024);
   auto tree = new KdTree!T();
   tree.build!"xyz"(positions);
 
-  // TODO: first, encode the total number of particles
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
   bs.init_write(100000000); // 100 MB
+  int N = cast(int)positions.length;
+  bs.write(N, 32);
+  File enc_file = File("encode.txt", "w");
   traverse_encode(tree, bs);
   bs.flush();
+}
+
+void decode(T)(Vec3!T[] positions, ref BitStream bs) {
+  import std.stdio;
+  void traverse_decode(T)(int N, ref BitStream bs) {
+    if (N == 1) { // leaf level
+      // do nothing
+    }
+    else { // non leaf
+      float m = float(N) / 2; // mean
+      float s = sqrt(float(N)) / 2; // standard deviation
+      //encode(m, s, 0, N, n, bs);
+      int n = decode_centered_minimal(N+1, bs); // uniform
+      dec_file.writeln(n);
+      if (n > 0)
+        traverse_decode!T(n, bs);
+      if (n < N)
+        traverse_decode!T(N-n, bs);
+    }
+  }
+
+  bs.init_read();
+  int N = cast(int)bs.read(32);
+  File dec_file = File("decode.txt", "w");
+  dec_file.writeln(N);
+  traverse_decode!T(N, bs);
 }

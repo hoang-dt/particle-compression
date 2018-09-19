@@ -870,6 +870,7 @@
   <File path="source\array.d" />
   <File path="source\array_util.d" />
   <File path="source\binary_tree.d" />
+  <File path="source\bit_ops.d" />
   <File path="source\bit_stream.d" />
   <File path="source\circular_queue.d" />
   <File path="source\expected.d" />
