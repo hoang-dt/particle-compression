@@ -389,3 +389,7 @@ int count_leaves(T)(const KdTree!(T, Root) tree) {
   }
   return traverse(tree.left_) + traverse(tree.right_);
 }
+
+void dump_tree(T)(KdTree!(T, Root) tree, const string file_name) {
+
+}

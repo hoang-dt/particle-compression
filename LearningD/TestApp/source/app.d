@@ -1160,16 +1160,59 @@ char[] my_filter(string s) {
   return output;
 }
 
-//Vec3!T[] generate
+/++ Given the total number of particles, generate a tree whose +/
+KdTree!(T, kdtree.Root) generate_tree_gaussian(T)(int nparticles) {
+  import std.random;
+  import particle_compression;
+
+  void build_tree_branch(int R)(ref KdTree!(T, R) parent, int N) {
+    if (N == 1)
+      return;
+    float m = float(N) / 2; // mean
+    float s = sqrt(float(N)) / 2; // standard deviation
+    double fa = F(m, s, 0);
+    double fb = F(m, s, N);
+    // generate a Gaussian-distributed random number between 0 and N (inclusively)
+    double r = uniform01();
+    while (r<fa || r>fb) {
+      r = uniform01();
+    }
+    // invert r
+    double x = Finv(m, s, r);
+    int n = cast(int)(x+0.5);
+    assert(n>=0 && n<=N);
+    if (n > 0) {
+      parent.left_ = new KdTree!(T, kdtree.Inner)();
+      parent.left_.begin_ = 0;
+      parent.left_.end_ = n;
+      build_tree_branch(parent.left_, n);
+    }
+    if (N-n > 0) {
+      parent.right_ = new KdTree!(T, kdtree.Inner)();
+      parent.right_.begin_ = 0;
+      parent.right_.end_ = N-n;
+      build_tree_branch(parent.right_, N-n);
+    }
+  }
+
+  KdTree!(T, kdtree.Root) root = new KdTree!(T, kdtree.Root);
+  root.begin_ = 0;
+  root.end_ = nparticles;
+  build_tree_branch(root, nparticles);
+  return root;
+}
 
 void test_21(const string[] argv) {
   import particle_compression;
   writeln("Test 21");
-  auto particles = load_particles(argv);
+  //auto particles = load_particles(argv);
+  //auto tree = new KdTree!float();
+  //tree.build!"xyz"(particles.position[0]);
+  auto tree = generate_tree_gaussian!float(1000000);
   BitStream bs;
-  encode(particles.position[0], bs);
+  encode(tree, bs);
   writeln(bs.size());
-  decode(particles.position[0], bs);
+  decode(bs);
 }
 
 import math;

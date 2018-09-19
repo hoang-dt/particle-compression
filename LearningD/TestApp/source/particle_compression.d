@@ -145,7 +145,7 @@ int decode_centered_minimal(uint n, ref BitStream bs) {
   }
 }
 
-void encode(T)(Vec3!T[] positions, ref BitStream bs) {
+void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
   import std.stdio;
   void traverse_encode(T,int R)(KdTree!(T,R) parent, ref BitStream bs) {
     int N = parent.end_ - parent.begin_;
@@ -165,19 +165,17 @@ void encode(T)(Vec3!T[] positions, ref BitStream bs) {
         traverse_encode(parent.right_, bs);
     }
   }
-  auto tree = new KdTree!T();
-  tree.build!"xyz"(positions);
-
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
-  bs.init_write(100000000); // 100 MB
-  int N = cast(int)positions.length;
+  bs.init_write(100000000); // 100 MB // TODO
+  //int N = cast(int)positions.length;
+  int N = tree.end_ - tree.begin_;
   bs.write(N, 32);
   File enc_file = File("encode.txt", "w");
   traverse_encode(tree, bs);
   bs.flush();
 }
 
-void decode(T)(Vec3!T[] positions, ref BitStream bs) {
+void decode(ref BitStream bs) {
   import std.stdio;
   void traverse_decode(T)(int N, ref BitStream bs) {
     if (N == 1) { // leaf level
@@ -200,5 +198,5 @@ void decode(T)(Vec3!T[] positions, ref BitStream bs) {
   int N = cast(int)bs.read(32);
   File dec_file = File("decode.txt", "w");
   dec_file.writeln(N);
-  traverse_decode!T(N, bs);
+  traverse_decode!int(N, bs);
 }
