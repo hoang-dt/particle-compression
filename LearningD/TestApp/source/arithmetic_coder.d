@@ -47,6 +47,11 @@ if (FreqBits+2<=CodeValBits && CodeVal.sizeof*8>=CodeValBits+FreqBits) {
     return Prob!CodeVal(cdf_table_[s-1], cdf_table_[s], count_);
   }
 
+  /++  +/
+  CodeVal get_count() {
+    return count_;
+  }
+
   /++ Collect probabilities from a string +/
   void collect_probs(R)(R s) {
     // TODO: deal with overflow
@@ -94,6 +99,14 @@ struct ArithmeticCoder(Model) {
     bit_stream_.write(s.length, 64-7); // write the number of symbols in the beginning of the stream
   }
 
+  /++ Init the coder, given the size of its stream in bytes +/
+  void encode_init(int bytes) {
+    low_ = 0;
+    high_ = model_.Max_code_;
+    pending_bits_ = 0;
+    bit_stream_.init_write(bytes);
+  }
+
   /++ Make sure low <= val <= high at the end of the stream +/
   void encode_finalize() {
     ++pending_bits_;
@@ -107,8 +120,13 @@ struct ArithmeticCoder(Model) {
   /++ Encode a single symbol +/
   void encode(int s) {
     auto p = model_.get_prob(s);
+    encode(p);
+  }
+
+  /++ Encode a single symbol, but with a probability +/
+  void encode(Prob!(model_.CodeVal) p) {
     model_.CodeVal range = high_ - low_ + 1;
-    high_ = low_ + (range*p.high/p.count) - 1;
+    high_ = low_ + (range*p.high/p.count) - 1; // the -1 makes sure new high_ <= old high_ (== happens when p.high==p.count)
     low_ = low_ + (range*p.low/p.count);
   }
 
@@ -135,9 +153,6 @@ struct ArithmeticCoder(Model) {
 
   void put_bits_plus_pending(bool bit) {
     bit_stream_.write(bit); // TODO: optimize?
-    write(int(bit));
-    for (int i = 0; i < pending_bits_; ++i)
-      write(int(!bit));
     bit_stream_.repeated_write(!bit, pending_bits_);
     pending_bits_ = 0;
   }
@@ -153,6 +168,7 @@ struct ArithmeticCoder(Model) {
     }
   }
 
+  /++ Note that here we store the number of symbols at the beginning of the stream +/
   ulong decode_init() {
     high_ = model_.Max_code_;
     low_ = 0;
@@ -162,7 +178,6 @@ struct ArithmeticCoder(Model) {
     for (int i = 0; i < model_.Code_val_bits_; ++i) {
       val_ <<= 1;
       auto b = bit_stream_.read() > 0;
-      write(int(b));
       val_ += b;
     }
     return nsymbols;
@@ -171,7 +186,7 @@ struct ArithmeticCoder(Model) {
   /++ Decode a single symbol +/
   int decode() {
     CodeVal range = high_ - low_ + 1;
-    CodeVal scaled_val = ((val_-low_+1) * model_.count_ - 1) / range;
+    CodeVal scaled_val = ((val_-low_+1) * model_.get_count() - 1) / range;
     int s;
     auto p = model_.get_val(scaled_val, s);
     high_ = low_ + (range*p.high) / p.count - 1;
@@ -201,7 +216,6 @@ struct ArithmeticCoder(Model) {
       ++high_;
       val_ <<= 1;
       auto b = bit_stream_.read();
-      write(int(b > 0));
       val_ += b;
     }
   }

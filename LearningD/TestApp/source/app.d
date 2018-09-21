@@ -1160,6 +1160,20 @@ char[] my_filter(string s) {
   return output;
 }
 
+int[] generate_gaussian_array(int N, int nparticles) {
+  float m = float(N) / 2; // mean
+  float s = sqrt(float(N)) / 2; // standard deviation
+  int[] result = new int[](nparticles);
+  for (int i = 0; i < nparticles; ++i) {
+    int n = cast(int)(rNormal(m, s)+0.5);
+    while (n<0 || n>N)
+      n = cast(int)(rNormal(m, s)+0.5);
+    result[i] = n;
+  }
+  return result;
+}
+
+
 /++ Given the total number of particles, generate a tree whose +/
 KdTree!(T, kdtree.Root) generate_tree_gaussian(T)(int nparticles) {
   import std.random;
@@ -1208,15 +1222,22 @@ KdTree!(T, kdtree.Root) generate_tree_gaussian(T)(int nparticles) {
 void test_21(const string[] argv) {
   import particle_compression;
   writeln("Test 21");
-  //auto particles = load_particles(argv);
-  //auto tree = new KdTree!float();
-  //tree.build!"xyz"(particles.position[0]);
-  auto tree = generate_tree_gaussian!float(1000000);
+  //int N = 10;
+  //int nparticles = 1000;
+  auto particles = load_particles(argv);
+  auto tree = new KdTree!float();
+  tree.build!"xyz"(particles.position[0]);
+  //auto tree = generate_tree_gaussian!float(1000000);
+  //auto arr = generate_gaussian_array(N, nparticles);
+  //write_text("arr.txt", arr);
   //print_tree_statistics(tree);
-  BitStream bs;
-  encode(tree, bs);
-  writeln(bs.size());
-  decode(bs);
+  //BitStream bs;
+  //encode(tree, bs);
+  //encode_array(N, arr, bs);
+  Coder coder;
+  encode(tree, coder);
+  writeln(coder.bit_stream_.size());
+  //decode(bs);
 }
 
 void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {

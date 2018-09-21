@@ -26,6 +26,69 @@ double Finv(double m, double s, double y) {
   return m + s * (erfinv(2*y-1)*sqrt2);
 }
 
+const int scale = (1<<31)-1;
+alias CodeVal = long;
+/++ Binary probability model (0 happens with p probability, and 1 happens with 1-p probability) +/
+struct ProbModel {
+  CodeVal count_;
+  CodeVal mid_; // anything below this is 0, otherwise it is 1
+  mixin ModelConfigs!(CodeVal, 33, 31);
+
+
+  // TODO: write this function?
+  Prob!CodeVal get_prob(int s) {
+    return Prob!CodeVal(0, 1, 1);
+  }
+
+  Prob!CodeVal get_val(CodeVal v, ref int s) {
+    return Prob!CodeVal(0, 1, 1);
+  }
+
+  CodeVal get_count() { return count_; }
+}
+alias Coder = ArithmeticCoder!ProbModel;
+
+/++ If the numbers of integers in [a,b] is even, we split the range into equal halves. If it is odd,
+we split it so that the left half has one more integer than the right half +/
+void encode_range(double m, double s, double a, double b, double c, ref Coder coder) {
+  assert(a < b);
+  while (true) {
+    int beg = cast(int)ceil(a);
+    int end = cast(int)floor(b);
+    int nints = end - beg + 1;
+    if (nints == 1) break; // we have narrowed down the number c
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    double mid = (a+b) * 0.5;
+    if ((nints&1) != 0) // there are an odd number of integers in [a,b]
+      mid = floor(mid) + 0.5;
+    double flo = fa;
+    double fhi = F(m, s, mid);
+    int lo, hi;
+    if (c < mid) { // c falls on the left side
+      lo = 0;
+      hi = cast(int)((fhi-flo)/(fb-fa)*scale + 0.5);
+      assert(lo<hi && hi<=scale);
+    }
+    else if (c > mid) { // c falls on the right side
+      lo = cast(int)((fhi-flo)/(fb-fa)*scale + 0.5);
+      hi = scale;
+      assert(0<=lo && lo<hi);
+    }
+    else { // c == mid, cannot happen
+      assert(false);
+    }
+    Prob!long prob = Prob!long(lo, hi, scale);
+    coder.encode(prob);
+    coder.encode_renormalize();
+    if (c < mid)
+      b = mid;
+    else
+      a = mid;
+  }
+}
+
 /++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability +/
 void encode_range(double m, double s, double a, double b, double c, ref BitStream bs) {
@@ -45,16 +108,21 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
     return encode_centered_minimal(v, n, bs);
   }
   assert(a<=mid && mid<=b);
+  // TODO: should we take care of the case where there is only one whole number between a and mid?
   if (c < mid) {
     bs.write(0);
-    if (a+1 < mid)
-      return encode_range(m, s, a, mid, c, bs);
+    if (a+1.5 < mid) {
+      return encode_range(m, s, a, floor(mid)+0.5, c, bs);
+    }
   }
   else { // c >= mid
     bs.write(1);
-    if (mid+1 <= b)
-      return encode_range(m, s, mid, b, c, bs);
-      //bs.write(1);
+    if (mid+1 < b) {
+      if (mid == cast(int)mid)
+        return encode_range(m, s, mid, b, c, bs);
+      else // mid is not a whole number
+        return encode_range(m, s, ceil(mid), b, c, bs);
+    }
   }
 }
 
@@ -145,6 +213,45 @@ int decode_centered_minimal(uint n, ref BitStream bs) {
   }
 }
 
+/++ For debugging purposes +/
+void encode_array(int N, int[] nums, ref BitStream bs) {
+  import std.stdio;
+  float m = float(N) / 2; // mean
+  float s = sqrt(float(N)) / 2; // standard deviation
+  bs.init_write(100000000); // 100 MB // TODO
+  foreach (n; nums) {
+    encode_range(m, s, 0, N, n, bs);
+    //encode_centered_minimal(n, N+1, bs); // uniform
+  }
+  //int N = cast(int)positions.length;
+  bs.flush();
+}
+
+void encode(T)(KdTree!(T, Root) tree, ref Coder coder) {
+  void traverse_encode(T,int R)(KdTree!(T,R) parent, ref Coder coder) {
+    int N = parent.end_ - parent.begin_;
+    if (N == 1) { // leaf level
+      // do nothing
+    }
+    else { // non leaf
+      int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
+      float m = float(N) / 2; // mean
+      float s = sqrt(float(N)) / 2; // standard deviation
+      encode_range(m, s, -0.5, N+0.5, n, coder);
+      if (parent.left_)
+        traverse_encode(parent.left_, coder);
+      if (parent.right_)
+        traverse_encode(parent.right_, coder);
+    }
+  }
+  coder.encode_init(100000000);
+  int N = tree.end_ - tree.begin_;
+  coder.bit_stream_.write(N, 32);
+  //File enc_file = File("encode.txt", "w");
+  traverse_encode(tree, coder);
+  coder.encode_finalize();
+}
+
 void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
   import std.stdio;
   void traverse_encode(T,int R)(KdTree!(T,R) parent, ref BitStream bs) {
@@ -156,8 +263,8 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      //encode_range(m, s, 0, N, n, bs);
-      encode_centered_minimal(n, N+1, bs); // uniform
+      encode_range(m, s, -0.5, N+0.5, n, bs);
+      //encode_centered_minimal(n, N+1, bs); // uniform
       enc_file.writeln(n);
       if (parent.left_)
         traverse_encode(parent.left_, bs);
