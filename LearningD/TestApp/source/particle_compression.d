@@ -58,6 +58,7 @@ void encode_range(double m, double s, double a, double b, double c, ref Coder co
     int nints = end - beg + 1;
     if (nints == 1) break; // we have narrowed down the number c
     /* compute F(a) and F(b) */
+    // TODO: flo and fhi can be the same, or fhi can be fb (or flo==fa)
     double fa = F(m, s, a);
     double fb = F(m, s, b);
     double mid = (a+b) * 0.5;
@@ -80,8 +81,10 @@ void encode_range(double m, double s, double a, double b, double c, ref Coder co
       assert(false);
     }
     Prob!long prob = Prob!long(lo, hi, scale);
-    coder.encode(prob);
-    coder.encode_renormalize();
+    if (prob.high-prob.low != scale) {
+      coder.encode(prob);
+      coder.encode_renormalize();
+    }
     if (c < mid)
       b = mid;
     else
