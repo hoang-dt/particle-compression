@@ -175,7 +175,7 @@ struct ArithmeticCoder(Model) {
     val_ = 0;
     bit_stream_.init_read();
     ulong nsymbols = bit_stream_.read(64-7); // read the number of symbols
-    for (int i = 0; i < model_.Code_val_bits_; ++i) {
+    for (int i = 0; i < model_.Code_val_bits_; ++i) { // TODO: what if we read past the stream?
       val_ <<= 1;
       auto b = bit_stream_.read() > 0;
       val_ += b;

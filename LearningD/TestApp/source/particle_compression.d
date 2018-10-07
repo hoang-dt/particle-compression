@@ -92,39 +92,55 @@ void encode_range(double m, double s, double a, double b, double c, ref Coder co
   }
 }
 
+const int cutoff = 4;
+
+void encode_binomial_small_range(int n, int v, int[][cutoff+1] table, ref Coder coder) {
+  assert(v>=0 && v<=n);
+  long lo = v==0 ? 0 : table[n][v-1];
+  long hi = table[n][v];
+  long scale = 1 << n;
+  Prob!long prob = Prob!long(lo, hi, scale);
+  coder.encode(prob);
+  coder.encode_renormalize();
+}
+
 /++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability +/
-void encode_range(double m, double s, double a, double b, double c, ref BitStream bs) {
-  assert(a < b);
-  int beg = cast(int)ceil(a);
-  int end = cast(int)floor(b);
-  if (beg == end) return;
-  /* compute F(a) and F(b) */
-  double fa = F(m, s, a);
-  double fb = F(m, s, b);
-  /* compute F^-1((fa+fb)/2) */
-  double mid = Finv(m, s, (fa+fb)*0.5);
-  assert(a<=mid && mid<=b);
-  if (a==mid || b==mid) {
-    int v = cast(int)c-beg;
-    int n = end - beg + 1;
-    return encode_centered_minimal(v, n, bs);
-  }
-  assert(a<=mid && mid<=b);
-  // TODO: should we take care of the case where there is only one whole number between a and mid?
-  if (c < mid) {
-    bs.write(0);
-    if (a+1.5 < mid) {
-      return encode_range(m, s, a, floor(mid)+0.5, c, bs);
+void encode_range(double m, double s, double a, double b, double c, ref BitStream bs, ref Coder coder) {
+  assert(a <= b);
+  auto table =  create_binomial_table!cutoff();
+  while (true) {
+    int beg = cast(int)ceil(a);
+    int end = cast(int)floor(b);
+    if (end-beg+1 <= cutoff) {
+      int v = cast(int)c-beg;
+      int n = end - beg + 1;
+      //return encode_centered_minimal(v, n, bs);
+      return encode_binomial_small_range(n, v, table, coder);
     }
-  }
-  else { // c >= mid
-    bs.write(1);
-    if (mid+1 < b) {
-      if (mid == cast(int)mid)
-        return encode_range(m, s, mid, b, c, bs);
-      else // mid is not a whole number
-        return encode_range(m, s, ceil(mid), b, c, bs);
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    // TODO: what if fa==fb
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa+fb)*0.5);
+    // TOOD: mid can be infinity
+    if (mid<a || mid>b)
+      mid = a;
+    if (a==mid || b==mid) {
+      int v = cast(int)c-beg;
+      int n = end - beg + 1;
+      return encode_centered_minimal(v, n, bs);
+    }
+    assert(a<=mid && mid<=b);
+    // TODO: should we take care of the case where there is only one whole number between a and mid?
+    if (c < mid) {
+      bs.write(0);
+      b = floor(mid);
+    }
+    else { // c >= mid
+      bs.write(1);
+      a = ceil(mid);
     }
   }
 }
@@ -223,7 +239,7 @@ void encode_array(int N, int[] nums, ref BitStream bs) {
   float s = sqrt(float(N)) / 2; // standard deviation
   bs.init_write(100000000); // 100 MB // TODO
   foreach (n; nums) {
-    encode_range(m, s, 0, N, n, bs);
+    //encode_range(m, s, 0, N, n, bs); // TODO: enable this
     //encode_centered_minimal(n, N+1, bs); // uniform
   }
   //int N = cast(int)positions.length;
@@ -255,7 +271,7 @@ void encode(T)(KdTree!(T, Root) tree, ref Coder coder) {
   coder.encode_finalize();
 }
 
-void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
+void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   import std.stdio;
   void traverse_encode(T,int R)(KdTree!(T,R) parent, ref BitStream bs) {
     int N = parent.end_ - parent.begin_;
@@ -266,7 +282,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      encode_range(m, s, -0.5, N+0.5, n, bs);
+      encode_range(m, s, 0, N, n, bs, coder);
       //encode_centered_minimal(n, N+1, bs); // uniform
       enc_file.writeln(n);
       if (parent.left_)
@@ -277,12 +293,14 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs) {
   }
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
   bs.init_write(100000000); // 100 MB // TODO
+  coder.encode_init(100000000); // TODO
   //int N = cast(int)positions.length;
   int N = tree.end_ - tree.begin_;
   bs.write(N, 32);
   File enc_file = File("encode.txt", "w");
   traverse_encode(tree, bs);
   bs.flush();
+  coder.encode_finalize();
 }
 
 void decode(ref BitStream bs) {
@@ -309,4 +327,20 @@ void decode(ref BitStream bs) {
   File dec_file = File("decode.txt", "w");
   dec_file.writeln(N);
   traverse_decode!int(N, bs);
+}
+
+/++ Create a probability table for small N +/
+int[][N+1] create_binomial_table(int N)() {
+  int[][N+1] table;
+  for (int n = 0; n <= N; ++n) {
+    table[n] = new int[](n+1);
+    for (int k = 0; k <= n; ++k) {
+      table[n][k] = n_choose_k(n, k);
+    }
+    for (int k = 1; k <= n; ++k) { // from pdf to cdf
+      table[n][k] += table[n][k-1];
+    }
+    assert(table[n][n] == (1<<n));
+  }
+  return table;
 }

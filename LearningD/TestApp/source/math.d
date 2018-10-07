@@ -75,6 +75,18 @@ unittest {
   assert(i == 16781313000);
 }
 
+int n_choose_k(int n, int k) {
+  int nom = 1;
+  for (int i = 0; i <= k-1; ++i) {
+    nom *= (n-i);
+  }
+  int denom = 1;
+  for (int i = 1; i <= k; ++i) {
+    denom *= i;
+  }
+  return nom / denom;
+}
+
 /++ Approximate log2(C(n, m)) with Sterling formula +/
 double log2_C_n_m_sterling(int n, int m) {
   assert(n>=m);

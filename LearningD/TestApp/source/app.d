@@ -1231,12 +1231,12 @@ void test_21(const string[] argv) {
   //auto arr = generate_gaussian_array(N, nparticles);
   //write_text("arr.txt", arr);
   //print_tree_statistics(tree);
-  //BitStream bs;
-  //encode(tree, bs);
-  //encode_array(N, arr, bs);
+  BitStream bs;
   Coder coder;
-  encode(tree, coder);
-  writeln(coder.bit_stream_.size());
+  encode(tree, bs, coder);
+  //encode_array(N, arr, bs);
+  //encode(tree, coder);
+  writeln(bs.size() + coder.bit_stream_.size());
   //decode(bs);
 }
 
