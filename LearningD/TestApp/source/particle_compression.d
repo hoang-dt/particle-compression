@@ -26,45 +26,28 @@ double Finv(double m, double s, double y) {
   return m + s * (erfinv(2*y-1)*sqrt2);
 }
 
-const int scale = (1<<31)-1;
-alias CodeVal = long;
-/++ Binary probability model (0 happens with p probability, and 1 happens with 1-p probability) +/
-struct ProbModel {
-  CodeVal count_;
-  CodeVal mid_; // anything below this is 0, otherwise it is 1
-  mixin ModelConfigs!(CodeVal, 33, 31);
-
-
-  // TODO: write this function?
-  Prob!CodeVal get_prob(int s) {
-    return Prob!CodeVal(0, 1, 1);
-  }
-
-  Prob!CodeVal get_val(CodeVal v, ref int s) {
-    return Prob!CodeVal(0, 1, 1);
-  }
-
-  CodeVal get_count() { return count_; }
-}
-alias Coder = ArithmeticCoder!ProbModel;
-
-const int cutoff = 16;
+const int cutoff = 32;
+alias Coder = ArithmeticCoder!();
 
 void encode_binomial_small_range(int n, int v, int[] table, ref Coder coder) {
   assert(v>=0 && v<=n);
-  long lo = v==0 ? 0 : table[v-1];
-  long hi = table[v];
-  long scale = 1 << n;
-  Prob!long prob = Prob!long(lo, hi, scale);
+  uint lo = v==0 ? 0 : table[v-1];
+  uint hi = table[v];
+  uint scale = 1 << n;
+  Prob!uint prob = Prob!uint(lo, hi, scale);
   coder.encode(prob);
   coder.encode_renormalize();
+}
+
+int decode_binomial_small_range(int n, int[] table, ref Coder coder) {
+  return 1;
 }
 
 /++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability +/
 void encode_range(double m, double s, double a, double b, double c, ref BitStream bs, ref Coder coder) {
   assert(a <= b);
-  auto table =  create_binomial_table!cutoff();
+  auto table =  create_binomial_table(cutoff);
   bool first = true;
   while (true) {
     int beg = cast(int)ceil(a);
@@ -106,34 +89,43 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
 }
 
 /++ The inverse of encode +/
-int decode_range(double m, double s, double a, double b, ref BitStream bs) {
-  assert(a < b);
-  int beg = cast(int)ceil(a);
-  int end = cast(int)floor(b);
-  if (beg == end) return beg;
-  /* compute F(a) and F(b) */
-  double fa = F(m, s, a);
-  double fb = F(m, s, b);
-  /* compute F^-1((fa+fb)/2) */
-  double mid = Finv(m, s, (fa+fb)*0.5);
-  assert(a<=mid && mid<=b);
-  if (a==mid || b==mid) {
-    int n = end - beg + 1;
-    return beg + decode_centered_minimal(n, bs);
-  }
-  assert(a<=mid && mid<=b);
-  int bit = cast(int)bs.read();
-  if (bit == 0) { // c < mid
-    if (a+1 < mid)
-      return decode_range(m, s, a, mid, bs);
+int decode_range(double m, double s, double a, double b, ref BitStream bs, ref Coder coder) {
+  assert(a <= b);
+  auto table =  create_binomial_table(cutoff);
+  bool first = true;
+  while (true) {
+    int beg = cast(int)ceil(a);
+    int end = cast(int)floor(b);
+    if (beg == end)
+      return beg; // no need to write any bit
+    if (end-beg+1 <= cutoff) {
+      int n = end - beg + 1; // v can be from 0 to n-1
+      if (first)
+        return decode_binomial_small_range(n-1, table[n-1], coder);
+      else
+        return decode_centered_minimal(n, bs);
+    }
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    // TODO: what if fa==fb
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa+fb)*0.5);
+    if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a==mid || b==mid) {
+      int n = end - beg + 1;
+      return decode_centered_minimal(n, bs);
+    }
+    assert(a<=mid && mid<=b);
+    auto bit = bs.read();
+    if (bit == 0)
+      b = floor(mid);
+    else if (bit == 1)
+      a = ceil(mid);
     else
-      return cast(int)ceil(a);
-  }
-  else { // c >= mid
-    if (mid+1 <= b)
-      return decode_range(m, s, mid, b, bs);
-    else
-      return cast(int)floor(b);
+      assert(false);
+    first = false;
   }
 }
 
@@ -228,7 +220,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   }
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
   bs.init_write(100000000); // 100 MB // TODO
-  coder.encode_init(100000000); // TODO
+  coder.init_write(100000000); // TODO
   //int N = cast(int)positions.length;
   int N = tree.end_ - tree.begin_;
   bs.write(N, 32);
@@ -265,19 +257,11 @@ void decode(ref BitStream bs) {
 }
 
 /++ Create a probability table for small N +/
-int[][N+1] create_binomial_table(int N)() {
-  import std.stdio;
-  int[][N+1] table;
+int[][] create_binomial_table(int N) {
+  auto table = pascal_triangle(N);
   for (int n = 0; n <= N; ++n) {
-    table[n] = new int[](n+1);
-    for (int k = 0; k <= n; ++k) {
-      table[n][k] = n_choose_k(n, k);
-    }
-    for (int k = 1; k <= n; ++k) { // from pdf to cdf
+    for (int k = 1; k <= n; ++k)
       table[n][k] += table[n][k-1];
-    }
-    writeln(table[n][n]);
-    assert(table[n][n] == (1<<n));
   }
   return table;
 }

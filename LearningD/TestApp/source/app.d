@@ -1236,43 +1236,43 @@ void test_21(const string[] argv) {
   encode(tree, bs, coder);
   //encode_array(N, arr, bs);
   //encode(tree, coder);
-  writeln(bs.size() + coder.bit_stream_.size());
+  writeln(bs.size() + coder.m_bit_stream.size());
   //decode(bs);
 }
 
 /++ Generate Binomial distributed data and encode it with arithmetic coding +/
-void test_binomial_arithmetic_coding() {
+void test_binomial_arithmetic_coding() { // TODO: finish this
   // TODO: first, we will test individual N (=1, 2, 3, 4, etc)
   // then we randomize N too
-  auto rnd = Random();
-  const int N = 4;
-  auto table = create_binomial_table!N();
-  Coder coder;
-  coder.encode_init(100000000); // 100 MB
-  BitStream bs;
-  bs.init_write(100000000); // 100 MB
-  for (int i = 0; i < 10000; ++i) {
-    auto a = uniform(0, N+1, rnd);
-    encode_centered_minimal(a, N, bs);
-    encode_binomial_small_range(N, a, table[N], coder);
-  }
-  writeln(bs.size());
-  writeln(coder.bit_stream_.size());
+  //auto rnd = Random();
+  //const int N = 4;
+  //auto table = create_binomial_table(N);
+  //Coder coder;
+  //coder.encode_init(100000000); // 100 MB
+  //BitStream bs;
+  //bs.init_write(100000000); // 100 MB
+  //for (int i = 0; i < 10000; ++i) {
+  //  auto a = uniform(0, N+1, rnd);
+  //  encode_centered_minimal(a, N, bs);
+  //  encode_binomial_small_range(N, a, table[N], coder);
+  //}
+  //writeln(bs.size());
+  //writeln(coder.bit_stream_.size());
 }
 
-void test_arithmetic_coding() {
-  string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
-  char[] contents = my_filter(raw_contents);
-  alias Model = CharModel!(uint, 17, 15);
-  Model m;
-  m.collect_probs(contents);
-  ArithmeticCoder!Model coder;
-  coder.set_model(m);
-  coder.encode(contents);
-  char[] output;
-  coder.decode(output);
-  //writeln(output);
-  writeln(coder.bit_stream_.size());
+void test_arithmetic_coding() { // TODO: rewrite
+  //string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
+  //char[] contents = my_filter(raw_contents);
+  //alias Model = CharModel!(uint, 17, 15);
+  //Model m;
+  //m.collect_probs(contents);
+  //ArithmeticCoder!Model coder;
+  //coder.set_model(m);
+  //coder.encode(contents);
+  //char[] output;
+  //coder.decode(output);
+  ////writeln(output);
+  //writeln(coder.bit_stream_.size());
 }
 
 void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
@@ -1310,13 +1310,6 @@ import math;
 // TODO: 1 gives infinity
 int main(const string[] argv) {
   //test_binomial_arithmetic_coding();
-  auto table = pascal_triangle(32);
-  for (int i = 0; i < table.length; ++i) {
-    writeln(table[i]);
-  }
-  writeln(n_choose_k(13,12));
-  for (int k = 0; k <= 13; ++k)
-    writeln(n_choose_k(13,k));
   alias test_func = void function(const string[]);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;
