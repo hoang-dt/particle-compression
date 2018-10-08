@@ -31,7 +31,7 @@ import math;
 import number;
 import stats;
 import bit_stream;
-
+import particle_compression;
 
 Array3D!double read_and_process_array2(const string[] argv, bool unsigned, bool shuffle) {
   import std.array : array;
@@ -1240,6 +1240,41 @@ void test_21(const string[] argv) {
   //decode(bs);
 }
 
+/++ Generate Binomial distributed data and encode it with arithmetic coding +/
+void test_binomial_arithmetic_coding() {
+  // TODO: first, we will test individual N (=1, 2, 3, 4, etc)
+  // then we randomize N too
+  auto rnd = Random();
+  const int N = 4;
+  auto table = create_binomial_table!N();
+  Coder coder;
+  coder.encode_init(100000000); // 100 MB
+  BitStream bs;
+  bs.init_write(100000000); // 100 MB
+  for (int i = 0; i < 10000; ++i) {
+    auto a = uniform(0, N+1, rnd);
+    encode_centered_minimal(a, N, bs);
+    encode_binomial_small_range(N, a, table[N], coder);
+  }
+  writeln(bs.size());
+  writeln(coder.bit_stream_.size());
+}
+
+void test_arithmetic_coding() {
+  string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
+  char[] contents = my_filter(raw_contents);
+  alias Model = CharModel!(uint, 17, 15);
+  Model m;
+  m.collect_probs(contents);
+  ArithmeticCoder!Model coder;
+  coder.set_model(m);
+  coder.encode(contents);
+  char[] output;
+  coder.decode(output);
+  //writeln(output);
+  writeln(coder.bit_stream_.size());
+}
+
 void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
   import std.array : array;
 
@@ -1274,83 +1309,15 @@ import math;
 
 // TODO: 1 gives infinity
 int main(const string[] argv) {
-  //import particle_compression;
-  //BitStream bs;
-  //bs.init_write(10000);
-  //bs.write(16384, 32);
-  //File file1 = File("file1.txt", "w");
-  //for (int i = 0; i < 1638; ++i) {
-  //  //writeln(i);
-  //  encode_centered_minimal(i, 1639, bs);
-  //  file1.writeln(i);
-  //}
-  //bs.flush();
-  //bs.init_read();
-  //int N = cast(int)bs.read(32);
-  //File file2 = File("file2.txt", "w");
-  //for (int i = 0; i < 1638; ++i) {
-  //  //writeln(i);
-  //  int n = decode_centered_minimal(1639, bs);
-  //  file2.writeln(n);
-  //}
-  //writeln(N);
-  //return 0;
-  //const int N = 2;
-  //float m = float(N) / 2; // mean
-  //float s = sqrt(float(N)) / 2; // standard deviation
-  //const float bin_width = 0.5f * (math.erfc(-0.5f/s/sqrt(2.0f)) - math.erfc(0.5f/s/sqrt(2.0f)));
-  //int nb = cast(int)ceil(1.0f / bin_width);
-  //const int nbits = 6;
-  //const int nbins = 1<<nbits;
-  //float[nbins] lookup_table;
-  //float step = 1.0f / nbins;
-  //for (int i = 0; i < nbins; ++i) {
-  //  float y = (i+1) * step;
-  //  lookup_table[i] = erfinv(2*y-1) * sqrt(2.0f);
-  //}
-  //auto file = File("table.txt", "w");
-  //for (int i = 0; i < nbins; ++i) {
-  //  float y = (i+1) * step;
-  //  file.writeln(y, " ", lookup_table[i]);
-  //}
-  //return 0;
-  //string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
-  //char[] contents = my_filter(raw_contents);
-  //alias Model = CharModel!(uint, 17, 15);
-  //Model m;
-  //m.collect_probs(contents);
-  //ArithmeticCoder!Model coder;
-  //coder.set_model(m);
-  //coder.encode(contents);
-  //char[] output;
-  //coder.decode(output);
-  //writeln(output);
-  //Test!1 test;
-  //writeln(test.N);
-  //ulong n1 = ~(ulong(true)-1);
-  //ulong n2 = ~(ulong(false)-1);
-  //writefln("%64b", n1);
-  //writefln("%64b", 14);
-  //BitStream bs;
-  //bs.init_write(100);
-  //bs.repeated_write(true, 172);
-  //bs.flush();
-  //bs.rewind();
-  //bs.init_read();
-  //ulong n = 0;
-  //n = bs.read(57);
-  //writefln("%64b", n);
-  //n = bs.read(57);
-  //writefln("%64b", n);
-  //n = bs.read(57);
-  //writefln("%64b", n);
-  //n = bs.read(2);
-  //writefln("%64b", n);
-  //return 0;
-  //float[] a = new float[](3);
-  //a[] = 0;
+  //test_binomial_arithmetic_coding();
+  auto table = pascal_triangle(32);
+  for (int i = 0; i < table.length; ++i) {
+    writeln(table[i]);
+  }
+  writeln(n_choose_k(13,12));
+  for (int k = 0; k <= 13; ++k)
+    writeln(n_choose_k(13,k));
   alias test_func = void function(const string[]);
-  //writeln(a);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;
   func_map["test_2"] = &test_2;
@@ -1373,35 +1340,6 @@ int main(const string[] argv) {
   func_map["test_19"] = &test_19;
   func_map["test_20"] = &test_20;
   func_map["test_21"] = &test_21;
-  //BitStream bs;
-  //bs.init_write(100);
-  //bs.write(0xABCDEF, 25);
-  //bs.write(0xABABABAB, 33);
-  //bs.write(0xABCDEF, 25);
-  //bs.write(0xFFF, 13);
-  //bs.write(0xEE, 0);
-  //bs.write(0xAAAAAAAAAAAAAA, 57);
-  //bs.write(0xB, 5);
-  //bs.flush();
-  ////bs.rewind();
-  //bs.init_read();
-  //writefln("%x", bs.peek(25));
-  //bs.consume(25);
-  //bs.refill();
-  //writefln("%x", bs.peek(33));
-  //bs.consume(33);
-  //bs.refill();
-  //writefln("%x", bs.peek(25));
-  //bs.consume(25);
-  //bs.refill();
-  //writefln("%x", bs.peek(13));
-  //bs.consume(13);
-  //bs.refill();
-  //writefln("%x", bs.peek(57));
-  //bs.consume(57);
-  //bs.refill();
-  //writefln("%x", bs.peek(5));
-  //bs.consume(5);
   try {
     func_map[argv[1]](argv);
     int stop = 0;

@@ -48,56 +48,12 @@ struct ProbModel {
 }
 alias Coder = ArithmeticCoder!ProbModel;
 
-/++ If the numbers of integers in [a,b] is even, we split the range into equal halves. If it is odd,
-we split it so that the left half has one more integer than the right half +/
-void encode_range(double m, double s, double a, double b, double c, ref Coder coder) {
-  assert(a < b);
-  while (true) {
-    int beg = cast(int)ceil(a);
-    int end = cast(int)floor(b);
-    int nints = end - beg + 1;
-    if (nints == 1) break; // we have narrowed down the number c
-    /* compute F(a) and F(b) */
-    // TODO: flo and fhi can be the same, or fhi can be fb (or flo==fa)
-    double fa = F(m, s, a);
-    double fb = F(m, s, b);
-    double mid = (a+b) * 0.5;
-    if ((nints&1) != 0) // there are an odd number of integers in [a,b]
-      mid = floor(mid) + 0.5;
-    double flo = fa;
-    double fhi = F(m, s, mid);
-    int lo, hi;
-    if (c < mid) { // c falls on the left side
-      lo = 0;
-      hi = cast(int)((fhi-flo)/(fb-fa)*scale + 0.5);
-      assert(lo<hi && hi<=scale);
-    }
-    else if (c > mid) { // c falls on the right side
-      lo = cast(int)((fhi-flo)/(fb-fa)*scale + 0.5);
-      hi = scale;
-      assert(0<=lo && lo<hi);
-    }
-    else { // c == mid, cannot happen
-      assert(false);
-    }
-    Prob!long prob = Prob!long(lo, hi, scale);
-    if (prob.high-prob.low != scale) {
-      coder.encode(prob);
-      coder.encode_renormalize();
-    }
-    if (c < mid)
-      b = mid;
-    else
-      a = mid;
-  }
-}
+const int cutoff = 16;
 
-const int cutoff = 4;
-
-void encode_binomial_small_range(int n, int v, int[][cutoff+1] table, ref Coder coder) {
+void encode_binomial_small_range(int n, int v, int[] table, ref Coder coder) {
   assert(v>=0 && v<=n);
-  long lo = v==0 ? 0 : table[n][v-1];
-  long hi = table[n][v];
+  long lo = v==0 ? 0 : table[v-1];
+  long hi = table[v];
   long scale = 1 << n;
   Prob!long prob = Prob!long(lo, hi, scale);
   coder.encode(prob);
@@ -109,14 +65,19 @@ into two bins of equal probability +/
 void encode_range(double m, double s, double a, double b, double c, ref BitStream bs, ref Coder coder) {
   assert(a <= b);
   auto table =  create_binomial_table!cutoff();
+  bool first = true;
   while (true) {
     int beg = cast(int)ceil(a);
     int end = cast(int)floor(b);
+    if (beg == end)
+      return; // no need to write any bit
     if (end-beg+1 <= cutoff) {
       int v = cast(int)c-beg;
-      int n = end - beg + 1;
-      //return encode_centered_minimal(v, n, bs);
-      return encode_binomial_small_range(n, v, table, coder);
+      int n = end - beg + 1; // v can be from 0 to n-1
+      if (first)
+        return encode_binomial_small_range(n-1, v, table[n-1], coder);
+      else
+        return encode_centered_minimal(v, n, bs);
     }
     /* compute F(a) and F(b) */
     double fa = F(m, s, a);
@@ -124,8 +85,7 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
     // TODO: what if fa==fb
     /* compute F^-1((fa+fb)/2) */
     double mid = Finv(m, s, (fa+fb)*0.5);
-    // TOOD: mid can be infinity
-    if (mid<a || mid>b)
+    if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
     if (a==mid || b==mid) {
       int v = cast(int)c-beg;
@@ -133,7 +93,6 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
       return encode_centered_minimal(v, n, bs);
     }
     assert(a<=mid && mid<=b);
-    // TODO: should we take care of the case where there is only one whole number between a and mid?
     if (c < mid) {
       bs.write(0);
       b = floor(mid);
@@ -142,6 +101,7 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
       bs.write(1);
       a = ceil(mid);
     }
+    first = false;
   }
 }
 
@@ -246,31 +206,6 @@ void encode_array(int N, int[] nums, ref BitStream bs) {
   bs.flush();
 }
 
-void encode(T)(KdTree!(T, Root) tree, ref Coder coder) {
-  void traverse_encode(T,int R)(KdTree!(T,R) parent, ref Coder coder) {
-    int N = parent.end_ - parent.begin_;
-    if (N == 1) { // leaf level
-      // do nothing
-    }
-    else { // non leaf
-      int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
-      float m = float(N) / 2; // mean
-      float s = sqrt(float(N)) / 2; // standard deviation
-      encode_range(m, s, -0.5, N+0.5, n, coder);
-      if (parent.left_)
-        traverse_encode(parent.left_, coder);
-      if (parent.right_)
-        traverse_encode(parent.right_, coder);
-    }
-  }
-  coder.encode_init(100000000);
-  int N = tree.end_ - tree.begin_;
-  coder.bit_stream_.write(N, 32);
-  //File enc_file = File("encode.txt", "w");
-  traverse_encode(tree, coder);
-  coder.encode_finalize();
-}
-
 void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   import std.stdio;
   void traverse_encode(T,int R)(KdTree!(T,R) parent, ref BitStream bs) {
@@ -331,6 +266,7 @@ void decode(ref BitStream bs) {
 
 /++ Create a probability table for small N +/
 int[][N+1] create_binomial_table(int N)() {
+  import std.stdio;
   int[][N+1] table;
   for (int n = 0; n <= N; ++n) {
     table[n] = new int[](n+1);
@@ -340,6 +276,7 @@ int[][N+1] create_binomial_table(int N)() {
     for (int k = 1; k <= n; ++k) { // from pdf to cdf
       table[n][k] += table[n][k-1];
     }
+    writeln(table[n][n]);
     assert(table[n][n] == (1<<n));
   }
   return table;

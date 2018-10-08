@@ -77,34 +77,29 @@ unittest {
 
 int n_choose_k(int n, int k) {
   int nom = 1;
-  for (int i = 0; i <= k-1; ++i) {
+  for (int i = 0; i <= k-1; ++i)
     nom *= (n-i);
-  }
   int denom = 1;
-  for (int i = 1; i <= k; ++i) {
+  for (int i = 1; i <= k; ++i)
     denom *= i;
-  }
   return nom / denom;
 }
 
 /++ Approximate log2(C(n, m)) with Sterling formula +/
 double log2_C_n_m_sterling(int n, int m) {
   assert(n>=m);
-  if (n == m) {
+  if (n == m)
     return 0;
-  }
   return n*log2(n) - m*log2(m) - (n-m)*log2(n-m);
 }
 
 double log2_C_n_m(int n, int m) {
   assert(n>=m);
-  if (n == m) {
+  if (n == m)
     return 0;
-  }
   double s = 0;
-  for (double i = 1; i <= m; ++i) {
+  for (double i = 1; i <= m; ++i)
     s += log2((n+1-i)/i);
-  }
   return s;
 }
 
@@ -115,4 +110,18 @@ T square(T)(T val) {
 /++ We use erf function to achieve better accuracy for small x +/
 real erfc(real x) {
   return 1 - erf(x);
+}
+
+/++ Generate the Pascal triangle +/
+int[][] pascal_triangle(int n) {
+  int[][] triangle = new int[][](n+1);
+  for (int i = 0; i <= n; ++i)
+    triangle[i] = new int[](i+1);
+  for (int i = 0; i <= n; ++i) {
+    triangle[i][0] = 1;
+    for (int j = 1; j < i; ++j)
+      triangle[i][j] = triangle[i-1][j-1] + triangle[i-1][j];
+    triangle[i][i] = 1;
+  }
+  return triangle;
 }
