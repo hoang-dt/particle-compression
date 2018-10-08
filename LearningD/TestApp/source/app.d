@@ -1260,19 +1260,43 @@ void test_binomial_arithmetic_coding() { // TODO: finish this
   //writeln(coder.bit_stream_.size());
 }
 
-void test_arithmetic_coding() { // TODO: rewrite
-  //string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
-  //char[] contents = my_filter(raw_contents);
-  //alias Model = CharModel!(uint, 17, 15);
-  //Model m;
-  //m.collect_probs(contents);
-  //ArithmeticCoder!Model coder;
-  //coder.set_model(m);
-  //coder.encode(contents);
-  //char[] output;
-  //coder.decode(output);
-  ////writeln(output);
-  //writeln(coder.bit_stream_.size());
+void test_arithmetic_coding() {
+  string raw_contents = readText("E:/Workspace/binomial-coding/test.txt");
+  char[] contents = my_filter(raw_contents);
+  uint count = 0;
+  uint[] cdf_table = new uint[](128);
+  foreach (c; contents) {
+    if (0<=c && c<=127) {
+      ++count;
+      ++cdf_table[c];
+    }
+  }
+  for (int i = 1; i < cdf_table.length; ++i)
+    cdf_table[i] += cdf_table[i-1];
+
+  ArithmeticCoder!() coder;
+  coder.init_write(100000);
+  int nsymbols_encoded = 0;
+  for (int i = 0; i < contents.length; ++i) {
+    char c = contents[i];
+    if (0<=c && c<=127) {
+      if (c == 0)
+        coder.encode(Prob!uint(0, cdf_table[c], count));
+      else
+        coder.encode(Prob!uint(cdf_table[c-1], cdf_table[c], count));
+      ++nsymbols_encoded;
+    }
+  }
+  coder.encode_finalize();
+  writeln(coder.m_bit_stream.size());
+  coder.init_read();
+  char[] output = new char[](contents.length);
+  for (int i = 0; i < nsymbols_encoded; ++i) {
+    size_t c = coder.decode(cdf_table, count);
+    assert(c>=0 && c<=127);
+    write(cast(char)(c));
+  }
+  writeln();
 }
 
 void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
@@ -1309,6 +1333,7 @@ import math;
 
 // TODO: 1 gives infinity
 int main(const string[] argv) {
+  test_arithmetic_coding();
   //test_binomial_arithmetic_coding();
   alias test_func = void function(const string[]);
   test_func[string] func_map;

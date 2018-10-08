@@ -36,7 +36,6 @@ void encode_binomial_small_range(int n, int v, int[] table, ref Coder coder) {
   uint scale = 1 << n;
   Prob!uint prob = Prob!uint(lo, hi, scale);
   coder.encode(prob);
-  coder.encode_renormalize();
 }
 
 int decode_binomial_small_range(int n, int[] table, ref Coder coder) {

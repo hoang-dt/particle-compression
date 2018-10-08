@@ -21,13 +21,6 @@ struct Prob(CountT) {
 //  CodeT[128] cdf_table_;
 //  CodeT count_ = 0;
 //
-//  /++ Get probability of a symbol s +/
-//  Prob!CodeT get_prob(int s) {
-//    assert(0<=s && s <=127);
-//    if (s == 0)
-//      return Prob!CodeT(0, cdf_table_[s], count_);
-//    return Prob!CodeT(cdf_table_[s-1], cdf_table_[s], count_);
-//  }
 //
 //  /++ Get the symbol with a given code value +/
 //  Prob!CodeT get_val(CodeT v, ref int s) {
@@ -38,27 +31,8 @@ struct Prob(CountT) {
 //    return Prob!CodeT(cdf_table_[s-1], cdf_table_[s], count_);
 //  }
 //
-//  /++  +/
-//  CodeT get_count() {
-//    return count_;
-//  }
-//
-//  /++ Collect probabilities from a string +/
-//  void collect_probs(R)(R s) {
-//    // TODO: deal with overflow
-//    count_ = 0;
-//    foreach (c; s) {
-//      if (0<=c && c<=127) {
-//        ++count_;
-//        ++cdf_table_[c];
-//      }
-//    }
-//    for (int i = 1; i < cdf_table_.length; ++i)
-//      cdf_table_[i] += cdf_table_[i-1];
-//  }
-//}
 
-/++ Condition: CodeValBits >= CountBits+2 +/
+/++ Condition: CodeValBits >= CountBits+2 TODO: enforce this condition +/
 struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=31) {
   static const CodeT CodeMax = (CodeT(1)<<CodeBits) - 1;
   static const CodeT CodeOneFourth = CodeT(1) << (CodeBits-2);
@@ -82,6 +56,11 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
     m_code_low = m_code_val = m_pending_bits = 0;
     m_code_high = CodeMax;
     m_bit_stream.init_read();
+    for (int i = 0; i < CodeBits; ++i) { // TODO: what if we read past the stream?
+      m_code_val <<= 1;
+      //auto b = m_bit_stream.read() > 0;
+      m_code_val += m_bit_stream.read();
+    }
   }
 
   /++ Make sure low <= val <= high at the end of the stream +/
@@ -99,9 +78,7 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
     CodeT range = m_code_high - m_code_low + 1;
     m_code_high = m_code_low + (range*p.high/p.count) - 1; // the -1 makes sure new m_code_high <= old m_code_high (== happens when p.high==p.count)
     m_code_low = m_code_low + (range*p.low/p.count);
-  }
-
-  void encode_renormalize() {
+    /* renormalization */
     while (true) {
       if (m_code_high < CodeOneHalf)
         put_bits_plus_pending(0);
@@ -128,16 +105,8 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
     m_pending_bits = 0;
   }
 
-  void decode_begin() {
-    for (int i = 0; i < CodeBits; ++i) { // TODO: what if we read past the stream?
-      m_code_val <<= 1;
-      auto b = m_bit_stream.read() > 0;
-      m_code_val += b;
-    }
-  }
-
   /++ Decode a single symbol and return its index in the CDF table +/
-  size_t decode(in CountT[] cdf_table, CodeT count) {
+  size_t decode(in CountT[] cdf_table, CountT count) {
     CodeT range = m_code_high - m_code_low + 1;
     CodeT v = ((m_code_val-m_code_low+1)*count-1) / range;
     size_t s = 0;
@@ -146,10 +115,8 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
     CountT high = cdf_table[s];
     m_code_high = m_code_low + (range*high)/count - 1;
     m_code_low = m_code_low + (range*low)/count;
-    return s;
-  }
 
-  void decode_renormalize(ref ArithmeticCoder c) {
+    /* renormalization */
     while (true) {
       if (m_code_high < CodeOneHalf) {
         // do nothing
@@ -172,5 +139,7 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
       m_code_val <<= 1;
       m_code_val += m_bit_stream.read();
     }
+
+    return s;
   }
 }
