@@ -677,7 +677,7 @@ void test_9(const string[] argv) {
   import std.array : array;
   writeln("Test 9");
   enforce(argv.length>=3, "usage: "~argv[0]~" [test_9] [particle file]");
-  File f = File("test9.txt", "w");
+  //File f = File("test9.txt", "w");
 
   void traverse_code_length(T, int R)(int level, KdTree!(T,R) parent, ref Tuple!(double[], double) code_length1, ref Tuple!(double[], double) code_length2) {
     int N = parent.end_ - parent.begin_;
@@ -695,8 +695,11 @@ void test_9(const string[] argv) {
         code_length2[0][level] = 0;
       }
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
-      f.writeln(n);
-      code_length1[0][level] += N - log2_C_n_m(N, n);
+      //f.writeln(n);
+      if (N <= 32) { // TODO: this is just for testing
+        code_length1[0][level] += N - log2_C_n_m(N, n);
+        code_length2[0][level] += log2(N+1);
+      }
       if (parent.left_ !is null) {
         traverse_code_length(level+1, parent.left_, code_length1, code_length2);
       }
@@ -729,13 +732,45 @@ void test_9(const string[] argv) {
     //}
   }
   writeln("code length 1 = ", code_length1);
- // writeln("code length 2 = ", code_length2);
+  writeln("code length 2 = ", code_length2);
   for (size_t i = 0; i < code_length1[0].length; ++i) {
    // writeln(code_length1[0][i] / code_length2[0][i]);
   }
   //writeln(code_length1[1] / code_length2[1]);
   writeln(reduce!((a,b)=>a+b)(code_length1[0])/8/* + code_length1[1]*/);
-  //writeln(reduce!((a,b)=>a+b)(code_length2[0])/* + code_length2[1]*/);
+  writeln(reduce!((a,b)=>a+b)(code_length2[0])/8/* + code_length2[1]*/);
+}
+
+/++ A simpler version of test9 +/
+void test_9a(const string[] argv) {
+  import std.array : array;
+  writeln("Test 9");
+  enforce(argv.length>=3, "usage: "~argv[0]~" [test_9a] [particle file]");
+
+  void traverse_code_length(T, int R)(KdTree!(T,R) node, ref double code_length1) {
+    int N = node.end_ - node.begin_;
+    if (N == 1) { // leaf level
+      // do nothing
+    }
+    else { // non leaf
+      int n = node.left_ is null ? 0 : node.left_.end_ - node.left_.begin_;
+      code_length1 += N - log2_C_n_m(N, n);
+      if (node.left_)
+        traverse_code_length(node.left_, code_length1);
+      if (node.right_)
+        traverse_code_length(node.right_, code_length1);
+    }
+  }
+
+  /* read particle files, or generate random particles */
+  auto particles = load_particles(argv);
+  double code_length1 = 0;
+  for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
+    auto tree = new KdTree!float();
+    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
+    traverse_code_length(tree, code_length1);
+  }
+  writeln("code length 1 = ", cast(int)floor(code_length1/8));
 }
 
 /++ Test the kdtree to make sure it is working +/
@@ -1236,30 +1271,116 @@ void test_21(const string[] argv) {
   BitStream bs;
   Coder coder;
   encode(tree, bs, coder);
-  decode(bs, coder);
+  //decode(bs, coder);
   writeln(coder.m_bit_stream.size());
   writeln(bs.size() + coder.m_bit_stream.size());
   //decode(bs);
 }
 
+/++ Randomly alter the binomial distribution +/
+uint[][] create_binomial_table_random_mods(int N) {
+  auto table = pascal_triangle(N);
+  auto rnd = Random();
+  for (int i = 0; i < table[N].length; ++i) {
+    table[N][i] = uniform(0, N);
+  }
+  for (int n = 0; n <= N; ++n) {
+    for (int k = 1; k <= n; ++k)
+      table[n][k] += table[n][k-1];
+  }
+  return table;
+}
+
+uint[] compute_histogram_N(T)(KdTree!(T, kdtree.Root) tree, int threshold) {
+  uint[] table = new uint[](threshold+1);
+  table[] = 0;
+  void traverse(T, int R)(KdTree!(T,R) node) {
+    int N = node.end_ - node.begin_;
+    if (N!=1 && N<=threshold) {
+      ++table[N];
+    }
+    if (node.left_)
+      traverse(node.left_);
+    if (node.right_)
+      traverse(node.right_);
+  }
+  traverse(tree);
+  for (int k = 1; k < table.length; ++k) {
+    table[k] += table[k-1];
+  }
+  return table;
+}
+
+uint[][] compute_histogram_n(T)(KdTree!(T, kdtree.Root) tree, int threshold) {
+  uint[][] table = new uint[][](threshold+1);
+  for (int i = 0; i < table.length; ++i) {
+    table[i] = new uint[](i+1);
+    table[i][] = 0;
+  }
+
+  void traverse(T, int R)(KdTree!(T,R) node) {
+    int N = node.end_ - node.begin_;
+    if (N != 1) {
+      if (N <= threshold) {
+        int n = node.left_ is null ? 0 : node.left_.end_ - node.left_.begin_;
+        ++table[N][n];
+      }
+      if (node.left_)
+        traverse(node.left_);
+      if (node.right_)
+        traverse(node.right_);
+    }
+  }
+
+  traverse(tree);
+  for (int n = 0; n < table.length; ++n) {
+    for (int k = 1; k <= n; ++k)
+      table[n][k] += table[n][k-1];
+  }
+  return table;
+}
+
 /++ Generate Binomial distributed data and encode it with arithmetic coding +/
-void test_binomial_arithmetic_coding() { // TODO: finish this
+void test_binomial_arithmetic_coding(const string[] argv) { // TODO: finish this
   // TODO: first, we will test individual N (=1, 2, 3, 4, etc)
   // then we randomize N too
-  //auto rnd = Random();
-  //const int N = 4;
-  //auto table = create_binomial_table(N);
-  //Coder coder;
-  //coder.encode_init(100000000); // 100 MB
-  //BitStream bs;
-  //bs.init_write(100000000); // 100 MB
-  //for (int i = 0; i < 10000; ++i) {
-  //  auto a = uniform(0, N+1, rnd);
-  //  encode_centered_minimal(a, N, bs);
-  //  encode_binomial_small_range(N, a, table[N], coder);
-  //}
-  //writeln(bs.size());
-  //writeln(coder.bit_stream_.size());
+  auto rnd = Random();
+  const int Nmax = 30;
+  auto table = create_binomial_table(Nmax);
+  auto particles = load_particles(argv);
+  auto tree = new KdTree!float();
+  tree.build!"xyz"(particles.position[0]); // build a tr
+  auto histogram_n = compute_histogram_n!float(tree, Nmax);
+  auto histogram_N = compute_histogram_N!float(tree, Nmax);
+  writeln(histogram_N);
+  double code_length1 = 0;
+  //assert(table[table.length-1][Nmax] == (1<<Nmax));
+  Coder coder;
+  coder.init_write(100000000); // 100 MB
+  BitStream bs;
+  bs.init_write(100000000); // 100 MB
+  double theoretical_code_length = 0;
+
+  for (int i = 0; i < 10000; ++i) {
+    int a = uniform(0, histogram_N[histogram_N.length-1], rnd);
+    int N = 0;
+    for (; N<Nmax && histogram_N[N]<=a; ++N) {}
+    //int N = uniform(2, Nmax+1);
+    //int N = Nmax;
+    auto max = histogram_n[N][histogram_n[N].length-1];
+    a = uniform(0, max, rnd);
+    int n = 0;
+    for (; n<histogram_n[N].length && histogram_n[N][n]<=a; ++n) {}
+    //if ()
+    encode_centered_minimal(n, N+1, bs);
+    encode_binomial_small_range(N, n, table[N], coder);
+    theoretical_code_length += N - log2_C_n_m(N, n);
+  }
+  bs.flush();
+  coder.encode_finalize();
+  writeln("uniform ", bs.size());
+  writeln("arithmetic ", coder.m_bit_stream.size());
+  writeln("theoretical ", cast(int)floor(theoretical_code_length/8));
 }
 
 void test_arithmetic_coding() {
@@ -1336,8 +1457,8 @@ import math;
 // TODO: 1 gives infinity
 int main(const string[] argv) {
   //test_arithmetic_coding();
-  //test_binomial_arithmetic_coding();
-  writeln(log2_C_n_m(32, 16));
+  //test_binomial_arithmetic_coding(argv);
+  //writeln(log2_C_n_m(32, 16));
   alias test_func = void function(const string[]);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;
@@ -1349,6 +1470,7 @@ int main(const string[] argv) {
   func_map["test_7"] = &test_7;
   func_map["test_8"] = &test_8;
   func_map["test_9"] = &test_9;
+  func_map["test_9a"] = &test_9a;
   func_map["test_10"] = &test_10;
   func_map["test_11"] = &test_11;
   func_map["test_12"] = &test_12;

@@ -113,6 +113,8 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
     CodeT v = ((m_code_val-m_code_low+1)*count-1) / range;
     size_t s = 0;
     for (; s<cdf_table.length && cdf_table[s]<=v; ++s) {}
+    //if (s >= cdf_table.length)
+    //  --s;
     CountT low = s==0 ? 0 : cdf_table[s-1];
     CountT high = cdf_table[s];
     m_code_high = m_code_low + (range*high)/count - 1;

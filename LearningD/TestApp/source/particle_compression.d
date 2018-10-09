@@ -50,12 +50,23 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
   import std.stdio;
   assert(a <= b);
   bool first = true;
+
+  /* comment out the below to use uniform encoding instead of gaussian distribution */
+  //int beg = cast(int)ceil(a);
+  //int end = cast(int)floor(b);
+  //int v = cast(int)c-beg;
+  //int n = end - beg + 1; // v can be from 0 to n-1
+  //if (end-beg+1 <= cutoff)
+  //  return encode_binomial_small_range(n-1, v, cdf_table[n-1], coder);
+  //else
+  //  return encode_centered_minimal(v, n, bs);
+
   while (true) {
     int beg = cast(int)ceil(a);
     int end = cast(int)floor(b);
     if (beg == end)
       return; // no need to write any bit
-    if (end-beg+1 <= cutoff) {
+    if (end-beg <= cutoff) {
       int v = cast(int)c-beg;
       int n = end - beg + 1; // v can be from 0 to n-1
       if (first) {
@@ -205,22 +216,22 @@ void encode_array(int N, int[] nums, ref BitStream bs) {
 
 void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   import std.stdio;
-  void traverse_encode(T,int R)(KdTree!(T,R) parent, ref BitStream bs) {
-    int N = parent.end_ - parent.begin_;
+  void traverse_encode(T,int R)(KdTree!(T,R) node, ref BitStream bs) {
+    int N = node.end_ - node.begin_;
     if (N == 1) { // leaf level
       // do nothing
     }
     else { // non leaf
-      int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
+      int n = node.left_ is null ? 0 : node.left_.end_ - node.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
       encode_range(m, s, 0, N, n, table, bs, coder);
       //encode_centered_minimal(n, N+1, bs); // uniform
       enc_file.writeln(n);
-      if (parent.left_)
-        traverse_encode(parent.left_, bs);
-      if (parent.right_)
-        traverse_encode(parent.right_, bs);
+      if (node.left_)
+        traverse_encode(node.left_, bs);
+      if (node.right_)
+        traverse_encode(node.right_, bs);
     }
   }
   auto table =  create_binomial_table(cutoff);
