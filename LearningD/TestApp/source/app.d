@@ -677,6 +677,7 @@ void test_9(const string[] argv) {
   import std.array : array;
   writeln("Test 9");
   enforce(argv.length>=3, "usage: "~argv[0]~" [test_9] [particle file]");
+  File f = File("test9.txt", "w");
 
   void traverse_code_length(T, int R)(int level, KdTree!(T,R) parent, ref Tuple!(double[], double) code_length1, ref Tuple!(double[], double) code_length2) {
     int N = parent.end_ - parent.begin_;
@@ -694,6 +695,7 @@ void test_9(const string[] argv) {
         code_length2[0][level] = 0;
       }
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
+      f.writeln(n);
       code_length1[0][level] += N - log2_C_n_m(N, n);
       if (parent.left_ !is null) {
         traverse_code_length(level+1, parent.left_, code_length1, code_length2);
@@ -727,13 +729,13 @@ void test_9(const string[] argv) {
     //}
   }
   writeln("code length 1 = ", code_length1);
-  writeln("code length 2 = ", code_length2);
+ // writeln("code length 2 = ", code_length2);
   for (size_t i = 0; i < code_length1[0].length; ++i) {
-    writeln(code_length1[0][i] / code_length2[0][i]);
+   // writeln(code_length1[0][i] / code_length2[0][i]);
   }
-  writeln(code_length1[1] / code_length2[1]);
-  writeln(reduce!((a,b)=>a+b)(code_length1[0]) + code_length1[1]);
-  writeln(reduce!((a,b)=>a+b)(code_length2[0]) + code_length2[1]);
+  //writeln(code_length1[1] / code_length2[1]);
+  writeln(reduce!((a,b)=>a+b)(code_length1[0])/8/* + code_length1[1]*/);
+  //writeln(reduce!((a,b)=>a+b)(code_length2[0])/* + code_length2[1]*/);
 }
 
 /++ Test the kdtree to make sure it is working +/
@@ -1235,6 +1237,7 @@ void test_21(const string[] argv) {
   Coder coder;
   encode(tree, bs, coder);
   decode(bs, coder);
+  writeln(coder.m_bit_stream.size());
   writeln(bs.size() + coder.m_bit_stream.size());
   //decode(bs);
 }
@@ -1334,6 +1337,7 @@ import math;
 int main(const string[] argv) {
   //test_arithmetic_coding();
   //test_binomial_arithmetic_coding();
+  writeln(log2_C_n_m(32, 16));
   alias test_func = void function(const string[]);
   test_func[string] func_map;
   func_map["test_1"] = &test_1;

@@ -50,7 +50,6 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
   import std.stdio;
   assert(a <= b);
   bool first = true;
-  int written = 0;
   while (true) {
     int beg = cast(int)ceil(a);
     int end = cast(int)floor(b);
@@ -82,14 +81,10 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
     assert(a<=mid && mid<=b);
     if (c < mid) {
       bs.write(0);
-      if (written++ < 10)
-        write(0);
       b = floor(mid);
     }
     else { // c >= mid
       bs.write(1);
-      if (written++ < 10)
-        write(1);
       a = ceil(mid);
     }
     first = false;
@@ -124,11 +119,11 @@ int decode_range(double m, double s, double a, double b, uint[][] cdf_table, ref
       mid = a;
     if (a==mid || b==mid) {
       int n = end - beg + 1;
-      return decode_centered_minimal(n, bs);
+      return beg + decode_centered_minimal(n, bs);
     }
     assert(a<=mid && mid<=b);
     auto bit = bs.read();
-    write(bit);
+    //write(bit);
     if (bit == 0)
       b = floor(mid);
     else if (bit == 1)
@@ -252,8 +247,8 @@ void decode(ref BitStream bs, ref Coder coder) {
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
       int n = decode_range(m, s, 0, N, table, bs, coder);
-      assert(n>=0 && n<=N);
       //int n = decode_centered_minimal(N+1, bs); // uniform
+      assert(n>=0 && n<=N);
       dec_file.writeln(n);
       if (n > 0)
         traverse_decode!T(n, bs);
@@ -267,7 +262,7 @@ void decode(ref BitStream bs, ref Coder coder) {
   coder.init_read();
   int N = cast(int)bs.read(32);
   File dec_file = File("decode.txt", "w");
-  dec_file.writeln(N);
+  //dec_file.writeln(N);
   traverse_decode!int(N, bs);
 }
 
