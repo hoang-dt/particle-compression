@@ -113,10 +113,10 @@ real erfc(real x) {
 }
 
 /++ Generate the Pascal triangle +/
-int[][] pascal_triangle(int n) {
-  int[][] triangle = new int[][](n+1);
+uint[][] pascal_triangle(int n) {
+  uint[][] triangle = new uint[][](n+1);
   for (int i = 0; i <= n; ++i)
-    triangle[i] = new int[](i+1);
+    triangle[i] = new uint[](i+1);
   for (int i = 0; i <= n; ++i) {
     triangle[i][0] = 1;
     for (int j = 1; j < i; ++j)

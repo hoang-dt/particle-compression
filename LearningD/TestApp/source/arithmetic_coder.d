@@ -106,7 +106,9 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
   }
 
   /++ Decode a single symbol and return its index in the CDF table +/
-  size_t decode(in CountT[] cdf_table, CountT count) {
+  size_t decode(in CountT[] cdf_table) {
+    assert(cdf_table.length > 0);
+    CountT count = cdf_table[cdf_table.length-1];
     CodeT range = m_code_high - m_code_low + 1;
     CodeT v = ((m_code_val-m_code_low+1)*count-1) / range;
     size_t s = 0;

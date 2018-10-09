@@ -29,25 +29,28 @@ double Finv(double m, double s, double y) {
 const int cutoff = 32;
 alias Coder = ArithmeticCoder!();
 
-void encode_binomial_small_range(int n, int v, int[] table, ref Coder coder) {
+void encode_binomial_small_range(int n, int v, in uint[] cdf_table, ref Coder coder) {
   assert(v>=0 && v<=n);
-  uint lo = v==0 ? 0 : table[v-1];
-  uint hi = table[v];
+  uint lo = v==0 ? 0 : cdf_table[v-1];
+  uint hi = cdf_table[v];
   uint scale = 1 << n;
   Prob!uint prob = Prob!uint(lo, hi, scale);
   coder.encode(prob);
 }
 
-int decode_binomial_small_range(int n, int[] table, ref Coder coder) {
-  return 1;
+int decode_binomial_small_range(int n, in uint[] cdf_table, ref Coder coder) {
+  size_t v = coder.decode(cdf_table);
+  assert(v<=n);
+  return cast(int)v;
 }
 
 /++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability +/
-void encode_range(double m, double s, double a, double b, double c, ref BitStream bs, ref Coder coder) {
+void encode_range(double m, double s, double a, double b, double c, in uint[][] cdf_table, ref BitStream bs, ref Coder coder) {
+  import std.stdio;
   assert(a <= b);
-  auto table =  create_binomial_table(cutoff);
   bool first = true;
+  int written = 0;
   while (true) {
     int beg = cast(int)ceil(a);
     int end = cast(int)floor(b);
@@ -56,8 +59,10 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
     if (end-beg+1 <= cutoff) {
       int v = cast(int)c-beg;
       int n = end - beg + 1; // v can be from 0 to n-1
-      if (first)
-        return encode_binomial_small_range(n-1, v, table[n-1], coder);
+      if (first) {
+        assert(beg == 0);
+        return encode_binomial_small_range(n-1, v, cdf_table[n-1], coder);
+      }
       else
         return encode_centered_minimal(v, n, bs);
     }
@@ -77,10 +82,14 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
     assert(a<=mid && mid<=b);
     if (c < mid) {
       bs.write(0);
+      if (written++ < 10)
+        write(0);
       b = floor(mid);
     }
     else { // c >= mid
       bs.write(1);
+      if (written++ < 10)
+        write(1);
       a = ceil(mid);
     }
     first = false;
@@ -88,9 +97,10 @@ void encode_range(double m, double s, double a, double b, double c, ref BitStrea
 }
 
 /++ The inverse of encode +/
-int decode_range(double m, double s, double a, double b, ref BitStream bs, ref Coder coder) {
+// TODO: refactor to put part the logic of this function to the decode function
+int decode_range(double m, double s, double a, double b, uint[][] cdf_table, ref BitStream bs, ref Coder coder) {
+  import std.stdio;
   assert(a <= b);
-  auto table =  create_binomial_table(cutoff);
   bool first = true;
   while (true) {
     int beg = cast(int)ceil(a);
@@ -100,9 +110,9 @@ int decode_range(double m, double s, double a, double b, ref BitStream bs, ref C
     if (end-beg+1 <= cutoff) {
       int n = end - beg + 1; // v can be from 0 to n-1
       if (first)
-        return decode_binomial_small_range(n-1, table[n-1], coder);
+        return decode_binomial_small_range(n-1, cdf_table[n-1], coder);
       else
-        return decode_centered_minimal(n, bs);
+        return beg + decode_centered_minimal(n, bs);
     }
     /* compute F(a) and F(b) */
     double fa = F(m, s, a);
@@ -118,6 +128,7 @@ int decode_range(double m, double s, double a, double b, ref BitStream bs, ref C
     }
     assert(a<=mid && mid<=b);
     auto bit = bs.read();
+    write(bit);
     if (bit == 0)
       b = floor(mid);
     else if (bit == 1)
@@ -208,7 +219,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      encode_range(m, s, 0, N, n, bs, coder);
+      encode_range(m, s, 0, N, n, table, bs, coder);
       //encode_centered_minimal(n, N+1, bs); // uniform
       enc_file.writeln(n);
       if (parent.left_)
@@ -217,6 +228,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
         traverse_encode(parent.right_, bs);
     }
   }
+  auto table =  create_binomial_table(cutoff);
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
   bs.init_write(100000000); // 100 MB // TODO
   coder.init_write(100000000); // TODO
@@ -227,9 +239,10 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   traverse_encode(tree, bs);
   bs.flush();
   coder.encode_finalize();
+  writeln("--------------");
 }
 
-void decode(ref BitStream bs) {
+void decode(ref BitStream bs, ref Coder coder) {
   import std.stdio;
   void traverse_decode(T)(int N, ref BitStream bs) {
     if (N == 1) { // leaf level
@@ -238,8 +251,9 @@ void decode(ref BitStream bs) {
     else { // non leaf
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
-      //int n = decode_range(m, s, 0, N, bs);
-      int n = decode_centered_minimal(N+1, bs); // uniform
+      int n = decode_range(m, s, 0, N, table, bs, coder);
+      assert(n>=0 && n<=N);
+      //int n = decode_centered_minimal(N+1, bs); // uniform
       dec_file.writeln(n);
       if (n > 0)
         traverse_decode!T(n, bs);
@@ -248,7 +262,9 @@ void decode(ref BitStream bs) {
     }
   }
 
+  auto table =  create_binomial_table(cutoff);
   bs.init_read();
+  coder.init_read();
   int N = cast(int)bs.read(32);
   File dec_file = File("decode.txt", "w");
   dec_file.writeln(N);
@@ -256,7 +272,7 @@ void decode(ref BitStream bs) {
 }
 
 /++ Create a probability table for small N +/
-int[][] create_binomial_table(int N) {
+uint[][] create_binomial_table(int N) {
   auto table = pascal_triangle(N);
   for (int n = 0; n <= N; ++n) {
     for (int k = 1; k <= n; ++k)

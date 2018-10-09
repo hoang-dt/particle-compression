@@ -1234,8 +1234,7 @@ void test_21(const string[] argv) {
   BitStream bs;
   Coder coder;
   encode(tree, bs, coder);
-  //encode_array(N, arr, bs);
-  //encode(tree, coder);
+  decode(bs, coder);
   writeln(bs.size() + coder.m_bit_stream.size());
   //decode(bs);
 }
@@ -1292,7 +1291,7 @@ void test_arithmetic_coding() {
   coder.init_read();
   char[] output = new char[](contents.length);
   for (int i = 0; i < nsymbols_encoded; ++i) {
-    size_t c = coder.decode(cdf_table, count);
+    size_t c = coder.decode(cdf_table);
     assert(c>=0 && c<=127);
     write(cast(char)(c));
   }
@@ -1333,7 +1332,7 @@ import math;
 
 // TODO: 1 gives infinity
 int main(const string[] argv) {
-  test_arithmetic_coding();
+  //test_arithmetic_coding();
   //test_binomial_arithmetic_coding();
   alias test_func = void function(const string[]);
   test_func[string] func_map;
