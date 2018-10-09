@@ -1271,10 +1271,10 @@ void test_21(const string[] argv) {
   BitStream bs;
   Coder coder;
   encode(tree, bs, coder);
-  //decode(bs, coder);
+  decode(bs, coder);
   writeln(coder.m_bit_stream.size());
   writeln(bs.size() + coder.m_bit_stream.size());
-  //decode(bs);
+  //decode(bs, coder);
 }
 
 /++ Randomly alter the binomial distribution +/

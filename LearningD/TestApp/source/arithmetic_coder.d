@@ -75,6 +75,7 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
 
   /++ Encode a single symbol +/
   void encode(Prob!CountT p) {
+    assert(p.count > 0);
     CodeT range = m_code_high - m_code_low + 1;
     m_code_high = m_code_low + (range*p.high/p.count) - 1; // the -1 makes sure new m_code_high <= old m_code_high (== happens when p.high==p.count)
     m_code_low = m_code_low + (range*p.low/p.count);
@@ -109,6 +110,7 @@ struct ArithmeticCoder(CodeT=ulong, CountT=uint, int CodeBits=33, int CountBits=
   size_t decode(in CountT[] cdf_table) {
     assert(cdf_table.length > 0);
     CountT count = cdf_table[cdf_table.length-1];
+    assert(count > 0);
     CodeT range = m_code_high - m_code_low + 1;
     CodeT v = ((m_code_val-m_code_low+1)*count-1) / range;
     size_t s = 0;

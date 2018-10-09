@@ -66,7 +66,7 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
     int end = cast(int)floor(b);
     if (beg == end)
       return; // no need to write any bit
-    if (end-beg <= cutoff) {
+    if (end-beg+1 <= cutoff) {
       int v = cast(int)c-beg;
       int n = end - beg + 1; // v can be from 0 to n-1
       if (first) {
@@ -115,6 +115,7 @@ int decode_range(double m, double s, double a, double b, uint[][] cdf_table, ref
       return beg; // no need to write any bit
     if (end-beg+1 <= cutoff) {
       int n = end - beg + 1; // v can be from 0 to n-1
+      assert(n-1 < cdf_table.length);
       if (first)
         return decode_binomial_small_range(n-1, cdf_table[n-1], coder);
       else
@@ -268,7 +269,7 @@ void decode(ref BitStream bs, ref Coder coder) {
     }
   }
 
-  auto table =  create_binomial_table(cutoff);
+  auto table = create_binomial_table(cutoff);
   bs.init_read();
   coder.init_read();
   int N = cast(int)bs.read(32);
