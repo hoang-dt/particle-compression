@@ -26,7 +26,8 @@ double Finv(double m, double s, double y) {
   return m + s * (erfinv(2*y-1)*sqrt2);
 }
 
-const int cutoff = 32;
+const int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
+const int cutoff2 = 4; // to switch over to uniform encoding
 alias Coder = ArithmeticCoder!();
 
 void encode_binomial_small_range(int n, int v, in uint[] cdf_table, ref Coder coder) {
@@ -66,29 +67,21 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
     int end = cast(int)floor(b);
     if (beg == end)
       return; // no need to write any bit
-    if (end-beg+1 <= cutoff) {
-      int v = cast(int)c-beg;
-      int n = end - beg + 1; // v can be from 0 to n-1
-      if (first) {
-        assert(beg == 0);
-        return encode_binomial_small_range(n-1, v, cdf_table[n-1], coder);
-      }
-      else
-        return encode_centered_minimal(v, n, bs);
-    }
+    int n = end - beg + 1; // v can be from 0 to n-1
+    int v = cast(int)c-beg;
+    if (first && n<=cutoff1)
+      return encode_binomial_small_range(n-1, v, cdf_table[n-1], coder);
+    if (!first && n<=cutoff2)
+      return encode_centered_minimal(v, n, bs);
     /* compute F(a) and F(b) */
     double fa = F(m, s, a);
     double fb = F(m, s, b);
-    // TODO: what if fa==fb
     /* compute F^-1((fa+fb)/2) */
     double mid = Finv(m, s, (fa+fb)*0.5);
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a==mid || b==mid) {
-      int v = cast(int)c-beg;
-      int n = end - beg + 1;
+    if (a==mid || b==mid)
       return encode_centered_minimal(v, n, bs);
-    }
     assert(a<=mid && mid<=b);
     if (c < mid) {
       bs.write(0);
@@ -113,14 +106,11 @@ int decode_range(double m, double s, double a, double b, uint[][] cdf_table, ref
     int end = cast(int)floor(b);
     if (beg == end)
       return beg; // no need to write any bit
-    if (end-beg+1 <= cutoff) {
-      int n = end - beg + 1; // v can be from 0 to n-1
-      assert(n-1 < cdf_table.length);
-      if (first)
-        return decode_binomial_small_range(n-1, cdf_table[n-1], coder);
-      else
-        return beg + decode_centered_minimal(n, bs);
-    }
+    int n = end - beg + 1;
+    if (first && n<=cutoff1)
+      return decode_binomial_small_range(n-1, cdf_table[n-1], coder);
+    if (!first && n<=cutoff2)
+      return beg + decode_centered_minimal(n, bs);
     /* compute F(a) and F(b) */
     double fa = F(m, s, a);
     double fb = F(m, s, b);
@@ -129,19 +119,14 @@ int decode_range(double m, double s, double a, double b, uint[][] cdf_table, ref
     double mid = Finv(m, s, (fa+fb)*0.5);
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a==mid || b==mid) {
-      int n = end - beg + 1;
+    if (a==mid || b==mid)
       return beg + decode_centered_minimal(n, bs);
-    }
     assert(a<=mid && mid<=b);
     auto bit = bs.read();
-    //write(bit);
     if (bit == 0)
       b = floor(mid);
-    else if (bit == 1)
-      a = ceil(mid);
     else
-      assert(false);
+      a = ceil(mid);
     first = false;
   }
 }
@@ -235,7 +220,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
         traverse_encode(node.right_, bs);
     }
   }
-  auto table =  create_binomial_table(cutoff);
+  auto table =  create_binomial_table(cutoff1);
   /* pre-compute and store a table of inverse gaussian(0,1) cdf */
   bs.init_write(100000000); // 100 MB // TODO
   coder.init_write(100000000); // TODO
@@ -269,7 +254,7 @@ void decode(ref BitStream bs, ref Coder coder) {
     }
   }
 
-  auto table = create_binomial_table(cutoff);
+  auto table = create_binomial_table(cutoff1);
   bs.init_read();
   coder.init_read();
   int N = cast(int)bs.read(32);

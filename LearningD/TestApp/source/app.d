@@ -754,7 +754,8 @@ void test_9a(const string[] argv) {
     }
     else { // non leaf
       int n = node.left_ is null ? 0 : node.left_.end_ - node.left_.begin_;
-      code_length1 += N - log2_C_n_m(N, n);
+      if (N+1 <= cutoff1)
+        code_length1 += N - log2_C_n_m(N, n);
       if (node.left_)
         traverse_code_length(node.left_, code_length1);
       if (node.right_)
@@ -765,11 +766,9 @@ void test_9a(const string[] argv) {
   /* read particle files, or generate random particles */
   auto particles = load_particles(argv);
   double code_length1 = 0;
-  for (size_t i = 0; i < 1/*particles.position.length*/; ++i) {
-    auto tree = new KdTree!float();
-    tree.build!"xyz"(particles.position[i]); // build a tree from the first time step
-    traverse_code_length(tree, code_length1);
-  }
+  auto tree = new KdTree!float();
+  tree.build!"xyz"(particles.position[0]); // build a tree from the first time step
+  traverse_code_length(tree, code_length1);
   writeln("code length 1 = ", cast(int)floor(code_length1/8));
 }
 
