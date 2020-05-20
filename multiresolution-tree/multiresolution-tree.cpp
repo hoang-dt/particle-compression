@@ -7,6 +7,7 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
+#include <exception>
 #include "doctest.h"
 #include "linalg.h"
 #include <algorithm>
@@ -114,13 +115,18 @@ struct range {
 #define RANGE_0()
 #define RANGE_1(Container) range<decltype(begin(Container))>{ begin(Container), end(Container) }
 #define RANGE_2(Begin, End) range<decltype(Begin)>{ Begin, End }
-#define RANGE_3(Container, Begin, End) range<decltype(begin(Container))>{ begin(Container) + Begin, begi(Container) + End }
+#define RANGE_3(Container, Begin, End) range<decltype(begin(Container))>{ begin(Container) + Begin, begin(Container) + End }
 
 struct empty_struct { };
 
 struct bbox { float3 Min, Max; };
 
 enum node_type { Root, Inner };
+
+struct particle {
+  float3 Pos; // position
+  u64 Code; // 
+};
 
 template <node_type R>
 struct kd_tree {
@@ -134,15 +140,16 @@ struct kd_tree {
   u64 Begin = 0;
   u64 End = 0;
   using bbox_t = conditional_t<R == Root, bbox, empty_struct>;
+  using vec_float3_t = conditional_t<R == Root, vector<particle>*, empty_struct>;
   [[no_unique_address]] bbox_t BBox = bbox_t();
-  [[no_unique_address]] vector<float3>* Points;
+  [[no_unique_address]] vec_float3_t Particles = vec_float3_t();
 };
 
 /* Read all particles from a XYZ file */
-static vector<float3>
+static vector<particle>
 ReadXYZ(cstr FileName) {
   FILE* Fp = fopen(FileName, "r");
-  vector<float3> Particles;
+  vector<particle> Particles;
 
   char Line[256];
   fgets(Line, sizeof(Line), Fp);
@@ -153,7 +160,7 @@ ReadXYZ(cstr FileName) {
     fgets(Line, sizeof(Line), Fp);
     float3 P3; char C;
     sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
-    Particles[I] = P3;
+    Particles[I].Pos = P3;
   }
   return Particles;
 }
@@ -171,28 +178,56 @@ WriteXYZ(cstr FileName, const range<t>& Particles) {
 }
 
 static bbox
-ComputeBoundingBox(const vector<float3>& Points) {
-  REQUIRE(!Points.empty());
+ComputeBoundingBox(const vector<particle>& Particles) {
+  REQUIRE(!Particles.empty());
   bbox BBox;
-  BBox.Min = BBox.Max = Points[0];
-  FOR_EACH (P3, Points) {
-    BBox.Min = float3(MIN(BBox.Min.x, P3->x), MIN(BBox.Min.y, P3->y), MIN(BBox.Min.z, P3->z));
-    BBox.Max = float3(MAX(BBox.Max.x, P3->x), MAX(BBox.Max.y, P3->y), MAX(BBox.Max.z, P3->z));
+  BBox.Min = BBox.Max = Particles[0].Pos;
+  FOR_EACH (P3, Particles) {
+    BBox.Min = float3(MIN(BBox.Min.x, P3->Pos.x), MIN(BBox.Min.y, P3->Pos.y), MIN(BBox.Min.z, P3->Pos.z));
+    BBox.Max = float3(MAX(BBox.Max.x, P3->Pos.x), MAX(BBox.Max.y, P3->Pos.y), MAX(BBox.Max.z, P3->Pos.z));
   }
   return BBox;
 }
 
-vector<vector<float3>> ParticlesLODs;
+// First 4 bits = Level
+// Last 60 bits = block id of particle
+#define BLOCK_ID(Level, ParticleId, BlockBits) ((u64(Level) << 60) + ((ParticleId) >> ((Level) + (BlockBits))))
+#define LEVEL(BlockId) ((BlockId) >> 60)
+
+unordered_map<u64, vector<float3>> ParticlesLODs;
 struct params {
   int BlockBits = 15; // every 2^15 voxels become one block
 };
 
+// TODO: first, compute the bounding box
+// TODO: then, partition the particles into 2^x * 2^y * 2^z bricks
+// TODO: then, build one tree for each brick
+// TODO: then, use the maximum tree depth and re-build a tree for each brick (so that each particle has one coordinate)
+// TODO: during the second build, encode the numbers into the correct streams, keeping track of the resolution level and also the spatial level
+// TODO: during the second build, adjust the size of the block size accordingly as we traverse down the tree
+// TODO: writing one bit at a time at the leaf level can be slow. how to make it fast?
+// TODO: during refinement, keep two priority queues: one at the brick level and one for all bricks
+// 
+
+// TODO: for each block we store the number of particles (put all the numbers together outside of block data)
+// TODO: in the block data we store the binomial coding tree
+// TODO: each level can be one file
+// TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
+// TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
+//       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
+
+using particles = vector<unordered_map<u64, vector<float3>>>; // [level] -> [blocks of particles]
+static void
+Refine(particles* Particles) {
+
+}
+
 template <node_type R> static void
-BuildTreeLeaf(kd_tree<R>* CurrNode, const kd_tree<Root>* RootNode, bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
+BuildTreeLeaf(const params& P, kd_tree<R>* CurrNode, const kd_tree<Root>* RootNode, bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
   REQUIRE(Begin + 1 == End);
   CurrNode->Begin = Begin;
   CurrNode->End = End;
-  const float3& P3 = (*RootNode->Points)[Begin];
+  const float3& P3 = (*RootNode->Particles)[Begin].Pos;
   while (Path) {
     int D = Path % 3;
     Path = Path / 3;
@@ -201,16 +236,14 @@ BuildTreeLeaf(kd_tree<R>* CurrNode, const kd_tree<Root>* RootNode, bbox BBox, i6
     BitPath = (BitPath << 1) + Left;
     if (Left) BBox.Max[D] = Middle; else BBox.Min[D] = Middle;
   }
-  int Level = Lsb(BitPath);
-  if (ParticlesLODs.size() <= Level) {
-    ParticlesLODs.resize(Level + 1);
-  }
-  ParticlesLODs[Level].reserve(128);
-  ParticlesLODs[Level].push_back(P3);
+  u64 Level = Lsb(BitPath);
+  u64 BlockId = BLOCK_ID(Level, BitPath, P.BlockBits);
+  ParticlesLODs[BlockId].reserve(128);
+  ParticlesLODs[BlockId].push_back(P3);
 }
 
 template <node_type R> static void
-BuildTreeInner(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
+BuildTreeInner(const params& P, kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
   REQUIRE(Begin < End); // this cannot be a leaf node
   CurrNode->Begin = Begin;
   CurrNode->End = End;
@@ -218,9 +251,9 @@ BuildTreeInner(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i
   int D = Path % 3;
   Path = Path / 3;
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const float3& P3) { return P3[D] < Middle; };
-  auto Right = partition(RootNode->Points->begin() + Begin, RootNode->Points->begin() + End, Pred);
-  i64 LeftSize = Right - (RootNode->Points->begin() + Begin);
+  auto Pred = [D, Middle](const particle& P3) { return P3.Pos[D] < Middle; };
+  auto Right = partition(RootNode->Particles->begin() + Begin, RootNode->Particles->begin() + End, Pred);
+  i64 LeftSize = Right - (RootNode->Particles->begin() + Begin);
   u64 PathLeft = 0, PathRight = 0;
   if (LeftSize > 0) {
     CurrNode->Left = new kd_tree<Inner>();
@@ -228,9 +261,9 @@ BuildTreeInner(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i
     BBoxLeft.Max[D] = Middle;
     BitPath <<= 1;
     if (LeftSize == 1) { // leaf
-      BuildTreeLeaf(CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
+      BuildTreeLeaf(P, CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
     } else { // recurse on the left
-      BuildTreeInner(CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
+      BuildTreeInner(P, CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
     }
   }
   if (Begin + LeftSize < End) {
@@ -239,9 +272,9 @@ BuildTreeInner(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i
     BBoxRight.Min[D] = Middle;
     BitPath = (BitPath << 1) + 1;
     if (Begin + LeftSize + 1 == End) { // leaf
-      BuildTreeLeaf(CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
+      BuildTreeLeaf(P, CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
     } else { // recurse on the right
-      BuildTreeInner(CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
+      BuildTreeInner(P, CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
     }
   }
 }
@@ -253,9 +286,9 @@ CountPath(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Be
   CurrNode->End = End;
   CurrNode->Left = CurrNode->Right = nullptr;
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const float3& P3) { return P3[D] < Middle; };
-  auto Right = partition(RootNode->Points->begin() + Begin, RootNode->Points->begin() + End, Pred);
-  i64 LeftSize = Right - (RootNode->Points->begin() + Begin);
+  auto Pred = [D, Middle](const particle& P3) { return P3.Pos[D] < Middle; };
+  auto Right = partition(RootNode->Particles->begin() + Begin, RootNode->Particles->begin() + End, Pred);
+  i64 LeftSize = Right - (RootNode->Particles->begin() + Begin);
   u64 PathLeft = 0, PathRight = 0;
   if (LeftSize > 0) {
     CurrNode->Left = new kd_tree<Inner>();
@@ -283,12 +316,12 @@ CountPath(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Be
 }
 
 static kd_tree<Root>
-BuildTree(vector<float3>* Points) {
+BuildTree(const params& P, vector<particle>* Particles) {
   kd_tree<Root> Tree;
-  Tree.Points = Points;
-  Tree.BBox = ComputeBoundingBox(*Points);
-  u64 Path = CountPath(&Tree, &Tree, Tree.BBox, 0, Points->size(), 0);
-  BuildTreeInner(&Tree, &Tree, Tree.BBox, 0, Points->size(), 0, Path);
+  Tree.Particles = Particles;
+  Tree.BBox = ComputeBoundingBox(*Particles);
+  u64 Path = CountPath(&Tree, &Tree, Tree.BBox, 0, Particles->size(), 0);
+  BuildTreeInner(P, &Tree, &Tree, Tree.BBox, 0, Particles->size(), 0, Path);
   FOR (size_t, I, 0, ParticlesLODs.size()) {
     WriteXYZ(PRINT("particles-%zd.xyz", I), RANGE(ParticlesLODs[I]));
   }
@@ -328,14 +361,6 @@ RandomLevels(vector<float3>* Points) {
   //    build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
   //  }
   //}
-
-// TODO: store the particles into blocks per level
-// TODO: for each block we store the number of particles (put all the numbers together outside of block data)
-// TODO: in the block data we store the binomial coding tree
-// TODO: each level can be one file
-// TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
-// TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
-//       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
 
 static void
 Handler(const doctest::AssertData& ad) {
@@ -377,9 +402,10 @@ main(int Argc, cstr* Argv) {
     fprintf(stderr, "Usage: .exe particle_file");
     exit(1);
   }
+  params P;
   auto Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu", Particles.size());
-  //BuildTree(&Particles);
-  RandomLevels(&Particles);
+  BuildTree(P, &Particles);
+  //RandomLevels(P, &Particles);
 }
 

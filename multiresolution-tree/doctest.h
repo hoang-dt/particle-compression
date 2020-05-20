@@ -3568,7 +3568,7 @@ namespace detail {
 #if __cplusplus >= 201703L && defined(__cpp_lib_uncaught_exceptions) && __cpp_lib_uncaught_exceptions >= 201411
             if(std::uncaught_exceptions() > 0
 #else
-            if(std::uncaught_exception()
+            if(std::uncaught_exceptions()
 #endif
             && g_cs->shouldLogCurrentException) {
                 DOCTEST_ITERATE_THROUGH_REPORTERS(
@@ -3916,7 +3916,7 @@ namespace detail {
 #if __cplusplus >= 201703L && defined(__cpp_lib_uncaught_exceptions) && __cpp_lib_uncaught_exceptions >= 201411
         if(std::uncaught_exceptions() > 0) {
 #else
-        if(std::uncaught_exception()) {
+        if(std::uncaught_exceptions()) {
 #endif
             std::ostringstream s;
             this->stringify(&s);
