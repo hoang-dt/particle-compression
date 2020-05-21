@@ -43,7 +43,9 @@
 // #define FOO_3(X, Y, Z) "Three"
 
 #define FOR(Type, It, Begin, End) for (Type It = Begin; It != End; ++It)
-#define FOR_EACH(It, Container) for (auto It = begin(Container); It != end(Container); ++It)
+#define FOR_EACH(...) MACRO_OVERLOAD(FOR_EACH, __VA_ARGS__)
+#define FOR_EACH_2(It, Container) for (auto It = begin(Container); It != end(Container); ++It)
+#define FOR_EACH_3(It, Begin, End) for (auto It = Begin; It != End; ++It)
 #define MAX(A, B) (B) < (A) ? (A) : (B)
 #define MIN(A, B) (A) < (B) ? (A) : (B)
 
@@ -52,6 +54,8 @@
 #elif defined(__clang__) || defined(__GNUC__)
 #define INLINE inline __attribute__((__always_inline__))
 #endif
+
+#define MCOPY(A, Expr) [&]() { auto __B = A; __B Expr; return __B; }()
 
 using namespace linalg::aliases;
 using namespace std;
@@ -103,42 +107,37 @@ INLINE i8 Lsb(u64 V, i8 Def = -1) { ulong Idx; uchar Ret = _BitScanForward64(&Id
 inline thread_local char ScratchBuf[1024]; // for temporary strings
 #define PRINT(Format, ...) (snprintf(ScratchBuf, sizeof(ScratchBuf), Format, ##__VA_ARGS__), ScratchBuf)
 
-template <typename t>
-struct range {
-  t Begin, End;
-  INLINE i64 size() const { return End - Begin; }
-  INLINE t  begin() const { return Begin; }
-  INLINE t    end() const { return End  ; }
-};
+//template <typename t>
+//struct range {
+//  t Begin, End;
+//  INLINE i64 size() const { return End - Begin; }
+//  INLINE t  begin() const { return Begin; }
+//  INLINE t    end() const { return End  ; }
+//};
 
 #define RANGE(...) MACRO_OVERLOAD(RANGE, __VA_ARGS__)
 #define RANGE_0()
-#define RANGE_1(Container) range<decltype(begin(Container))>{ begin(Container), end(Container) }
-#define RANGE_2(Begin, End) range<decltype(Begin)>{ Begin, End }
-#define RANGE_3(Container, Begin, End) range<decltype(begin(Container))>{ begin(Container) + Begin, begin(Container) + End }
+#define RANGE_1(Container) begin(Container), end(Container)
+#define RANGE_2(Begin, End) Begin, End
+#define RANGE_3(Container, Begin, End) begin(Container) + Begin, begin(Container) + End
 
 struct empty_struct { };
 
 struct bbox { float3 Min, Max; };
 
-enum node_type { Root, Inner };
+enum node_type { Root, Inner, Leaf };
 
 struct particle {
   float3 Pos; // position
-  u64 Code; // 
+  u64 Code = 0; // 
 };
 
 template <node_type R>
-struct kd_tree {
-  union {
-    struct {
-      kd_tree<Inner>* Left;
-      kd_tree<Inner>* Right;
-    };
-    u64 Bits; // only stored at the leaf
-  };
-  u64 Begin = 0;
-  u64 End = 0;
+struct resolution_tree {
+  using children_t = conditional_t<R != Leaf, resolution_tree<Inner>*, empty_struct>;
+  children_t Left  = children_t();
+  children_t Right = children_t();
+  i64 Begin = 0, End = 0;
   using bbox_t = conditional_t<R == Root, bbox, empty_struct>;
   using vec_float3_t = conditional_t<R == Root, vector<particle>*, empty_struct>;
   [[no_unique_address]] bbox_t BBox = bbox_t();
@@ -166,12 +165,12 @@ ReadXYZ(cstr FileName) {
 }
 
 template <typename t> static void
-WriteXYZ(cstr FileName, const range<t>& Particles) {
+WriteXYZ(cstr FileName, t Begin, t End) {
   FILE* Fp = fopen(FileName, "w");
-  auto NParticles = Particles.size();
+  auto NParticles = End - Begin;
   fprintf(Fp, "%zu\n", NParticles);
   fprintf(Fp, "dummy\n");
-  FOR_EACH (P3, Particles) {
+  FOR_EACH (P3, Begin, End) {
     fprintf(Fp, "C %f %f %f\n", P3->x, P3->y, P3->z);
   }
   fclose(Fp);
@@ -194,7 +193,7 @@ ComputeBoundingBox(const vector<particle>& Particles) {
 #define BLOCK_ID(Level, ParticleId, BlockBits) ((u64(Level) << 60) + ((ParticleId) >> ((Level) + (BlockBits))))
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
-unordered_map<u64, vector<float3>> ParticlesLODs;
+unordered_map<u64, vector<i64>> ParticlesLODs;
 struct params {
   int BlockBits = 15; // every 2^15 voxels become one block
 };
@@ -222,109 +221,92 @@ Refine(particles* Particles) {
 
 }
 
-template <node_type R> static void
-BuildTreeLeaf(const params& P, kd_tree<R>* CurrNode, const kd_tree<Root>* RootNode, bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
+static void
+AssignCodeLeaf(vector<particle>* Particles, bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D) {
   REQUIRE(Begin + 1 == End);
-  CurrNode->Begin = Begin;
-  CurrNode->End = End;
-  const float3& P3 = (*RootNode->Particles)[Begin].Pos;
-  while (Path) {
-    int D = Path % 3;
-    Path = Path / 3;
+  particle& P = (*Particles)[Begin];
+  while (Length--) {
     auto Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-    bool Left = P3[D] < Middle;
-    BitPath = (BitPath << 1) + Left;
+    bool Left = P.Pos[D] < Middle;
+    Code = (Code << 1) + Left;
     if (Left) BBox.Max[D] = Middle; else BBox.Min[D] = Middle;
+    D = (D + 1) % 3;
   }
-  u64 Level = Lsb(BitPath);
-  u64 BlockId = BLOCK_ID(Level, BitPath, P.BlockBits);
-  ParticlesLODs[BlockId].reserve(128);
-  ParticlesLODs[BlockId].push_back(P3);
+  P.Code = Code;
+  //u64 Level = Lsb(Code);
+  //u64 BlockId = BLOCK_ID(Level, Code, Params.BlockBits);
+  //ParticlesLODs[BlockId].reserve(128);
+  //ParticlesLODs[BlockId].push_back(Begin);
+}
+
+static void
+AssignCodeInner(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D) {
+  REQUIRE(Begin < End); // this cannot be a leaf node
+  float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
+  auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
+  i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
+  if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // leaf
+      AssignCodeLeaf(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
+    } else { // recurse on the left
+      AssignCodeInner(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
+    }
+  }
+  if (Mid < End) {
+    if (Mid + 1 == End) { // leaf
+      AssignCodeLeaf(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
+    } else { // recurse on the right
+      AssignCodeInner(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
+    }
+  }
 }
 
 template <node_type R> static void
-BuildTreeInner(const params& P, kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Begin, i64 End, u64 BitPath, i64 Path) {
-  REQUIRE(Begin < End); // this cannot be a leaf node
-  CurrNode->Begin = Begin;
-  CurrNode->End = End;
-  CurrNode->Left = CurrNode->Right = nullptr;
-  int D = Path % 3;
-  Path = Path / 3;
+BuildTreeInner(resolution_tree<R>* Node, vector<particles>* Particles, const bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D, bool SpatialSplit) {
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const particle& P3) { return P3.Pos[D] < Middle; };
-  auto Right = partition(RootNode->Particles->begin() + Begin, RootNode->Particles->begin() + End, Pred);
-  i64 LeftSize = Right - (RootNode->Particles->begin() + Begin);
-  u64 PathLeft = 0, PathRight = 0;
-  if (LeftSize > 0) {
-    CurrNode->Left = new kd_tree<Inner>();
-    auto BBoxLeft = BBox;
-    BBoxLeft.Max[D] = Middle;
-    BitPath <<= 1;
-    if (LeftSize == 1) { // leaf
-      BuildTreeLeaf(P, CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
+  auto Pred = SpatialSplit ? [](const particle& P) { return ((P.Code >> Length) & 1) == 0; } : [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
+  i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
+  if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // leaf
+      BuildTreeLeaf(Node, Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
     } else { // recurse on the left
-      BuildTreeInner(P, CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, BitPath, Path);
+      AssignCodeInner(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
     }
   }
-  if (Begin + LeftSize < End) {
-    CurrNode->Right = new kd_tree<Inner>();
-    auto BBoxRight = BBox;
-    BBoxRight.Min[D] = Middle;
-    BitPath = (BitPath << 1) + 1;
-    if (Begin + LeftSize + 1 == End) { // leaf
-      BuildTreeLeaf(P, CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
+  if (Mid < End) {
+    if (Mid + 1 == End) { // leaf
+      AssignCodeLeaf(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
     } else { // recurse on the right
-      BuildTreeInner(P, CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, BitPath, Path);
+      AssignCodeInner(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
     }
   }
 }
 
-template <node_type R> static u64
-CountPath(kd_tree<R>* CurrNode, kd_tree<Root>* RootNode, const bbox BBox, i64 Begin, i64 End, int D) {
+static i8
+CountMaxLength(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, i8 D) {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  CurrNode->Begin = Begin;
-  CurrNode->End = End;
-  CurrNode->Left = CurrNode->Right = nullptr;
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const particle& P3) { return P3.Pos[D] < Middle; };
-  auto Right = partition(RootNode->Particles->begin() + Begin, RootNode->Particles->begin() + End, Pred);
-  i64 LeftSize = Right - (RootNode->Particles->begin() + Begin);
-  u64 PathLeft = 0, PathRight = 0;
-  if (LeftSize > 0) {
-    CurrNode->Left = new kd_tree<Inner>();
-    auto BBoxLeft = BBox;
-    BBoxLeft.Max[D] = Middle;
-    if (LeftSize == 1) { // leaf
-      PathLeft = D;
-    } else { // recurse on the left
-      PathLeft = CountPath(CurrNode->Left, RootNode, BBoxLeft, Begin, Begin + LeftSize, (D + 1) % 3);
-      PathLeft = PathLeft * 3 + D;
-    }
-  }
-  if (Begin + LeftSize < End) {
-    CurrNode->Right = new kd_tree<Inner>();
-    auto BBoxRight = BBox;
-    BBoxRight.Min[D] = Middle;
-    if (Begin + LeftSize + 1 == End) { // leaf
-      PathRight = D;
-    } else { // recurse on the right
-      PathRight = CountPath(CurrNode->Right, RootNode, BBoxRight, Begin + LeftSize, End, (D + 1) % 3);
-      PathRight = PathRight * 3 + D;
-    }
-  }
-  return MAX(PathLeft, PathRight);
+  auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
+  i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
+  i8 LengthLeft = 0, LengthRight = 0;
+  if (Begin + 1 < Mid)
+    LengthLeft  = 1 + CountMaxLength(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % 3);
+  if (Mid + 1 < End)
+    LengthRight = 1 + CountMaxLength(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % 3);
+  return MAX(LengthLeft, LengthRight);
 }
 
-static kd_tree<Root>
-BuildTree(const params& P, vector<particle>* Particles) {
-  kd_tree<Root> Tree;
+/* Assign a resolution code to each particle */
+static resolution_tree<Root>
+AssignCode(const params& P, vector<particle>* Particles) {
+  resolution_tree<Root> Tree;
   Tree.Particles = Particles;
   Tree.BBox = ComputeBoundingBox(*Particles);
-  u64 Path = CountPath(&Tree, &Tree, Tree.BBox, 0, Particles->size(), 0);
-  BuildTreeInner(P, &Tree, &Tree, Tree.BBox, 0, Particles->size(), 0, Path);
-  FOR (size_t, I, 0, ParticlesLODs.size()) {
-    WriteXYZ(PRINT("particles-%zd.xyz", I), RANGE(ParticlesLODs[I]));
-  }
+  i8 Length = CountMaxLength(Particles, Tree.BBox, 0, Particles->size(), 0);
+  AssignCodeInner(Particles, Tree.BBox, 0, Particles->size(), 0, Length, 0);
+  //FOR (size_t, I, 0, ParticlesLODs.size()) {
+  //  WriteXYZ(PRINT("particles-%zd.xyz", I), RANGE(ParticlesLODs[I]));
+  //}
   return Tree;
 }
 
@@ -339,28 +321,6 @@ RandomLevels(vector<float3>* Points) {
     Size /= 2;
   }
 }
-
-  //  void build(string order, A...)(Vec3!T[] points, A a) {
-  //    order_ = order;
-  //    points_ = points;
-  //    bbox_ = compute_bbox(points);
-  //    build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
-  //  }
-
-  //  void build_no_leaf(string order, A...)(Vec3!T[] points) {
-  //    order_ = order;
-  //    points_ = points;
-  //    bbox_ = compute_bbox(points);
-  //    build_helper_no_leaf!(order)(this, bbox_, 0, cast(int)points.length, 0); // first split
-  //  }
-
-  //  void build_with_bbox(string order, A...)(Vec3!T[] points, BoundingBox!T bbox, A a) {
-  //    order_ = order;
-  //    points_ = points;
-  //    bbox_ = bbox;
-  //    build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
-  //  }
-  //}
 
 static void
 Handler(const doctest::AssertData& ad) {
@@ -405,7 +365,7 @@ main(int Argc, cstr* Argv) {
   params P;
   auto Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu", Particles.size());
-  BuildTree(P, &Particles);
+  AssignCode(P, &Particles);
   //RandomLevels(P, &Particles);
 }
 
