@@ -202,6 +202,8 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#undef near
+#undef far
 
 // C++17 #define var_inline inline
 #define var_inline static

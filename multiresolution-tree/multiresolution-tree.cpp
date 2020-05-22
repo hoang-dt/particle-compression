@@ -4,16 +4,20 @@
 // TODO: better memory allocation (to put the leaves on the same memory block)
 
 #define _CRT_SECURE_NO_WARNINGS
+#undef min
+#undef max
+#undef near
+#undef far
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
-#include <exception>
 #include "doctest.h"
-#include "linalg.h"
+#include "yocto_math.h"
 #include <algorithm>
 #include <iostream>
 #include <inttypes.h>
 #include <random>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -57,7 +61,7 @@
 
 #define MCOPY(A, Expr) [&]() { auto __B = A; __B Expr; return __B; }()
 
-using namespace linalg::aliases;
+using namespace yocto;
 using namespace std;
 
 using i8  = int8_t;
@@ -123,12 +127,12 @@ inline thread_local char ScratchBuf[1024]; // for temporary strings
 
 struct empty_struct { };
 
-struct bbox { float3 Min, Max; };
+struct bbox { vec3f Min, Max; };
 
 enum node_type { Root, Inner, Leaf };
 
 struct particle {
-  float3 Pos; // position
+  vec3f Pos; // position
   u64 Code = 0; // 
 };
 
@@ -157,7 +161,7 @@ ReadXYZ(cstr FileName) {
   fgets(Line, sizeof(Line), Fp); // dummy second line
   FOR (int, I, 0, NParticles) {
     fgets(Line, sizeof(Line), Fp);
-    float3 P3; char C;
+    vec3f P3; char C;
     sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
     Particles[I].Pos = P3;
   }
@@ -182,8 +186,8 @@ ComputeBoundingBox(const vector<particle>& Particles) {
   bbox BBox;
   BBox.Min = BBox.Max = Particles[0].Pos;
   FOR_EACH (P3, Particles) {
-    BBox.Min = float3(MIN(BBox.Min.x, P3->Pos.x), MIN(BBox.Min.y, P3->Pos.y), MIN(BBox.Min.z, P3->Pos.z));
-    BBox.Max = float3(MAX(BBox.Max.x, P3->Pos.x), MAX(BBox.Max.y, P3->Pos.y), MAX(BBox.Max.z, P3->Pos.z));
+    BBox.Min = min(BBox.Min, P3->Pos);
+    BBox.Max = max(BBox.Max, P3->Pos);
   }
   return BBox;
 }
@@ -215,51 +219,51 @@ struct params {
 // TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
 //       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
 
-using particles = vector<unordered_map<u64, vector<float3>>>; // [level] -> [blocks of particles]
+using particles = vector<unordered_map<u64, vector<vec3f>>>; // [level] -> [blocks of particles]
 static void
 Refine(particles* Particles) {
 
 }
 
-static void
-AssignCodeLeaf(vector<particle>* Particles, bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D) {
-  REQUIRE(Begin + 1 == End);
-  particle& P = (*Particles)[Begin];
-  while (Length--) {
-    auto Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-    bool Left = P.Pos[D] < Middle;
-    Code = (Code << 1) + Left;
-    if (Left) BBox.Max[D] = Middle; else BBox.Min[D] = Middle;
-    D = (D + 1) % 3;
-  }
-  P.Code = Code;
-  //u64 Level = Lsb(Code);
-  //u64 BlockId = BLOCK_ID(Level, Code, Params.BlockBits);
-  //ParticlesLODs[BlockId].reserve(128);
-  //ParticlesLODs[BlockId].push_back(Begin);
-}
+//static void
+//AssignCodeLeaf(vector<particle>* Particles, bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D) {
+//  REQUIRE(Begin + 1 == End);
+//  particle& P = (*Particles)[Begin];
+//  while (Length--) {
+//    auto Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
+//    bool Left = P.Pos[D] < Middle;
+//    Code = (Code << 1) + Left;
+//    if (Left) BBox.Max[D] = Middle; else BBox.Min[D] = Middle;
+//    D = (D + 1) % 3;
+//  }
+//  P.Code = Code;
+//  //u64 Level = Lsb(Code);
+//  //u64 BlockId = BLOCK_ID(Level, Code, Params.BlockBits);
+//  //ParticlesLODs[BlockId].reserve(128);
+//  //ParticlesLODs[BlockId].push_back(Begin);
+//}
 
-static void
-AssignCodeInner(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D) {
-  REQUIRE(Begin < End); // this cannot be a leaf node
-  float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
-  i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
-  if (Begin < Mid) {
-    if (Begin + 1 == Mid) { // leaf
-      AssignCodeLeaf(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
-    } else { // recurse on the left
-      AssignCodeInner(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Length - 1, (D + 1) % 3);
-    }
-  }
-  if (Mid < End) {
-    if (Mid + 1 == End) { // leaf
-      AssignCodeLeaf(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
-    } else { // recurse on the right
-      AssignCodeInner(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Length - 1, (D + 1) % 3);
-    }
-  }
-}
+//static void
+//AssignCodeInner(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, u64 Code, i8 Height, i8 D) {
+//  REQUIRE(Begin < End); // this cannot be a leaf node
+//  float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
+//  auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
+//  i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
+//  if (Begin < Mid) {
+//    if (Begin + 1 == Mid) { // leaf
+//      AssignCodeLeaf(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Height - 1, (D + 1) % 3);
+//    } else { // recurse on the left
+//      AssignCodeInner(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Code << 1, Height - 1, (D + 1) % 3);
+//    }
+//  }
+//  if (Mid < End) {
+//    if (Mid + 1 == End) { // leaf
+//      AssignCodeLeaf(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Height - 1, (D + 1) % 3);
+//    } else { // recurse on the right
+//      AssignCodeInner(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (Code << 1) + 1, Height - 1, (D + 1) % 3);
+//    }
+//  }
+//}
 
 template <node_type R> static void
 BuildTreeInner(resolution_tree<R>* Node, vector<particles>* Particles, const bbox BBox, i64 Begin, i64 End, u64 Code, i8 Length, i8 D, bool SpatialSplit) {
@@ -282,18 +286,23 @@ BuildTreeInner(resolution_tree<R>* Node, vector<particles>* Particles, const bbo
   }
 }
 
-static i8
-CountMaxLength(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, i8 D) {
+/* Return the tree height and the dimensions of the underlying grid (in terms of power of two) */
+static vec3i
+ComputeGrid(vector<particle>* Particles, const bbox BBox, i64 Begin, i64 End, i8 D) {
   REQUIRE(Begin < End); // this cannot be a leaf node
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
   auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
   i64 Mid = partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
-  i8 LengthLeft = 0, LengthRight = 0;
-  if (Begin + 1 < Mid)
-    LengthLeft  = 1 + CountMaxLength(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % 3);
-  if (Mid + 1 < End)
-    LengthRight = 1 + CountMaxLength(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % 3);
-  return MAX(LengthLeft, LengthRight);
+  vec3i LogDims3Left(0, 0, 0), LogDims3Right(0, 0, 0);
+  if (Begin + 1 < Mid) {
+    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % 3);
+    ++LogDims3Left[D];
+  }
+  if (Mid + 1 < End) {
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % 3);
+    ++LogDims3Right[D];
+  }
+  return sum(LogDims3Left) > sum(LogDims3Right) ? LogDims3Left : LogDims3Right;
 }
 
 /* Assign a resolution code to each particle */
@@ -302,8 +311,8 @@ AssignCode(const params& P, vector<particle>* Particles) {
   resolution_tree<Root> Tree;
   Tree.Particles = Particles;
   Tree.BBox = ComputeBoundingBox(*Particles);
-  i8 Length = CountMaxLength(Particles, Tree.BBox, 0, Particles->size(), 0);
-  AssignCodeInner(Particles, Tree.BBox, 0, Particles->size(), 0, Length, 0);
+  auto LogDims3 = ComputeGrid(Particles, Tree.BBox, 0, Particles->size(), 0);
+  //AssignCodeInner(Particles, Tree.BBox, 0, Particles->size(), 0, Height, LogDims3, 0);
   //FOR (size_t, I, 0, ParticlesLODs.size()) {
   //  WriteXYZ(PRINT("particles-%zd.xyz", I), RANGE(ParticlesLODs[I]));
   //}
@@ -311,7 +320,7 @@ AssignCode(const params& P, vector<particle>* Particles) {
 }
 
 static void
-RandomLevels(vector<float3>* Points) {
+RandomLevels(vector<vec3f>* Points) {
   random_device Rd;
   mt19937 G(Rd());
   shuffle(Points->begin(), Points->end(), G);
@@ -362,10 +371,12 @@ main(int Argc, cstr* Argv) {
     fprintf(stderr, "Usage: .exe particle_file");
     exit(1);
   }
-  params P;
+  params Params;
   auto Particles = ReadXYZ(Argv[1]);
-  printf("number of particles = %zu", Particles.size());
-  AssignCode(P, &Particles);
+  printf("number of particles = %zu\n", Particles.size());
+  auto BBox = ComputeBoundingBox(Particles);
+  auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
+  printf("log dims 3 = %d %d %d\n", LogDims3.x, LogDims3.y, LogDims3.z);
   //RandomLevels(P, &Particles);
 }
 

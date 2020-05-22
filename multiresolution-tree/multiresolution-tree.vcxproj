@@ -153,6 +153,7 @@
   <ItemGroup>
     <ClInclude Include="doctest.h" />
     <ClInclude Include="linalg.h" />
+    <ClInclude Include="yocto_math.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
