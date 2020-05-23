@@ -1,43 +1,23 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.27428.2027
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{002A2DE9-8BB6-484D-9802-7E4AD4084715}") = "TestApp", "TestApp.visualdproj", "{A454254C-C5B9-44FA-B77D-3E276E39D5F0}"
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{A4D7F911-78ED-459F-A682-B9364B68817D}") = "testapp", ".dub/testapp.visualdproj", "{CB3E960D-6B1C-47D1-B4C9-ACB1CBE1B043}"
+	ProjectSection(ProjectDependencies) = postProject
+		{92635FD4-9DC0-43F3-A6B8-AB49B1BBCA05} = {92635FD4-9DC0-43F3-A6B8-AB49B1BBCA05}
+	EndProjectSection
+EndProject
+Project("{A4D7F911-78ED-459F-A682-B9364B68817D}") = "dstats", ".dub/dstats.visualdproj", "{92635FD4-9DC0-43F3-A6B8-AB49B1BBCA05}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug DMD|x64 = Debug DMD|x64
-		Debug DMD|x86 = Debug DMD|x86
-		Debug GDC|x64 = Debug GDC|x64
-		Debug GDC|x86 = Debug GDC|x86
-		Release DMD|x64 = Release DMD|x64
-		Release DMD|x86 = Release DMD|x86
-		Release GDC|x64 = Release GDC|x64
-		Release GDC|x86 = Release GDC|x86
+		debug|x64 = debug|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.ActiveCfg = DebugDMD|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x64.Build.0 = DebugDMD|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.ActiveCfg = DebugGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug DMD|x86.Build.0 = DebugGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x64.ActiveCfg = DebugGDC|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x64.Build.0 = DebugGDC|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x86.ActiveCfg = DebugGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Debug GDC|x86.Build.0 = DebugGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x64.ActiveCfg = ReleaseDMD|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x64.Build.0 = ReleaseDMD|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x86.ActiveCfg = ReleaseGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release DMD|x86.Build.0 = ReleaseGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x64.ActiveCfg = ReleaseGDC|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x64.Build.0 = ReleaseGDC|x64
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x86.ActiveCfg = ReleaseGDC|Win32
-		{A454254C-C5B9-44FA-B77D-3E276E39D5F0}.Release GDC|x86.Build.0 = ReleaseGDC|Win32
+		{92635FD4-9DC0-43F3-A6B8-AB49B1BBCA05}.debug|x64.ActiveCfg = debug|x64
+		{92635FD4-9DC0-43F3-A6B8-AB49B1BBCA05}.debug|x64.Build.0 = debug|x64
+		{CB3E960D-6B1C-47D1-B4C9-ACB1CBE1B043}.debug|x64.ActiveCfg = debug|x64
+		{CB3E960D-6B1C-47D1-B4C9-ACB1CBE1B043}.debug|x64.Build.0 = debug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {69F5A058-0EC6-4BB3-8D9C-A72AF51FA997}
 	EndGlobalSection
 EndGlobal

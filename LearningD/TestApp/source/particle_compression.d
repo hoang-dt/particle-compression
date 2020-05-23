@@ -27,7 +27,7 @@ double Finv(double m, double s, double y) {
 }
 
 const int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
-const int cutoff2 = 4; // to switch over to uniform encoding
+const int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 alias Coder = ArithmeticCoder!();
 
 void encode_binomial_small_range(int n, int v, in uint[] cdf_table, ref Coder coder) {
@@ -213,7 +213,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
       float s = sqrt(float(N)) / 2; // standard deviation
       encode_range(m, s, 0, N, n, table, bs, coder);
       //encode_centered_minimal(n, N+1, bs); // uniform
-      enc_file.writeln(n);
+      //enc_file.writeln(n);
       if (node.left_)
         traverse_encode(node.left_, bs);
       if (node.right_)
@@ -246,7 +246,7 @@ void decode(ref BitStream bs, ref Coder coder) {
       int n = decode_range(m, s, 0, N, table, bs, coder);
       //int n = decode_centered_minimal(N+1, bs); // uniform
       assert(n>=0 && n<=N);
-      dec_file.writeln(n);
+      //dec_file.writeln(n);
       if (n > 0)
         traverse_decode!T(n, bs);
       if (n < N)

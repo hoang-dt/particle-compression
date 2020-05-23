@@ -17,6 +17,7 @@ public enum { Root, Inner };
 public enum Mode { None, Precision, Accuracy };
 
 // TODO: this is a hack, we should write to let the D people know about this
+/++ Partition a range according to a predicate +/
 Range my_partition(alias predicate, Range)(Range r)
 if (isRandomAccessRange!(Range) && hasLength!Range && hasSlicing!Range) {
   import std.functional : unaryFun;
@@ -91,6 +92,13 @@ public:
       build_helper!(order)(this, bbox_, 0, cast(int)points.length, 0, a); // first split
     }
 
+    void build_no_leaf(string order, A...)(Vec3!T[] points) {
+      order_ = order;
+      points_ = points;
+      bbox_ = compute_bbox(points);
+      build_helper_no_leaf!(order)(this, bbox_, 0, cast(int)points.length, 0); // first split
+    }
+
     void build_with_bbox(string order, A...)(Vec3!T[] points, BoundingBox!T bbox, A a) {
       order_ = order;
       points_ = points;
@@ -100,9 +108,7 @@ public:
   }
 
   /++ Split a given subtree. [begin, end) +/
-  // TODO: this build routine would always proceed until there is one particle left, regardless of the
-  // actual tolerance
-  // We may want to have a control on the number of levels to keep
+  // TODO: this build routine would always proceed until there is one particle left, regardless of the actual tolerance. We may want to have a control on the number of levels to keep
   void build_helper(string order, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim, A a) {
     assert(begin < end); // this cannot be a leaf node
     begin_ = begin;
@@ -114,8 +120,7 @@ public:
       alias E = typeof(zip(root.points_, a)[0]);
       auto pred = delegate (E e) { return e[0][d] < middle; };
       auto right = my_partition!(pred)(zip(root.points_, a)[begin..end]);
-    }
-    else {
+    } else {
       auto pred = delegate (Vec3!T a) { return a[d] < middle; };
       auto right = std.algorithm.sorting.partition!(pred)(root.points_[begin..end]);
     }
@@ -126,9 +131,8 @@ public:
       bbox_left.max[d] = middle;
       if (left_size == 1) {
         left_.build_helper_leaf!order(root, bbox_left, begin, begin+left_size, dim+1);
-      }
-      else {
-        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a); // recurse on the left
+      } else { // recurse on the left
+        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a);
       }
     }
     if (begin+left_size < end) {
@@ -137,10 +141,33 @@ public:
       bbox_right.min[d] = middle;
       if (begin+left_size+1 == end) {
         right_.build_helper_leaf!order(root, bbox_right, begin+left_size, end, dim+1);
+      } else { // recurse on the right
+        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a);
       }
-      else {
-        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a); // recurse on the right
-      }
+    }
+  }
+
+  void build_helper_no_leaf(string order, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {
+    assert(begin < end); // this cannot be a leaf node
+    begin_ = begin;
+    end_ = end;
+    left_ = right_ = null;
+    int d = order[dim%3] - 'x';
+    double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
+    int left_size = end-begin - cast(int)right.length;
+    if (left_size > 0) {
+      left_ = new KdTree!(T, Inner)();
+      auto bbox_left = bbox;
+      bbox_left.max[d] = middle;
+      if (left_size != 1)
+        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a);
+    }
+    if (begin+left_size < end) {
+      right_ = new KdTree!(T, Inner)();
+      auto bbox_right = bbox;
+      bbox_right.min[d] = middle;
+      if (begin+left_size+1 != end)
+        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a);
     }
   }
 
@@ -149,9 +176,7 @@ public:
     assert(begin+1 == end);
     begin_ = begin;
     end_ = end;
-    if (root.mode_ == Mode.None) {
-      return;
-    }
+    if (root.mode_ == Mode.None) { return; }
     bool[3] stop = false;
     Vec3!T p = root.points_[begin];
     Vec3!int e;
@@ -172,23 +197,11 @@ public:
         bool left = p[d] < middle;
         bits_ ~= left;
         if (left) {
-          if (bbox.max[d] != middle) {
-            bbox.max[d] = middle;
-          }
-          else {
-            stop[d] = true;
-          }
+          if (bbox.max[d] != middle) { bbox.max[d] = middle; } else { stop[d] = true; }
+        } else { // right
+          if (bbox.min[d] != middle) { bbox.min[d] = middle; } else { stop[d] = true; }
         }
-        else { // right
-          if (bbox.min[d] != middle) {
-            bbox.min[d] = middle;
-          }
-          else {
-            stop[d] = true;
-          }
-        }
-      }
-      else {
+      } else {
         bits_ ~= true;
         stop[d] = true;
       }
@@ -213,16 +226,12 @@ void kdtree_to_particles(T)(const KdTree!(T, Root) root, ref Vec3!T[] points) {
         bbox_right.min[d] = middle;
         traverse(order, node.right_, bbox_right, dim+1, points);
       }
-    }
-    else { // leaf
+    } else { // leaf
       if (root.mode_ != Mode.None) { // further subdivide
         for (size_t i = 0; i < node.bits_.length; ++i) {
           int d = order[dim%3] - 'x';
           double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
-          if (node.bits_[i])
-            bbox.max[d] = middle;
-          else
-            bbox.min[d] = middle;
+          if (node.bits_[i]) bbox.max[d] = middle; else bbox.min[d] = middle;
           ++dim;
         }
       }

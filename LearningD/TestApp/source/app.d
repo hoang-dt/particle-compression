@@ -696,10 +696,8 @@ void test_9(const string[] argv) {
       }
       int n = parent.left_ is null ? 0 : parent.left_.end_ - parent.left_.begin_;
       //f.writeln(n);
-      if (N <= 32) { // TODO: this is just for testing
-        code_length1[0][level] += N - log2_C_n_m(N, n);
-        code_length2[0][level] += log2(N+1);
-      }
+      code_length1[0][level] += N - log2_C_n_m(N, n);
+      code_length2[0][level] += log2(N+1);
       if (parent.left_ !is null) {
         traverse_code_length(level+1, parent.left_, code_length1, code_length2);
       }
@@ -737,8 +735,8 @@ void test_9(const string[] argv) {
    // writeln(code_length1[0][i] / code_length2[0][i]);
   }
   //writeln(code_length1[1] / code_length2[1]);
-  writeln(reduce!((a,b)=>a+b)(code_length1[0])/8/* + code_length1[1]*/);
-  writeln(reduce!((a,b)=>a+b)(code_length2[0])/8/* + code_length2[1]*/);
+  writeln(cast(int)reduce!((a,b)=>a+b)(code_length1[0])/8/* + code_length1[1]*/);
+  writeln(cast(int)reduce!((a,b)=>a+b)(code_length2[0])/8/* + code_length2[1]*/);
 }
 
 /++ A simpler version of test9 +/
@@ -747,29 +745,31 @@ void test_9a(const string[] argv) {
   writeln("Test 9");
   enforce(argv.length>=3, "usage: "~argv[0]~" [test_9a] [particle file]");
 
-  void traverse_code_length(T, int R)(KdTree!(T,R) node, ref double code_length1) {
+  void traverse_code_length(T, int R)(KdTree!(T,R) node) {
     int N = node.end_ - node.begin_;
     if (N == 1) { // leaf level
       // do nothing
     }
     else { // non leaf
       int n = node.left_ is null ? 0 : node.left_.end_ - node.left_.begin_;
-      if (N+1 <= cutoff1)
-        code_length1 += N - log2_C_n_m(N, n);
+      code_length1 += N - log2_C_n_m(N, n);
+      code_length2 += log2(N+1);
       if (node.left_)
-        traverse_code_length(node.left_, code_length1);
+        traverse_code_length(node.left_);
       if (node.right_)
-        traverse_code_length(node.right_, code_length1);
+        traverse_code_length(node.right_);
     }
   }
 
   /* read particle files, or generate random particles */
   auto particles = load_particles(argv);
   double code_length1 = 0;
+  double code_length2 = 0;
   auto tree = new KdTree!float();
   tree.build!"xyz"(particles.position[0]); // build a tree from the first time step
-  traverse_code_length(tree, code_length1);
+  traverse_code_length(tree);
   writeln("code length 1 = ", cast(int)floor(code_length1/8));
+  writeln("code length 2 = ", cast(int)floor(code_length2/8));
 }
 
 /++ Test the kdtree to make sure it is working +/
@@ -1263,6 +1263,7 @@ void test_21(const string[] argv) {
   auto particles = load_particles(argv);
   auto tree = new KdTree!float();
   tree.build!"xyz"(particles.position[0]);
+  writeln("done building tree");
   //auto tree = generate_tree_gaussian!float(1000000);
   //auto arr = generate_gaussian_array(N, nparticles);
   //write_text("arr.txt", arr);
@@ -1270,7 +1271,8 @@ void test_21(const string[] argv) {
   BitStream bs;
   Coder coder;
   encode(tree, bs, coder);
-  decode(bs, coder);
+  writeln("done encoding");
+  //decode(bs, coder);
   writeln(coder.m_bit_stream.size());
   writeln(bs.size() + coder.m_bit_stream.size());
   //decode(bs, coder);
@@ -1449,6 +1451,44 @@ void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
     }
     break;
   }
+}
+
+/* Build multi-resolution tree */
+void build_multi_resolution_tree(const string[] argv) {
+  auto particles = load_particles(argv);
+  auto tree = new KdTree!float();
+  tree.build_no_leaf!"xyz"(particles.position[0]); // build a tree
+  auto histogram_n = compute_histogram_n!float(tree, Nmax);
+  auto histogram_N = compute_histogram_N!float(tree, Nmax);
+  writeln(histogram_N);
+  double code_length1 = 0;
+  //assert(table[table.length-1][Nmax] == (1<<Nmax));
+  Coder coder;
+  coder.init_write(100000000); // 100 MB
+  BitStream bs;
+  bs.init_write(100000000); // 100 MB
+  double theoretical_code_length = 0;
+
+  for (int i = 0; i < 10000; ++i) {
+    int a = uniform(0, histogram_N[histogram_N.length-1], rnd);
+    int N = 0;
+    for (; N<Nmax && histogram_N[N]<=a; ++N) {}
+    //int N = uniform(2, Nmax+1);
+    //int N = Nmax;
+    auto max = histogram_n[N][histogram_n[N].length-1];
+    a = uniform(0, max, rnd);
+    int n = 0;
+    for (; n<histogram_n[N].length && histogram_n[N][n]<=a; ++n) {}
+    //if ()
+    encode_centered_minimal(n, N+1, bs);
+    encode_binomial_small_range(N, n, table[N], coder);
+    theoretical_code_length += N - log2_C_n_m(N, n);
+  }
+  bs.flush();
+  coder.encode_finalize();
+  writeln("uniform ", bs.size());
+  writeln("arithmetic ", coder.m_bit_stream.size());
+  writeln("theoretical ", cast(int)floor(theoretical_code_length/8));
 }
 
 import math;
