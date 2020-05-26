@@ -26,7 +26,6 @@
 #include <unordered_map>
 #include <vector>
 
-
 #if defined(_MSC_VER) // Microsoft compilers
 #define EXPAND(X) X
 #define __NARGS(_1, _2, _3, _4, _5, VAL, ...) VAL
@@ -56,6 +55,10 @@
 #define FOR_EACH_3(It, Begin, End) for (auto It = Begin; It != End; ++It)
 #define MAX(A, B) (B) < (A) ? (A) : (B)
 #define MIN(A, B) (A) < (B) ? (A) : (B)
+
+#define EXPvec3(V) (V).x, (V).y, (V).z
+#define PRIvec3f "%f %f %f"
+#define PRIvec3i "%d %d %d"
 
 #if defined(_MSC_VER)
 #define INLINE __forceinline
@@ -1073,8 +1076,8 @@ BlockCode(u64 Code) {
 }
 
 INLINE void // N is the number of particles under a node
-Encode(u64 Code, i64 N) {
-  printf("%llu %lld \n", Code, N);
+Encode(i8 Level, u64 Code, i64 N) {
+  printf("%d %llu %lld \n", Level, Code, N);
   return;
   auto Bs = BitStreams[BlockCode(Code)];
   GrowToAccomodate(&Bs, 8); 
@@ -1105,7 +1108,7 @@ SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
 }
 
 template <node_type R> static void
-BuildTreeInner(tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8 D, i8 NLevels, bool RSplit) {
+BuildTreeInner(tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8 D, i8 Level, bool RSplit) {
   REQUIRE((Grid.Dims3[D] & 1) == 0);
   Node->Begin = Begin;
   Node->End = End;
@@ -1128,21 +1131,21 @@ BuildTreeInner(tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8
     };
     Mid = partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
-  Encode(Code * 2, Mid - Begin);
+  Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
   if (Begin < Mid) {
     Node->Left = new tree<Inner>();
-    if (Begin + 1 == Mid) { // leaf
-      BuildTreeLeaf(Node->Left, Begin, (Code * 2), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, NLevels - 1);
+    if (Begin + 1 == Mid) { // left leaf
+      BuildTreeLeaf(Node->Left, Begin, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, Level - RSplit);
     } else { // recurse on the left
-      BuildTreeInner(Node->Left, Begin, Mid, (Code * 2), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, NLevels - 1, NLevels > 1);
+      BuildTreeInner(Node->Left, Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, Level - RSplit, RSplit && Level > 1);
     }
   }
   if (Mid < End) {
     Node->Right = new tree<Inner>();
-    if (Mid + 1 == End) { // leaf
-      BuildTreeLeaf(Node->Right, Mid, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, NLevels - 1);
+    if (Mid + 1 == End) { // right leaf
+      BuildTreeLeaf(Node->Right, Mid, (Code * 2 + 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, Level);
     } else { // recurse on the right
-      BuildTreeInner(Node->Right, Mid, End, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, NLevels - 1, false);
+      BuildTreeInner(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, Level, false);
     }
   }
 }
@@ -1226,10 +1229,10 @@ main(int Argc, cstr* Argv) {
   grid Grid{.From3 = vec3i(0), .Dims3 = Dims3, .Stride3 = vec3i(1)};
   int NLevels = 3; // actually number of resolution splits
   tree<Root> Tree;
-  printf("bounding box = (%f %f %f) - (%f %f %f)\n", BBox.Min.x, BBox.Min.y, BBox.Min.z, BBox.Max.x, BBox.Max.y, BBox.Max.z);
-  printf("log dims 3 = %d %d %d\n", LogDims3.x, LogDims3.y, LogDims3.z);
-  Encode(1, Particles.size());
-  BuildTreeInner(&Tree, 0, Particles.size(), 1, Grid, 0, NLevels, NLevels > 0);
+  printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
+  printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
+  Encode(NLevels - 1, 0, Particles.size());
+  BuildTreeInner(&Tree, 0, Particles.size(), 0, Grid, 0, NLevels - 1, NLevels > 1);
   //RandomLevels(P, &Particles);
 }
 
