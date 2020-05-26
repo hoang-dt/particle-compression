@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <iostream>
 #include <inttypes.h>
+#include <queue>
 #include <random>
 #include <tuple>
 #include <type_traits>
@@ -976,13 +977,10 @@ struct grid {
   vec3i From3, Dims3, Stride3;
 };
 
-template <node_type R>
 struct tree {
-  tree<Inner>* Left   = nullptr;
-  tree<Inner>* Right  = nullptr;
+  tree* Left   = nullptr;
+  tree* Right  = nullptr;
   i64 Begin = 0, End = 0;
-  using bbox_t = std::conditional_t<R == Root, bbox, empty_struct>;
-  [[no_unique_address]] bbox_t BBox = bbox_t();
 };
 
 /* Read all particles from a XYZ file */
@@ -1085,7 +1083,7 @@ Encode(i8 Level, u64 Code, i64 N) {
 }
 
 static void
-BuildTreeLeaf(tree<Inner>* Node, i64 Begin, u64 Code, const grid& Grid, i8 D, i8 NLevels) {
+BuildTreeLeaf(tree* Node, i64 Begin, u64 Code, const grid& Grid, i8 D, i8 NLevels) {
   Node->Begin = Begin;
   Node->End = Begin + 1;
   // TODO: continue the splitting until we reach the desired accuracy
@@ -1107,45 +1105,68 @@ SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
   return Out;
 }
 
-template <node_type R> static void
-BuildTreeInner(tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8 D, i8 Level, bool RSplit) {
-  REQUIRE((Grid.Dims3[D] & 1) == 0);
-  Node->Begin = Begin;
-  Node->End = End;
-  i64 Mid = Begin;
-  float W = (BBox.Max[D] - BBox.Min[D]) / Dims3[D];
-  if (RSplit) { // resolution split
-    auto RPred = [W, D, &Grid](const particle& P) { 
-      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / W));
-      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
-      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
-      return (Bin & 1) == 0; 
-    };
-    Mid = partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
-  } else { // spatial split
-    auto SPred = [W, D, &Grid](const particle& P) { 
-      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / W));
-      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
-      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
-      return Bin * 2 < Grid.Dims3[D];
-    };
-    Mid = partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
-  }
-  Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
-  if (Begin < Mid) {
-    Node->Left = new tree<Inner>();
-    if (Begin + 1 == Mid) { // left leaf
-      BuildTreeLeaf(Node->Left, Begin, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, Level - RSplit);
-    } else { // recurse on the left
-      BuildTreeInner(Node->Left, Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, Level - RSplit, RSplit && Level > 1);
-    }
-  }
-  if (Mid < End) {
-    Node->Right = new tree<Inner>();
-    if (Mid + 1 == End) { // right leaf
-      BuildTreeLeaf(Node->Right, Mid, (Code * 2 + 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, Level);
-    } else { // recurse on the right
-      BuildTreeInner(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, Level, false);
+struct q_item {
+  tree* Node;
+  i64 Begin, End;
+  u64 Code;
+  grid Grid;
+  i8 D;
+  i8 Level;
+  bool RSplit;
+};
+
+static void
+BuildTreeInner(tree* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8 D, i8 Level, bool RSplit) {
+  std::queue<q_item> Queue;
+  q_item Q{ .Node = Node, .Begin = Begin, .End = End, .Code = Code, .Grid = Grid, .Level = Level, .RSplit = RSplit };
+  Queue.push(Q);
+  while (!Queue.empty()) {
+    Q = Queue.front();
+    Queue.pop();
+    if (Q.Begin + 1 == Q.End) { // single particle
+      // do nothing
+    } else { // more than one single particle, split more
+      REQUIRE((Q.Grid.Dims3[Q.D] & 1) == 0);
+      i64 Mid = Q.Begin;
+      float W = (BBox.Max[Q.D] - BBox.Min[Q.D]) / Dims3[Q.D];
+      if (Q.RSplit) { // resolution split
+        auto RPred = [W, &Q](const particle& P) { 
+          int Bin = MIN(Dims3[Q.D] - 1, int((P.Pos[Q.D] - BBox.Min[Q.D]) / W));
+          REQUIRE((Bin - Q.Grid.From3[Q.D]) % Q.Grid.Stride3[Q.D] == 0);
+          Bin = (Bin - Q.Grid.From3[Q.D]) / Q.Grid.Stride3[Q.D];
+          return (Bin & 1) == 0; 
+        };
+        Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
+      } else { // spatial split
+        auto SPred = [W, &Q](const particle& P) { 
+          int Bin = MIN(Dims3[Q.D] - 1, int((P.Pos[Q.D] - BBox.Min[Q.D]) / W));
+          REQUIRE((Bin - Q.Grid.From3[Q.D]) % Q.Grid.Stride3[Q.D] == 0);
+          Bin = (Bin - Q.Grid.From3[Q.D]) / Q.Grid.Stride3[Q.D];
+          return Bin * 2 < Q.Grid.Dims3[Q.D];
+        };
+        Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+      }
+      Encode(Q.Level - Q.RSplit, Q.Code * 2 + 1, Mid - Q.Begin); // encode only the left child
+      if (Q.Begin < Mid) {
+        Queue.push(q_item{ .Node = Q.Node->Left = new tree(), 
+                           .Begin = Q.Begin, 
+                           .End = Mid, 
+                           .Code = Q.Code * 2 + 1, 
+                           .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false), 
+                           .D = (Q.D + 1) % NDims, 
+                           .Level = Q.Level - Q.RSplit, 
+                           .RSplit = Q.RSplit && Q.Level > 1 });
+      }
+      if (Mid < Q.End) {
+        Queue.push(q_item{ .Node = Q.Node->Right = new tree(),
+                           .Begin = Mid,
+                           .End = Q.End,
+                           .Code = Q.Code * 2 + 2,
+                           .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
+                           .D = (Q.D + 1) % NDims,
+                           .Level = Q.Level, 
+                           .RSplit = false });
+      }
     }
   }
 }
@@ -1228,7 +1249,7 @@ main(int Argc, cstr* Argv) {
   Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
   grid Grid{.From3 = vec3i(0), .Dims3 = Dims3, .Stride3 = vec3i(1)};
   int NLevels = 3; // actually number of resolution splits
-  tree<Root> Tree;
+  tree Tree;
   printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
   printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
   Encode(NLevels - 1, 0, Particles.size());
