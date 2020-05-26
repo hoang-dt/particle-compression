@@ -118,6 +118,8 @@ inline thread_local char ScratchBuf[1024]; // for temporary strings
 #define mg_RAII_3(Type, Var, Init) Type Var; mg_CleanUp_1(Dealloc(&Var)); Init;
 #define mg_RAII_4(Type, Var, Init, Clean) Type Var; mg_CleanUp_1(Clean); Init;
 
+constexpr int NDims = 2;
+
 struct buffer;
 
 struct allocator {
@@ -1065,66 +1067,82 @@ static bbox BBox;
 static vec3i Dims3;
 static bitstream_map BitStreams;
 
+INLINE u64 // compute the block code from a given node code
+BlockCode(u64 Code) {
+  return Code >> Params.BlockBits;
+}
+
+INLINE void // N is the number of particles under a node
+Encode(u64 Code, i64 N) {
+  printf("%llu %lld \n", Code, N);
+  return;
+  auto Bs = BitStreams[BlockCode(Code)];
+  GrowToAccomodate(&Bs, 8); 
+  WriteVarByte(&Bs, N);
+}
+
 static void
 BuildTreeLeaf(tree<Inner>* Node, i64 Begin, u64 Code, const grid& Grid, i8 D, i8 NLevels) {
-
   Node->Begin = Begin;
   Node->End = Begin + 1;
   // TODO: continue the splitting until we reach the desired accuracy
+  //Encode(Code, 1);
 }
 
 static grid
-SplitGrid(const grid& Grid, int D, bool RSplit, bool Left) {
-  REQUIRE((Grid.Stride3[D] & 1) == 0);
+SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
+  REQUIRE((Grid.Dims3[D] & 1) == 0);
   grid Out = Grid;
   if (RSplit) { // resolution split
-    Out.From3[D] += Left * Out.Stride3[D];
+    Out.From3[D] += Right * Out.Stride3[D];
     Out.Dims3[D] /= 2;
     Out.Stride3[D] *= 2;
   } else { // spatial split
     Out.Dims3[D] /= 2;
-    Out.From3[D] += Left * Out.Stride3[D] * Out.Dims3[D];
+    Out.From3[D] += Right * Out.Stride3[D] * Out.Dims3[D];
   }
   return Out;
 }
 
 template <node_type R> static void
 BuildTreeInner(tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, i8 D, i8 NLevels, bool RSplit) {
-  REQUIRE((Grid.Stride3[D] & 1) == 0);
+  REQUIRE((Grid.Dims3[D] & 1) == 0);
   Node->Begin = Begin;
   Node->End = End;
   i64 Mid = Begin;
-  if (RSplit) {
-    auto RPred = [D, &Grid](const particle& P) { 
-      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / (BBox.Max[D] - BBox.Min[D])));
+  float W = (BBox.Max[D] - BBox.Min[D]) / Dims3[D];
+  if (RSplit) { // resolution split
+    auto RPred = [W, D, &Grid](const particle& P) { 
+      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / W));
       REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
       Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
       return (Bin & 1) == 0; 
     };
     Mid = partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
-  } else {
-    auto SPred = [D, &Grid](const particle& P) { 
-      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / (BBox.Max[D] - BBox.Min[D])));
+  } else { // spatial split
+    auto SPred = [W, D, &Grid](const particle& P) { 
+      int Bin = MIN(Dims3[D] - 1, int((P.Pos[D] - BBox.Min[D]) / W));
       REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
       Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
       return Bin * 2 < Grid.Dims3[D];
     };
     Mid = partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
+  Encode(Code * 2, Mid - Begin);
   if (Begin < Mid) {
     Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // leaf
-      BuildTreeLeaf(Node->Left, Begin, (Code * 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % 3, NLevels - 1);
+      BuildTreeLeaf(Node->Left, Begin, (Code * 2), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, NLevels - 1);
     } else { // recurse on the left
-      BuildTreeInner(Node->Left, Begin, Mid, (Code * 2), SplitGrid(Grid, D, RSplit, true), (D + 1) % 3, NLevels - 1, NLevels > 1);
+      BuildTreeInner(Node->Left, Begin, Mid, (Code * 2), SplitGrid(Grid, D, RSplit, false), (D + 1) % NDims, NLevels - 1, NLevels > 1);
     }
   }
   if (Mid < End) {
     Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // leaf
-      BuildTreeLeaf(Node->Right, Mid, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % 3, NLevels - 1);
+      BuildTreeLeaf(Node->Right, Mid, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, NLevels - 1);
     } else { // recurse on the right
-      BuildTreeInner(Node->Right, Mid, End, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, false), (D + 1) % 3, NLevels - 1, false);
+      BuildTreeInner(Node->Right, Mid, End, (Code * 2 + 1), SplitGrid(Grid, D, RSplit, true), (D + 1) % NDims, NLevels - 1, false);
     }
   }
 }
@@ -1136,16 +1154,16 @@ ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 E
   float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
   auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
-  vec3i LogDims3Left(0, 0, 0), LogDims3Right(0, 0, 0);
+  vec3i LogDims3Left = MCOPY(vec3i(0), [D] = 1), LogDims3Right = MCOPY(vec3i(0), [D] = 1);
   if (Begin + 1 < Mid) {
-    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % 3);
+    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % NDims);
     ++LogDims3Left[D];
   }
   if (Mid + 1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % 3);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % NDims);
     ++LogDims3Right[D];
   }
-  return sum(LogDims3Left) > sum(LogDims3Right) ? LogDims3Left : LogDims3Right;
+  return max(LogDims3Left, LogDims3Right);
 }
 
 static void
@@ -1202,14 +1220,16 @@ main(int Argc, cstr* Argv) {
   }
   Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu\n", Particles.size());
-  auto BBox = ComputeBoundingBox(Particles);
+  BBox = ComputeBoundingBox(Particles);
   auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
-  vec3i Dims3(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
-  grid Grid{vec3i(0, 0, 0), vec3i(1, 1, 1), Dims3};
+  Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
+  grid Grid{.From3 = vec3i(0), .Dims3 = Dims3, .Stride3 = vec3i(1)};
   int NLevels = 3; // actually number of resolution splits
   tree<Root> Tree;
-  BuildTreeInner(&Tree, 0, Particles.size(), 0, Grid, 0, NLevels, NLevels > 0);
+  printf("bounding box = (%f %f %f) - (%f %f %f)\n", BBox.Min.x, BBox.Min.y, BBox.Min.z, BBox.Max.x, BBox.Max.y, BBox.Max.z);
   printf("log dims 3 = %d %d %d\n", LogDims3.x, LogDims3.y, LogDims3.z);
+  Encode(1, Particles.size());
+  BuildTreeInner(&Tree, 0, Particles.size(), 1, Grid, 0, NLevels, NLevels > 0);
   //RandomLevels(P, &Particles);
 }
 
