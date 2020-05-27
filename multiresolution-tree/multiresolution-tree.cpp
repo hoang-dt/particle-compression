@@ -1074,10 +1074,10 @@ BlockCode(u64 Code) {
 }
 
 INLINE void // N is the number of particles under a node
-Encode(i8 Level, u64 Code, i64 Idx, i64 N) {
-  printf("level = %d code = %llu idx = %lld N = %lld \n", Level, Code, Idx, N);
+Encode(i8 Level, u64 TreeIdx, i64 ResIdx, i64 LvlIdx, i64 N) {
+  printf("level = %d tree_idx = %llu res_idx = %lld lvl_idx = %lld N = %lld \n", Level, TreeIdx, ResIdx, LvlIdx, N);
   return;
-  auto Bs = BitStreams[BlockCode(Code)];
+  auto Bs = BitStreams[BlockCode(TreeIdx)];
   GrowToAccomodate(&Bs, 8); 
   WriteVarByte(&Bs, N);
 }
@@ -1106,9 +1106,9 @@ SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
 }
 
 struct q_item {
-  //tree* Node;
   i64 Begin, End;
   u64 TreeIdx; // the index in the tree
+  i64 ResIdx; // index in the resolution tree
   i64 LvlIdx; // index within its own level
   grid Grid;
   i8 D;
@@ -1117,9 +1117,8 @@ struct q_item {
 };
 
 static void
-BuildTreeInner(/*tree* Node, */i64 Begin, i64 End, u64 Code, i64 Idx, const grid& Grid, i8 D, i8 Level, bool RSplit) {
+BuildTreeInner(q_item Q) {
   std::queue<q_item> Queue;
-  q_item Q{ /*.Node = Node, */.Begin = Begin, .End = End, .TreeIdx = Code, .LvlIdx = Idx, .Grid = Grid, .Level = Level, .RSplit = RSplit };
   Queue.push(Q);
   while (!Queue.empty()) {
     Q = Queue.front();
@@ -1147,12 +1146,13 @@ BuildTreeInner(/*tree* Node, */i64 Begin, i64 End, u64 Code, i64 Idx, const grid
         };
         Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
       }
-      Encode(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Mid - Q.Begin); // encode only the left child
+      Encode(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Mid - Q.Begin); // encode only the left child
       if (Q.Begin < Mid) {
         Queue.push(q_item{ /*.Node = Q.Node->Left = new tree(),*/ 
                            .Begin = Q.Begin, 
                            .End = Mid, 
                            .TreeIdx = Q.TreeIdx * 2 + 1,
+                           .ResIdx = Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx,
                            .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1,
                            .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false), 
                            .D = (Q.D + 1) % NDims, 
@@ -1164,6 +1164,7 @@ BuildTreeInner(/*tree* Node, */i64 Begin, i64 End, u64 Code, i64 Idx, const grid
                            .Begin = Mid,
                            .End = Q.End,
                            .TreeIdx = Q.TreeIdx * 2 + 2,
+                           .ResIdx = Q.RSplit ? Q.ResIdx * 2 + 2 : Q.ResIdx,
                            .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 2,
                            .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
                            .D = (Q.D + 1) % NDims,
@@ -1251,12 +1252,19 @@ main(int Argc, cstr* Argv) {
   auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
   Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
   grid Grid{.From3 = vec3i(0), .Dims3 = Dims3, .Stride3 = vec3i(1)};
-  int NLevels = 3; // actually number of resolution splits
+  i8 NLevels = 3; // actually number of resolution splits
   tree Tree;
   printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
   printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
-  Encode(NLevels - 1, 0, 0, Particles.size());
-  BuildTreeInner(/*&Tree, */0, Particles.size(), 0, 0, Grid, 0, NLevels - 1, NLevels > 1);
+  Encode(NLevels - 1, 0, 0, 0, Particles.size());
+  BuildTreeInner(q_item{ .Begin = 0,
+                         .End = (i64)Particles.size(),
+                         .TreeIdx = 0,
+                         .ResIdx = 0,
+                         .LvlIdx = 0,
+                         .Grid = Grid,
+                         .Level = NLevels - 1,
+                         .RSplit = NLevels > 1 });
   //RandomLevels(P, &Particles);
 }
 
