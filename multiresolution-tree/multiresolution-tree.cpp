@@ -77,9 +77,11 @@ using i32 = int32_t;
 using u32 = uint32_t;
 using i64 = int64_t;
 using u64 = uint64_t;
+using f64 = double;
 using ulong = unsigned long;
 using uchar = unsigned char;
 using cstr = const char*;
+using str = char*;
 
 /* Msb and Lsb */
 #if defined(__clang__) || defined(__GNUC__)
@@ -125,7 +127,7 @@ inline thread_local char ScratchBuf[1024]; // for temporary strings
 #define IS_EVEN(X) (((X) & 1) == 0)
 #define IS_INT(X) (int(X) == (X))
 
-constexpr int NDims = 2;
+int NDims = 3;
 
 struct buffer;
 
@@ -951,6 +953,247 @@ ReadVarByte(bitstream* Bs) {
   return Val;
 }
 
+/*
+A "view" into a (usually bigger) null-terminated string. A string_ref itself is
+not null-terminated.
+There are two preferred ways to construct a string_ref from a char[] array:
+  - Use the mg_StringRef macro to make string_ref refer to the entire array
+  - Use the string_ref(const char*) constructor to refer up to the first NULL */
+struct stref {
+  union {
+    str Ptr = nullptr;
+    cstr ConstPtr ;
+  };
+  int Size = 0;
+
+  stref();
+  stref(cstr PtrIn, int SizeIn);
+  stref(cstr PtrIn);
+  char& operator[](int Idx) const;
+  operator bool() const;
+}; // struct string_ref
+
+int Size(const stref& Str);
+
+cstr ToString(const stref& Str);
+str  Begin   (stref Str);
+str  End     (stref Str);
+str  RevBegin(stref Str);
+str  RevEnd  (stref Str);
+bool operator==(const stref& Lhs, const stref& Rhs);
+
+/* Remove spaces at the start of a string */
+stref TrimLeft (const stref& Str);
+stref TrimRight(const stref& Str);
+stref Trim     (const stref& Str);
+/*
+Return a substring of a given string. The substring starts at Begin and has
+length Size. Return the empty string if no proper substring can be constructed
+(e.g. Begin >= Str.Size). */
+stref SubString(const stref& Str, int Begin, int Size);
+/*
+Copy the underlying buffer referred to by Src to the one referred to by Dst.
+AddNull should be true whenever dst represents a whole string (as opposed to a
+substring). If Src is larger than Dst, we copy as many characters as we can. We
+always assume that the null character can be optionally added without
+overflowing the memory of Dst. */
+void Copy(const stref& Src, stref* Dst, bool AddNull = true);
+/* Parse a string_ref and return a number */
+bool ToInt   (const stref& Str, int* Result);
+bool ToDouble(const stref& Str, f64* Result);
+
+/* Tokenize strings without allocating memory */
+struct tokenizer {
+  stref Input;
+  stref Delims;
+  int Pos = 0;
+
+  tokenizer();
+  tokenizer(const stref& InputIn, const stref& DelimsIn = " \n\t");
+}; // struct tokenizer
+
+void  Init (tokenizer* Tk, const stref& Input, const stref& Delims = " \n\t");
+stref Next (tokenizer* Tk);
+void  Reset(tokenizer* Tk);
+
+INLINE stref::
+stref() = default;
+
+INLINE stref::
+stref(cstr PtrIn, int SizeIn) 
+  : ConstPtr(PtrIn), Size(SizeIn) {}
+
+INLINE stref::
+stref(cstr PtrIn) 
+  : ConstPtr(PtrIn), Size(int(strlen(PtrIn))) {}
+
+INLINE char& stref::
+operator[](int Idx) const { assert(Idx < Size); return const_cast<char&>(Ptr[Idx]); }
+
+INLINE stref::
+operator bool() const { return Ptr != nullptr; }
+
+INLINE int
+Size(const stref& Str) { return Str.Size; }
+
+INLINE str Begin   (stref Str) { return Str.Ptr; }
+INLINE str End     (stref Str) { return Str.Ptr + Str.Size; }
+INLINE str RevBegin(stref Str) { return Str.Ptr + Str.Size - 1; }
+INLINE str RevEnd  (stref Str) { return Str.Ptr - 1; }
+
+INLINE tokenizer::
+tokenizer() = default;
+
+INLINE tokenizer::
+tokenizer(const stref& InputIn, const stref& DelimsIn)
+  : Input(InputIn), Delims(DelimsIn), Pos(0) {}
+
+INLINE void 
+Init(tokenizer* Tk, const stref& Input, const stref& Delims) {
+  Tk->Input = Input;
+  Tk->Delims = Delims;
+  Tk->Pos = 0;
+}
+
+constexpr int power_10[] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000 };
+
+bool
+ToInt(const stref& Str, int* Result) {
+  stref& StrR = const_cast<stref&>(Str);
+  if (!StrR || StrR.Size <= 0)
+    return false;
+
+  int Mult = 1, Start = 0;
+  if (StrR[0] == '-') {
+    Mult = -1;
+    Start = 1;
+  }
+  *Result = 0;
+  for (int I = 0; I < Str.Size - Start; ++I) {
+    int V = StrR[StrR.Size - I - 1] - '0';
+    if (V >= 0 && V < 10)
+      *Result += Mult * (V * power_10[I]);
+    else
+      return false;
+  }
+  return true;
+}
+
+bool
+ToDouble(const stref& Str, f64* Result) {
+  if (!Str || Str.Size <= 0)
+    return false;
+  char* EndPtr = nullptr;
+  *Result = strtod(Str.ConstPtr, &EndPtr);
+  bool Failure = errno == ERANGE || EndPtr == Str.ConstPtr || !EndPtr ||
+    !(isspace(*EndPtr) || ispunct(*EndPtr) || (*EndPtr) == 0);
+  return !Failure;
+}
+
+/* Argument parsing code */
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, cstr* Val) {
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      *Val = Args[I + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, int* Val) {
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0)
+      return ToInt(Args[I + 1], Val);
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, i8* Val) {
+  int V = *Val;
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0)
+      return ToInt(Args[I + 1], &V);
+  }
+  *Val = V;
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, u8* Val) {
+  int IntVal;
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      bool Success = ToInt(Args[I + 1], &IntVal);
+      *Val = IntVal;
+      return Success;
+    }
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, vec3i* Val) {
+  for (int I = 0; I + 3 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      return ToInt(Args[I + 1], &Val->x) &&
+        ToInt(Args[I + 2], &Val->y) &&
+        ToInt(Args[I + 3], &Val->z);
+    }
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, std::vector<int>* Vals) {
+  Vals->clear();
+  for (int I = 0; I < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      int J = I;
+      while (true) {
+        ++J;
+        int X;
+        if (J < NArgs&& ToInt(Args[J], &X)) { Vals->push_back(X); }
+        else { break; }
+      }
+      return J > I + 1;
+    }
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, vec2i* Val) {
+  for (int I = 0; I + 2 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      return ToInt(Args[I + 1], &Val->x) &&
+        ToInt(Args[I + 2], &Val->y);
+    }
+  }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, f64* Val) {
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0)
+      return ToDouble(Args[I + 1], Val);
+  }
+  return false;
+}
+
+bool
+OptExists(int NArgs, cstr* Args, cstr Opt) {
+  for (int I = 0; I < NArgs; ++I) {
+    if (strcmp(Args[I], Opt) == 0)
+      return true;
+  }
+  return false;
+}
+
 //template <typename t>
 //struct range {
 //  t Begin, End;
@@ -1095,7 +1338,7 @@ BuildTreeLeaf(tree* Node, i64 Begin, u64 Code, const grid& Grid, i8 D, i8 NLevel
 
 static grid
 SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
-  REQUIRE(IS_EVEN(int(Grid.Dims3[D])));
+  //REQUIRE(IS_EVEN(int(Grid.Dims3[D])));
   grid Out = Grid;
   if (RSplit) { // resolution split
     Out.From3[D] += Right * Out.Stride3[D];
@@ -1122,7 +1365,6 @@ struct q_item {
 };
 
 // TODO: keep encoding after we have reached 1 particle per node, so that all particles are encoded to the same accuracy
-// TODO: we will build a full binary tree
 // TODO: after blocking, we have a tree of blocks
 static void
 BuildTreeInner(q_item Q, float Accuracy) {
@@ -1136,8 +1378,10 @@ BuildTreeInner(q_item Q, float Accuracy) {
     i64 Mid = Q.Begin;
     float W = (BBox.Max[Q.D] - BBox.Min[Q.D]) / Dims3[Q.D];
     vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / N;
-    //if (Error3.x <= Accuracy && Error3.y <= Accuracy && Error3.z <= Accuracy) continue;
-    if (N <= 1) continue;
+    bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
+    if (NDims > 2) Stop = Stop && Error3.z <= Accuracy;
+    if (Stop) continue;
+    //if (N <= 1) continue;
     if (Q.RSplit) { // resolution split
       auto RPred = [W, &Q](const particle& P) {
         int Bin = MIN(Dims3[Q.D] - 1, int((P.Pos[Q.D] - BBox.Min[Q.D]) / W));
@@ -1164,7 +1408,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false), 
                          .D = (Q.D + 1) % NDims, 
                          .Level = Q.Level - Q.RSplit, 
-                         .RSplit = Q.RSplit && Q.Level > 1 }); // TODO: only do RSplit if there are at least 2 particles
+                         .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
     if (Mid < Q.End) {
       Queue.push(q_item{ .Begin = Mid,
@@ -1243,23 +1487,26 @@ Handler(const doctest::AssertData& ad) {
   std::cout << std::endl;
 }
 
+#define ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
+
 int
 main(int Argc, cstr* Argv) {
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
   context.setAssertHandler(Handler);
-  if (Argc < 2) {
-    fprintf(stderr, "Usage: .exe particle_file");
-    exit(1);
-  }
+  i8 NResLevels = 3; // actually number of resolution splits
+  cstr ErrorMsg = "Usage: .exe particle_file --ndims 3 --nlevels 4";
+  if (Argc < 2) ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--ndims", &NDims)) ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--nlevels", &NResLevels)) ERROR(ErrorMsg);
+
   Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu\n", Particles.size());
   BBox = ComputeBoundingBox(Particles);
   auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
   Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
   grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Dims3), .Stride3 = vec3f(1)};
-  i8 NResLevels = 3; // actually number of resolution splits
-  float Accuracy = 0.1f;
+  float Accuracy = 1.0f;
   tree Tree;
   printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
   printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
