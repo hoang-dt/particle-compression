@@ -708,7 +708,7 @@ GrowToAccomodate(bitstream* Bs, i64 AddedCapacity) {
 }
 
 INLINE void
-IncreaseCapacity(bitstream* Bs, i64 NewCapacity) {    
+IncreaseCapacity(bitstream* Bs, i64 NewCapacity) {
   NewCapacity += sizeof(Bs->BitBuf);
   if (Size(Bs->Stream) < NewCapacity) {
     buffer NewBuf;
@@ -1020,11 +1020,11 @@ INLINE stref::
 stref() = default;
 
 INLINE stref::
-stref(cstr PtrIn, int SizeIn) 
+stref(cstr PtrIn, int SizeIn)
   : ConstPtr(PtrIn), Size(SizeIn) {}
 
 INLINE stref::
-stref(cstr PtrIn) 
+stref(cstr PtrIn)
   : ConstPtr(PtrIn), Size(int(strlen(PtrIn))) {}
 
 INLINE char& stref::
@@ -1048,7 +1048,7 @@ INLINE tokenizer::
 tokenizer(const stref& InputIn, const stref& DelimsIn)
   : Input(InputIn), Delims(DelimsIn), Pos(0) {}
 
-INLINE void 
+INLINE void
 Init(tokenizer* Tk, const stref& Input, const stref& Delims) {
   Tk->Input = Input;
   Tk->Delims = Delims;
@@ -1215,7 +1215,7 @@ struct arithmetic_coder {
   bitstream BitStream;
 
   /*Init for encoding, bytes = the size of the compressed stream in bytes */
-  void 
+  void
   InitWrite(int Bytes) {
     CodeLow = CodeVal = PendingBits = 0;
     CodeHigh = CodeMax;
@@ -1223,7 +1223,7 @@ struct arithmetic_coder {
   }
 
   /* Init for decoding */
-  void 
+  void
   InitRead() {
     CodeLow = CodeVal = PendingBits = 0;
     CodeHigh = CodeMax;
@@ -1235,7 +1235,7 @@ struct arithmetic_coder {
   }
 
   /* Make sure low <= val <= high at the end of the stream */
-  void 
+  void
   EncodeFinalize() {
     ++PendingBits;
     if (CodeLow < CodeOneFourth)
@@ -1273,7 +1273,7 @@ struct arithmetic_coder {
     }
   }
 
-  void 
+  void
   PutBitsPlusPending(bool Bit) {
     Write(&BitStream, Bit); // TODO: optimize?
     RepeatedWrite(&BitStream, !Bit, PendingBits);
@@ -1281,7 +1281,7 @@ struct arithmetic_coder {
   }
 
   /* Decode a single symbol and return its index in the CDF table */
-  size_t 
+  size_t
   Decode(const std::vector<count_t>& CdfTable) {
     assert(CdfTable.size() > 0);
     count_t Count = CdfTable[CdfTable.size() - 1];
@@ -1319,7 +1319,6 @@ struct arithmetic_coder {
   }
 };
 
-
 //template <typename t>
 //struct range {
 //  t Begin, End;
@@ -1342,7 +1341,7 @@ enum node_type { Root, Inner };
 
 struct particle {
   vec3f Pos; // position
-  //u64 Code = 0; // 
+  //u64 Code = 0; //
 };
 
 struct grid {
@@ -1409,16 +1408,6 @@ struct params {
   int BlockBits = 15; // every 2^15 voxels become one block
 };
 
-// TODO: first, compute the bounding box
-// TODO: then, partition the particles into 2^x * 2^y * 2^z bricks
-// TODO: then, build one tree for each brick
-// TODO: then, use the maximum tree depth and re-build a tree for each brick (so that each particle has one coordinate)
-// TODO: during the second build, encode the numbers into the correct streams, keeping track of the resolution level and also the spatial level
-// TODO: during the second build, adjust the size of the block size accordingly as we traverse down the tree
-// TODO: writing one bit at a time at the leaf level can be slow. how to make it fast?
-// TODO: during refinement, keep two priority queues: one at the brick level and one for all bricks
-// 
-
 // TODO: for each block we store the number of particles (put all the numbers together outside of block data)
 // TODO: in the block data we store the binomial coding tree
 // TODO: each level can be one file
@@ -1427,7 +1416,6 @@ struct params {
 //       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
 
 using particles = std::vector<std::unordered_map<u64, std::vector<vec3f>>>; // [level] -> [blocks of particles]
-using bitstream_map = std::unordered_map<u64, bitstream>;
 
 static void
 Refine(particles* Particles) {
@@ -1438,28 +1426,40 @@ static std::vector<particle> Particles;
 static params Params;
 static bbox BBox;
 static vec3i Dims3;
-static bitstream_map BitStreams;
+static bitstream ResStream; // storing the resolution nodes
+static std::vector<std::vector<bitstream>> LvlStreams; // [level] -> [block] -> bitstream
 
-INLINE u64 // compute the block code from a given node code
-BlockCode(u64 Code) {
-  return Code >> Params.BlockBits;
+#define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
+
+INLINE static void
+Encode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
+  // TODO: use binomial coding
+  u64 BlockIdx = BLOCK_INDEX(LvlIdx);
+  if (LvlStreams[Level].size() <= BlockIdx) {
+    LvlStreams[Level].resize(BlockIdx + 1);
+  }
+  bitstream* Bs = &LvlStreams[Level][BLOCK_INDEX(LvlIdx)];
+  GrowToAccomodate(Bs, 8);
+  WriteVarByte(Bs, N);
 }
 
-INLINE void // N is the number of particles under a node
-Encode(i8 Level, u64 TreeIdx, i64 ResIdx, i64 LvlIdx, i64 ParIdx, i64 N) {
+INLINE static void
+EncodeRoot(i64 N) {
+  GrowToAccomodate(&ResStream, 8);
+  WriteVarByte(&ResStream, N);
+}
+
+INLINE static void /* encode a resolution node */
+EncodeResNode(i64 M, i64 N) {
+  // TODO: use binomial coding
+  GrowToAccomodate(&ResStream, 8);
+  WriteVarByte(&ResStream, N);
+}
+
+INLINE static void // N is the number of particles under a node
+Print(i8 Level, u64 TreeIdx, i64 ResIdx, i64 LvlIdx, i64 ParIdx, i64 N) {
   printf("level = %d tree_idx = %llu res_idx = %lld lvl_idx = %lld par_idx = %lld N = %lld \n", Level, TreeIdx, ResIdx, LvlIdx, ParIdx, N);
   return;
-  auto Bs = BitStreams[BlockCode(TreeIdx)];
-  GrowToAccomodate(&Bs, 8); 
-  WriteVarByte(&Bs, N);
-}
-
-static void
-BuildTreeLeaf(tree* Node, i64 Begin, u64 Code, const grid& Grid, i8 D, i8 NLevels) {
-  Node->Begin = Begin;
-  Node->End = Begin + 1;
-  // TODO: continue the splitting until we reach the desired accuracy
-  //Encode(Code, 1);
 }
 
 static grid
@@ -1481,7 +1481,7 @@ struct q_item {
   i64 Begin, End;
   u64 TreeIdx; // the index in the tree
   i64 ResIdx; // index in the resolution tree
-  i64 LvlIdx; // index within its own level
+  i64 LvlIdx; // index within its own level (either this is used or the ResIdx is used, not both)
   i64 ParIdx; // particle idx (i.e., number of particles to the left of it)
   grid Grid;
   vec3f Error;
@@ -1492,6 +1492,9 @@ struct q_item {
 
 // TODO: keep encoding after we have reached 1 particle per node, so that all particles are encoded to the same accuracy
 // TODO: after blocking, we have a tree of blocks
+// TODO: write a routine to decode the blocks
+// TODO: write a routine to read from disk and reconstruct the tree/particles
+// TODO: write a routine to compute the PSNR of positions
 static void
 BuildTreeInner(q_item Q, float Accuracy) {
   std::queue<q_item> Queue;
@@ -1514,7 +1517,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
         Bin = (Bin - Q.Grid.From3[Q.D]) / Q.Grid.Stride3[Q.D];
-        return (Bin & 1) == 0; 
+        return IS_EVEN(Bin);
       };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
     } else { // spatial split
@@ -1523,17 +1526,22 @@ BuildTreeInner(q_item Q, float Accuracy) {
       auto SPred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
     }
-    Encode(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
+    if (Q.RSplit) {
+      EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
+    } else {
+      Encode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.End - Q.Begin, Mid - Q.Begin);
+    }
+    //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
     if (Q.Begin < Mid) {
-      Queue.push(q_item{ .Begin = Q.Begin, 
-                         .End = Mid, 
+      Queue.push(q_item{ .Begin = Q.Begin,
+                         .End = Mid,
                          .TreeIdx = Q.TreeIdx * 2 + 1,
                          .ResIdx = Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx,
                          .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1,
                          .ParIdx = Q.ParIdx,
-                         .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false), 
-                         .D = (Q.D + 1) % NDims, 
-                         .Level = Q.Level - Q.RSplit, 
+                         .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
+                         .D = i8((Q.D + 1) % NDims),
+                         .Level = i8(Q.Level - Q.RSplit),
                          .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
     if (Mid < Q.End) {
@@ -1544,8 +1552,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 2,
                          .ParIdx = Q.ParIdx + Mid - Q.Begin,
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
-                         .D = (Q.D + 1) % NDims,
-                         .Level = Q.Level, 
+                         .D = i8((Q.D + 1) % NDims),
+                         .Level = Q.Level,
                          .RSplit = false });
     }
   }
@@ -1613,9 +1621,7 @@ Handler(const doctest::AssertData& ad) {
   std::cout << std::endl;
 }
 
-#define ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
-
-
+#define EXIT_ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
 
 int
 main(int Argc, cstr* Argv) {
@@ -1624,9 +1630,9 @@ main(int Argc, cstr* Argv) {
   context.setAssertHandler(Handler);
   i8 NResLevels = 3; // actually number of resolution splits
   cstr ErrorMsg = "Usage: .exe particle_file --ndims 3 --nlevels 4";
-  if (Argc < 2) ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--ndims", &NDims)) ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--nlevels", &NResLevels)) ERROR(ErrorMsg);
+  if (Argc < 2) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--ndims", &NDims)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--nlevels", &NResLevels)) EXIT_ERROR(ErrorMsg);
 
   Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu\n", Particles.size());
@@ -1635,10 +1641,10 @@ main(int Argc, cstr* Argv) {
   Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
   grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Dims3), .Stride3 = vec3f(1)};
   float Accuracy = 1.0f;
-  tree Tree;
   printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
   printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
-  Encode(NResLevels - 1, 0, 0, 0, 0, Particles.size());
+  //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
+  EncodeRoot(Particles.size());
   BuildTreeInner(q_item{ .Begin = 0,
                          .End = (i64)Particles.size(),
                          .TreeIdx = 0,
@@ -1646,7 +1652,7 @@ main(int Argc, cstr* Argv) {
                          .LvlIdx = 0,
                          .ParIdx = 0,
                          .Grid = Grid,
-                         .Level = NResLevels - 1,
+                         .Level = i8(NResLevels - 1),
                          .RSplit = NResLevels > 1 }, Accuracy);
   //RandomLevels(P, &Particles);
 }
