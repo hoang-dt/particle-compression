@@ -127,8 +127,6 @@ inline thread_local char ScratchBuf[1024]; // for temporary strings
 #define IS_EVEN(X) (((X) & 1) == 0)
 #define IS_INT(X) (int(X) == (X))
 
-int NDims = 3;
-
 struct buffer;
 
 struct allocator {
@@ -1405,7 +1403,11 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
 struct params {
+  int NDims = 3;
+  cstr OutFile = nullptr;
   int BlockBits = 15; // every 2^15 voxels become one block
+  i8 NResLevels = 3;
+  u8 Height; // height of the full tree
 };
 
 // TODO: for each block we store the number of particles (put all the numbers together outside of block data)
@@ -1430,13 +1432,93 @@ static bitstream ResStream; // storing the resolution nodes
 static std::vector<std::vector<bitstream>> LvlStreams; // [level] -> [block] -> bitstream
 
 #define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
+#define INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
+
+/* Write each level to a different file */
+static void
+DumpToFile() {
+  FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NResLevels), "wb");
+  /* dump the resolution tree */
+  Flush(&ResStream);
+  fwrite(ResStream.Stream.Data, Size(ResStream), 1, Fp);
+  fclose(Fp);
+
+  /* dump the level data */
+  REQUIRE(LvlStreams.size() == Params.NResLevels);
+  FOR(i8, L, 0, Params.NResLevels) {
+    Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, L), "wb");
+    FOR_EACH(Blk, LvlStreams[L]) {
+      if (!Blk->Stream) break;
+      bitstream* Bs = &(*Blk);
+      Flush(Bs);
+      fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
+    }
+    fclose(Fp);
+  }
+}
+
+struct block {
+  std::vector<i64> Nodes;
+};
+
+block ResBlock;
+using block_table = std::vector<std::vector<block>>;
+block_table LvlBlocks;
+
+INLINE static i64
+Decode(bitstream* Bs, i64 M) {
+  return ReadVarByte(Bs);
+}
+
+static void
+DecodeResolutionBlock(bitstream* Bs, block* Block) {
+  InitRead(Bs, Bs->Stream);
+  Block->Nodes[1] = ReadVarByte(Bs);
+  for (i64 I = 2; I < Block->Nodes.size(); I += 2) {
+    i64 J = I / 2;
+    Block->Nodes[I    ] = Decode(Bs, Block->Nodes[J]);
+    Block->Nodes[I + 1] = Block->Nodes[J] - Block->Nodes[I];
+  }
+}
+
+// TODO: be careful not to confuse blocks of two nodes (left and right children) vs blocks of one nodes (only left child)
+static void
+DecodeLevelBlock(bitstream* Bs, i8 Level, u64 BlockIdx, const block& ResBlock, block_table* Blocks) {
+  InitRead(Bs, Bs->Stream);
+  REQUIRE(Blocks->size() > Level);
+  auto& BlocksOnLvl = (*Blocks)[Level];
+  if (BlocksOnLvl.size() <= BlockIdx) {
+    BlocksOnLvl.resize(BlockIdx * 3 / 2 + 1);
+  }
+  block& Block = (*Blocks)[Level][BlockIdx];
+  i64 NParticles = 1ll << Params.BlockBits;
+  Block.Nodes.resize(NParticles);
+  u64 FirstNodeIdx = MAX(BlockIdx << Params.BlockBits, 2); // NOTE: node index always starts at 2
+  u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
+  REQUIRE(Block.Nodes.size() == (1ull << Params.BlockBits));
+  if (BlockIdx == 0) {
+    REQUIRE(Level < Params.NResLevels);
+    Block.Nodes[1] = Level == 0 ? ResBlock.Nodes[2 * Params.NResLevels - 2] : ResBlock.Nodes[1 + 2 * (Params.NResLevels - Level)];
+  }
+  for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
+    u64 I = INDEX_IN_BLOCK(K);
+    REQUIRE(I > 0);
+    u64 J = K / 2;
+    u64 L = INDEX_IN_BLOCK(J);
+    REQUIRE(L > 0);
+    u64 ParentBlockIdx = BLOCK_INDEX(J);
+    Block.Nodes[I    ] = Decode(Bs, BlocksOnLvl[ParentBlockIdx].Nodes[L]);
+    Block.Nodes[I + 1] = BlocksOnLvl[ParentBlockIdx].Nodes[L] - Block.Nodes[I];
+  }
+}
 
 INLINE static void
 Encode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = BLOCK_INDEX(LvlIdx);
+  printf("level = %d block = %llu\n", Level, BlockIdx);
   if (LvlStreams[Level].size() <= BlockIdx) {
-    LvlStreams[Level].resize(BlockIdx + 1);
+    LvlStreams[Level].resize(BlockIdx * 3 / 2 + 1);
   }
   bitstream* Bs = &LvlStreams[Level][BLOCK_INDEX(LvlIdx)];
   GrowToAccomodate(Bs, 8);
@@ -1445,6 +1527,7 @@ Encode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
 
 INLINE static void
 EncodeRoot(i64 N) {
+  InitWrite(&ResStream, 1024);
   GrowToAccomodate(&ResStream, 8);
   WriteVarByte(&ResStream, N);
 }
@@ -1487,10 +1570,10 @@ struct q_item {
   vec3f Error;
   i8 D;
   i8 Level;
+  u8 Height;
   bool RSplit;
 };
 
-// TODO: keep encoding after we have reached 1 particle per node, so that all particles are encoded to the same accuracy
 // TODO: after blocking, we have a tree of blocks
 // TODO: write a routine to decode the blocks
 // TODO: write a routine to read from disk and reconstruct the tree/particles
@@ -1502,13 +1585,14 @@ BuildTreeInner(q_item Q, float Accuracy) {
   while (!Queue.empty()) {
     Q = Queue.front();
     Queue.pop();
+    REQUIRE(Q.Height <= Params.Height);
     i64 N = Q.End - Q.Begin;
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
     float W = (BBox.Max[Q.D] - BBox.Min[Q.D]) / Dims3[Q.D];
     vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / N;
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
-    if (NDims > 2) Stop = Stop && Error3.z <= Accuracy;
+    if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
     //if (N <= 1) continue;
     if (Q.RSplit) { // resolution split
@@ -1529,31 +1613,33 @@ BuildTreeInner(q_item Q, float Accuracy) {
     if (Q.RSplit) {
       EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
     } else {
-      Encode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.End - Q.Begin, Mid - Q.Begin);
+      Encode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
     }
     //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
-    if (Q.Begin < Mid) {
+    if (Q.Height + 1 < Params.Height && Q.Begin < Mid) {
       Queue.push(q_item{ .Begin = Q.Begin,
                          .End = Mid,
+                         .TreeIdx = Q.TreeIdx * 2,
+                         .ResIdx = Q.RSplit ? Q.ResIdx * 2 : Q.ResIdx,
+                         .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2,
+                         .ParIdx = Q.ParIdx,
+                         .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
+                         .D = i8((Q.D + 1) % Params.NDims),
+                         .Level = i8(Q.Level - Q.RSplit),
+                         .Height = u8(Q.Height + 1),
+                         .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
+    }
+    if (Q.Height + 1 < Params.Height && Mid < Q.End) {
+      Queue.push(q_item{ .Begin = Mid,
+                         .End = Q.End,
                          .TreeIdx = Q.TreeIdx * 2 + 1,
                          .ResIdx = Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx,
                          .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1,
-                         .ParIdx = Q.ParIdx,
-                         .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
-                         .D = i8((Q.D + 1) % NDims),
-                         .Level = i8(Q.Level - Q.RSplit),
-                         .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
-    }
-    if (Mid < Q.End) {
-      Queue.push(q_item{ .Begin = Mid,
-                         .End = Q.End,
-                         .TreeIdx = Q.TreeIdx * 2 + 2,
-                         .ResIdx = Q.RSplit ? Q.ResIdx * 2 + 2 : Q.ResIdx,
-                         .LvlIdx = Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 2,
                          .ParIdx = Q.ParIdx + Mid - Q.Begin,
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
-                         .D = i8((Q.D + 1) % NDims),
+                         .D = i8((Q.D + 1) % Params.NDims),
                          .Level = Q.Level,
+                         .Height = u8(Q.Height + 1),
                          .RSplit = false });
     }
   }
@@ -1568,11 +1654,11 @@ ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 E
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left = MCOPY(vec3i(0), [D] = 1), LogDims3Right = MCOPY(vec3i(0), [D] = 1);
   if (Begin + 1 < Mid) {
-    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % NDims);
+    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % Params.NDims);
     ++LogDims3Left[D];
   }
   if (Mid + 1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % NDims);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % Params.NDims);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -1628,11 +1714,13 @@ main(int Argc, cstr* Argv) {
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
   context.setAssertHandler(Handler);
-  i8 NResLevels = 3; // actually number of resolution splits
-  cstr ErrorMsg = "Usage: .exe particle_file --ndims 3 --nlevels 4";
+  cstr ErrorMsg = "Usage: .exe particle_file --ndims 3 --nlevels 4 --height 6 --block 2 --out output";
   if (Argc < 2) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--ndims", &NDims)) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--nlevels", &NResLevels)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR(ErrorMsg);
+  if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR(ErrorMsg);
 
   Particles = ReadXYZ(Argv[1]);
   printf("number of particles = %zu\n", Particles.size());
@@ -1644,16 +1732,19 @@ main(int Argc, cstr* Argv) {
   printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
   printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
   //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
+  LvlStreams.resize(Params.NResLevels);
   EncodeRoot(Particles.size());
   BuildTreeInner(q_item{ .Begin = 0,
                          .End = (i64)Particles.size(),
-                         .TreeIdx = 0,
-                         .ResIdx = 0,
-                         .LvlIdx = 0,
+                         .TreeIdx = 1,
+                         .ResIdx = 1,
+                         .LvlIdx = 1,
                          .ParIdx = 0,
                          .Grid = Grid,
-                         .Level = i8(NResLevels - 1),
-                         .RSplit = NResLevels > 1 }, Accuracy);
+                         .Level = i8(Params.NResLevels - 1),
+                         .Height = 1,
+                         .RSplit = Params.NResLevels > 1 }, Accuracy);
+  DumpToFile();
   //RandomLevels(P, &Particles);
 }
 
