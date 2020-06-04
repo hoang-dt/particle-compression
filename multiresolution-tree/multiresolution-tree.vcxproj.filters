@@ -20,13 +20,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="linalg.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="doctest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="yocto_math.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sexpr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

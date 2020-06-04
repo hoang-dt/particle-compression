@@ -13,6 +13,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #include "doctest.h"
+#include "sexpr.h"
 #include "yocto_math.h"
 #include <algorithm>
 #include <array>
@@ -1402,12 +1403,19 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
+enum class action { Encode, Decode };
 struct params {
+  cstr Name = nullptr;
+  vec2i Version = vec2i(1, 0);
   int NDims = 3;
   cstr OutFile = nullptr;
   int BlockBits = 15; // every 2^15 voxels become one block
   i8 NResLevels = 3;
   u8 Height; // height of the full tree
+  action Action = action::Encode;
+  bbox BBox;
+  i64 NParticles;
+  float Accuracy = 0;
 };
 
 // TODO: for each block we store the number of particles (put all the numbers together outside of block data)
@@ -1434,9 +1442,30 @@ static std::vector<std::vector<bitstream>> LvlStreams; // [level] -> [block] -> 
 #define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
 #define INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
 
+static void
+WriteMetaFile(const params& Params, cstr FileName) {
+  FILE* Fp = fopen(FileName, "w");
+  fprintf(Fp, "(\n"); // begin (
+  fprintf(Fp, "  (common\n");
+  fprintf(Fp, "    (type \"Simulation\")\n"); // TODO: add this config to Wz
+  fprintf(Fp, "    (name \"%s\")\n", Params.Name);
+  fprintf(Fp, "    (particles %lld)\n", Params.NParticles);
+  fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
+  fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
+  fprintf(Fp, "    (height %d)\n", Params.Height);
+  fprintf(Fp, "  )\n"); // end common)
+  fprintf(Fp, "  (format\n");
+  fprintf(Fp, "    (version %d %d)\n", Params.Version[0], Params.Version[1]);
+  fprintf(Fp, "    (resolutions %d)\n", Params.NResLevels);
+  fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
+  fprintf(Fp, "  )\n"); // end format)
+  fprintf(Fp, ")\n"); // end )
+  fclose(Fp);
+}
+
 /* Write each level to a different file */
 static void
-DumpToFile() {
+DumpToFiles() {
   FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NResLevels), "wb");
   /* dump the resolution tree */
   Flush(&ResStream);
@@ -1455,6 +1484,8 @@ DumpToFile() {
     }
     fclose(Fp);
   }
+  /* dump the meta-data file */
+  WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
 }
 
 struct block {
@@ -1626,7 +1657,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
                          .D = i8((Q.D + 1) % Params.NDims),
                          .Level = i8(Q.Level - Q.RSplit),
-                         .Height = u8(Q.Height + 1),
+                         .Height = Q.RSplit ? Q.Height : u8(Q.Height + 1),
                          .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
     if (Q.Height + 1 < Params.Height && Mid < Q.End) {
@@ -1639,7 +1670,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
                          .D = i8((Q.D + 1) % Params.NDims),
                          .Level = Q.Level,
-                         .Height = u8(Q.Height + 1),
+                         .Height = Q.RSplit ? Q.Height : u8(Q.Height + 1),
                          .RSplit = false });
     }
   }
@@ -1714,37 +1745,49 @@ main(int Argc, cstr* Argv) {
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
   context.setAssertHandler(Handler);
-  cstr ErrorMsg = "Usage: .exe particle_file --ndims 3 --nlevels 4 --height 6 --block 2 --out output";
-  if (Argc < 2) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR(ErrorMsg);
-  if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR(ErrorMsg);
+  cstr ErrorMsg = "Usage: \n"
+                  "  to encode: .exe particle_file.xyz --action encode --ndims 3 --nlevels 4 --height 6 --block 2 --out output\n"
+                  "  to decode: .exe compressed_file --action decode --out particle_file.xyz";
+  cstr Action = nullptr;
+  if (!OptVal(Argc, Argv, "--action", &Action)) EXIT_ERROR(ErrorMsg);
+  if (strcmp("encode", Action) == 0) Params.Action = action::Encode;
+  else if (strcmp("decode", Action) == 0) Params.Action = action::Decode;
+  else EXIT_ERROR(ErrorMsg);
 
-  Particles = ReadXYZ(Argv[1]);
-  printf("number of particles = %zu\n", Particles.size());
-  BBox = ComputeBoundingBox(Particles);
-  auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
-  Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
-  grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Dims3), .Stride3 = vec3f(1)};
-  float Accuracy = 1.0f;
-  printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
-  printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
-  //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
-  LvlStreams.resize(Params.NResLevels);
-  EncodeRoot(Particles.size());
-  BuildTreeInner(q_item{ .Begin = 0,
-                         .End = (i64)Particles.size(),
-                         .TreeIdx = 1,
-                         .ResIdx = 1,
-                         .LvlIdx = 1,
-                         .ParIdx = 0,
-                         .Grid = Grid,
-                         .Level = i8(Params.NResLevels - 1),
-                         .Height = 1,
-                         .RSplit = Params.NResLevels > 1 }, Accuracy);
-  DumpToFile();
+  if (Params.Action == action::Encode) {
+    if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR(ErrorMsg);
+    if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR(ErrorMsg);
+    if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR(ErrorMsg);
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR(ErrorMsg);
+    if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR(ErrorMsg);
+    Particles = ReadXYZ(Argv[1]);
+    Params.NParticles = Particles.size();
+    printf("number of particles = %zu\n", Particles.size());
+    BBox = ComputeBoundingBox(Particles);
+    auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
+    Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
+    grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Dims3), .Stride3 = vec3f(1)};
+    float Accuracy = 1.0f;
+    printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
+    printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
+    //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
+    LvlStreams.resize(Params.NResLevels);
+    EncodeRoot(Particles.size());
+    BuildTreeInner(q_item{ .Begin = 0,
+                           .End = (i64)Particles.size(),
+                           .TreeIdx = 1,
+                           .ResIdx = 1,
+                           .LvlIdx = 1,
+                           .ParIdx = 0,
+                           .Grid = Grid,
+                           .Level = i8(Params.NResLevels - 1),
+                           .Height = 1,
+                           .RSplit = Params.NResLevels > 1 }, Accuracy);
+    DumpToFiles();
+  } else if (Params.Action == action::Decode) {
+    
+  }
+
   //RandomLevels(P, &Particles);
 }
 
