@@ -1418,26 +1418,18 @@ struct params {
   float Accuracy = 0;
 };
 
-// TODO: for each block we store the number of particles (put all the numbers together outside of block data)
-// TODO: in the block data we store the binomial coding tree
-// TODO: each level can be one file
 // TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
 // TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
 //       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
-
-using particles = std::vector<std::unordered_map<u64, std::vector<vec3f>>>; // [level] -> [blocks of particles]
-
-static void
-Refine(particles* Particles) {
-
-}
 
 static std::vector<particle> Particles;
 static params Params;
 static bbox BBox;
 static vec3i Dims3;
 static bitstream ResStream; // storing the resolution nodes
-static std::vector<std::vector<bitstream>> LvlStreams; // [level] -> [block] -> bitstream
+static std::vector<bitstream> LvlStreams; // [level] -> bitstream (of the current block)
+static std::vector<u64> CurrBlocks; // [level] -> current block id
+static std::vector<std::vector<i32>> BlockBytes;
 
 #define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
 #define INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
@@ -1461,31 +1453,6 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "  )\n"); // end format)
   fprintf(Fp, ")\n"); // end )
   fclose(Fp);
-}
-
-/* Write each level to a different file */
-static void
-DumpToFiles() {
-  FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NResLevels), "wb");
-  /* dump the resolution tree */
-  Flush(&ResStream);
-  fwrite(ResStream.Stream.Data, Size(ResStream), 1, Fp);
-  fclose(Fp);
-
-  /* dump the level data */
-  REQUIRE(LvlStreams.size() == Params.NResLevels);
-  FOR(i8, L, 0, Params.NResLevels) {
-    Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, L), "wb");
-    FOR_EACH(Blk, LvlStreams[L]) {
-      if (!Blk->Stream) break;
-      bitstream* Bs = &(*Blk);
-      Flush(Bs);
-      fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
-    }
-    fclose(Fp);
-  }
-  /* dump the meta-data file */
-  WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
 }
 
 struct block {
@@ -1543,15 +1510,60 @@ DecodeLevelBlock(bitstream* Bs, i8 Level, u64 BlockIdx, const block& ResBlock, b
   }
 }
 
+static void
+WriteBlock(i8 Level, u64 BlockIdx) {
+  bitstream* Bs = &LvlStreams[Level];
+  Flush(Bs);
+  if (Size(*Bs) > 0) {
+    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
+    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
+    fclose(Fp);
+  }
+  // book-keeping
+  if (BlockBytes[Level].size() <= BlockIdx)
+    BlockBytes[Level].resize(BlockBytes[Level].size() * 3 / 2 + 1);
+  BlockBytes[Level][BlockIdx] = (i32)Size(*Bs);
+  Rewind(Bs);
+}
+
+/* Write each level to a different file */
+static void
+FlushBlocksToFiles() {
+  /* write the resolution tree */
+  FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NResLevels), "wb");
+  Flush(&ResStream);
+  fwrite(ResStream.Stream.Data, Size(ResStream), 1, Fp);
+  fclose(Fp);
+
+  /* write the level data */
+  REQUIRE(LvlStreams.size() == Params.NResLevels);
+  FOR(i8, L, 0, Params.NResLevels) {
+    WriteBlock(L, CurrBlocks[L]);
+    // write an index consisting of all blocks in the file
+    // TODO: compress the index?
+    // TODO: if too many blocks have 0 bytes, maybe we can write a sparse index
+    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, L), "ab");
+    FOR(u64, BlockIdx, 0, BlockBytes[L].size()) {
+      fwrite(&BlockBytes[L][BlockIdx], sizeof(i32), 1, Fp);
+    }
+    fclose(Fp);
+    u64 NBlocks = BlockBytes[L].size();
+    fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
+  }
+  /* write the meta-data file */
+  WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
+}
+
 INLINE static void
-Encode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
+EncodeNode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = BLOCK_INDEX(LvlIdx);
-  printf("level = %d block = %llu\n", Level, BlockIdx);
-  if (LvlStreams[Level].size() <= BlockIdx) {
-    LvlStreams[Level].resize(BlockIdx * 3 / 2 + 1);
+  if (BlockIdx > CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
+    WriteBlock(Level, CurrBlocks[Level]);
+    CurrBlocks[Level] = BlockIdx;
   }
-  bitstream* Bs = &LvlStreams[Level][BLOCK_INDEX(LvlIdx)];
+  printf("level = %d block = %llu\n", Level, BlockIdx);
+  bitstream* Bs = &LvlStreams[Level];
   GrowToAccomodate(Bs, 8);
   WriteVarByte(Bs, N);
 }
@@ -1644,7 +1656,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
     if (Q.RSplit) {
       EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
     } else {
-      Encode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
+      EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
     }
     //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
     if (Q.Height + 1 < Params.Height && Q.Begin < Mid) {
@@ -1755,6 +1767,7 @@ main(int Argc, cstr* Argv) {
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
+    if (!OptVal(Argc, Argv, "--name", &Params.Name)) EXIT_ERROR(ErrorMsg);
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR(ErrorMsg);
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR(ErrorMsg);
     if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR(ErrorMsg);
@@ -1772,6 +1785,8 @@ main(int Argc, cstr* Argv) {
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
     //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
     LvlStreams.resize(Params.NResLevels);
+    CurrBlocks.resize(Params.NResLevels, 0);
+    BlockBytes.resize(Params.NResLevels);
     EncodeRoot(Particles.size());
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
@@ -1783,7 +1798,7 @@ main(int Argc, cstr* Argv) {
                            .Level = i8(Params.NResLevels - 1),
                            .Height = 1,
                            .RSplit = Params.NResLevels > 1 }, Accuracy);
-    DumpToFiles();
+    FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
     
   }
