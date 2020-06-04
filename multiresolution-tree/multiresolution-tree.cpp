@@ -1408,6 +1408,7 @@ struct params {
   cstr Name = nullptr;
   vec2i Version = vec2i(1, 0);
   int NDims = 3;
+  cstr InFile = nullptr;
   cstr OutFile = nullptr;
   int BlockBits = 15; // every 2^15 voxels become one block
   i8 NResLevels = 3;
@@ -1546,9 +1547,9 @@ FlushBlocksToFiles() {
     FOR(u64, BlockIdx, 0, BlockBytes[L].size()) {
       fwrite(&BlockBytes[L][BlockIdx], sizeof(i32), 1, Fp);
     }
-    fclose(Fp);
     u64 NBlocks = BlockBytes[L].size();
     fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
+    fclose(Fp);
   }
   /* write the meta-data file */
   WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
@@ -1767,13 +1768,14 @@ main(int Argc, cstr* Argv) {
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
-    if (!OptVal(Argc, Argv, "--name", &Params.Name)) EXIT_ERROR(ErrorMsg);
-    if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR(ErrorMsg);
-    if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR(ErrorMsg);
-    if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR(ErrorMsg);
-    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR(ErrorMsg);
-    if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR(ErrorMsg);
-    Particles = ReadXYZ(Argv[1]);
+    if (!OptVal(Argc, Argv, "--name", &Params.Name)) EXIT_ERROR("missing --name");
+    if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
+    if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR("missing --nlevels");
+    if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR("missing --height");
+    if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+    if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
+    Particles = ReadXYZ(Params.InFile);
     Params.NParticles = Particles.size();
     printf("number of particles = %zu\n", Particles.size());
     BBox = ComputeBoundingBox(Particles);
