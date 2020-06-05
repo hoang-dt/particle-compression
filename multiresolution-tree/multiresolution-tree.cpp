@@ -1414,9 +1414,10 @@ struct params {
   i8 NResLevels = 3;
   u8 Height; // height of the full tree
   action Action = action::Encode;
-  bbox BBox;
   i64 NParticles;
   float Accuracy = 0;
+  bbox BBox;
+  vec3i Dims3;
 };
 
 // TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
@@ -1425,8 +1426,6 @@ struct params {
 
 static std::vector<particle> Particles;
 static params Params;
-static bbox BBox;
-static vec3i Dims3;
 static bitstream ResStream; // storing the resolution nodes
 static std::vector<bitstream> LvlStreams; // [level] -> bitstream (of the current block)
 static std::vector<u64> CurrBlocks; // [level] -> current block id
@@ -1440,9 +1439,10 @@ WriteMetaFile(const params& Params, cstr FileName) {
   FILE* Fp = fopen(FileName, "w");
   fprintf(Fp, "(\n"); // begin (
   fprintf(Fp, "  (common\n");
-  fprintf(Fp, "    (type \"Simulation\")\n"); // TODO: add this config to Wz
   fprintf(Fp, "    (name \"%s\")\n", Params.Name);
   fprintf(Fp, "    (particles %lld)\n", Params.NParticles);
+  fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
+  fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
   fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
   fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
   fprintf(Fp, "    (height %d)\n", Params.Height);
@@ -1559,11 +1559,11 @@ INLINE static void
 EncodeNode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = BLOCK_INDEX(LvlIdx);
+  printf("level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx > CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
   }
-  printf("level = %d block = %llu\n", Level, BlockIdx);
   bitstream* Bs = &LvlStreams[Level];
   GrowToAccomodate(Bs, 8);
   WriteVarByte(Bs, N);
@@ -1633,7 +1633,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
     i64 N = Q.End - Q.Begin;
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
-    float W = (BBox.Max[Q.D] - BBox.Min[Q.D]) / Dims3[Q.D];
+    float W = (Params.BBox.Max[Q.D] - Params.BBox.Min[Q.D]) / Params.Dims3[Q.D];
     vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / N;
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
@@ -1641,7 +1641,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
     //if (N <= 1) continue;
     if (Q.RSplit) { // resolution split
       auto RPred = [W, &Q](const particle& P) {
-        int Bin = MIN(Dims3[Q.D] - 1, int((P.Pos[Q.D] - BBox.Min[Q.D]) / W));
+        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W));
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
         Bin = (Bin - Q.Grid.From3[Q.D]) / Q.Grid.Stride3[Q.D];
@@ -1650,7 +1650,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
     } else { // spatial split
       float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
-      float M = BBox.Min[Q.D] + W * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
+      float M = Params.BBox.Min[Q.D] + W * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
       auto SPred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
     }
@@ -1670,7 +1670,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
                          .D = i8((Q.D + 1) % Params.NDims),
                          .Level = i8(Q.Level - Q.RSplit),
-                         .Height = Q.RSplit ? Q.Height : u8(Q.Height + 1),
+                         .Height = u8(Q.Height + 1),
                          .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
     if (Q.Height + 1 < Params.Height && Mid < Q.End) {
@@ -1683,7 +1683,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
                          .D = i8((Q.D + 1) % Params.NDims),
                          .Level = Q.Level,
-                         .Height = Q.RSplit ? Q.Height : u8(Q.Height + 1),
+                         .Height = u8(Q.Height + 1),
                          .RSplit = false });
     }
   }
@@ -1778,12 +1778,12 @@ main(int Argc, cstr* Argv) {
     Particles = ReadXYZ(Params.InFile);
     Params.NParticles = Particles.size();
     printf("number of particles = %zu\n", Particles.size());
-    BBox = ComputeBoundingBox(Particles);
-    auto LogDims3 = ComputeGrid(&Particles, BBox, 0, Particles.size(), 0);
-    Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
-    grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Dims3), .Stride3 = vec3f(1)};
+    Params.BBox = ComputeBoundingBox(Particles);
+    auto LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0);
+    Params.Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
+    grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
     float Accuracy = 1.0f;
-    printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(BBox.Min), EXPvec3(BBox.Max));
+    printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
     //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
     LvlStreams.resize(Params.NResLevels);
