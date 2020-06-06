@@ -1455,11 +1455,11 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
 enum class action : int { Encode, Decode };
 struct params {
-  cstr Name = nullptr;
+  char Name[64];
   vec2i Version = vec2i(1, 0);
   int NDims = 3;
-  cstr InFile = nullptr;
-  cstr OutFile = nullptr;
+  cstr InFile;
+  cstr OutFile;
   int BlockBits = 15; // every 2^15 voxels become one block
   i8 NResLevels = 3;
   u8 Height; // height of the full tree
@@ -1925,7 +1925,8 @@ main(int Argc, cstr* Argv) {
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
-    if (!OptVal(Argc, Argv, "--name", &Params.Name)) EXIT_ERROR("missing --name");
+    cstr Name = Params.Name;
+    if (!OptVal(Argc, Argv, "--name", &Name)) EXIT_ERROR("missing --name");
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR("missing --height");
