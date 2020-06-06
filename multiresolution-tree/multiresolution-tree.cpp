@@ -13,6 +13,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #include "doctest.h"
+#define SEXPR_IMPLEMENTATION
 #include "sexpr.h"
 #include "yocto_math.h"
 #include <algorithm>
@@ -1193,6 +1194,63 @@ OptExists(int NArgs, cstr* Args, cstr Opt) {
   return false;
 }
 
+template <typename func_t>
+struct scope_guard {
+  func_t Func;
+  bool Dismissed = false;
+  // TODO: std::forward FuncIn?
+  scope_guard(const func_t& FuncIn) : Func(FuncIn) {}
+  ~scope_guard() { if (!Dismissed) { Func(); } }
+};
+
+#define BEGIN_CLEANUP(...) MACRO_OVERLOAD(BEGIN_CLEANUP, __VA_ARGS__)
+#define BEGIN_CLEANUP_0() auto CAT(__CleanUpFunc__, __LINE__) = [&]()
+#define BEGIN_CLEANUP_1(N) auto __CleanUpFunc__##N = [&]()
+#define END_CLEANUP(...) MACRO_OVERLOAD(END_CLEANUP, __VA_ARGS__)
+#define END_CLEANUP_0() scope_guard<decltype(CAT(__CleanUpFunc__, __LINE__))> CAT(__ScopeGuard__, __LINE__)(CAT(__CleanUpFunc__, __LINE__));
+#define END_CLEANUP_1(N) scope_guard __ScopeGuard__##N(__CleanUpFunc__##N);
+
+//#define mg_BeginCleanUp(n) auto __CleanUpFunc__##n = [&]()
+#define CLEANUP(...) MACRO_OVERLOAD(CLEANUP, __VA_ARGS__)
+#define CLEANUP_1(...) BEGIN_CLEANUP_0() { __VA_ARGS__; }; END_CLEANUP_0()
+#define CLEANUP_2(N, ...) BEGIN_CLEANUP_1(N) { __VA_ARGS__; }; END_CLEANUP_1(N)
+#define DISMISS_CLEANUP(N) { __ScopeGuard__##N.Dismissed = true; }
+
+/* Enable support for reading large files */
+#if defined(_WIN32)
+  #define FSEEK _fseeki64
+  #define FTELL _ftelli64
+#elif defined(__linux__) || defined(__APPLE__)
+  #define _FILE_OFFSET_BITS 64
+  #define FSEEK fseeko
+  #define FTELL ftello
+#endif
+
+
+bool
+ReadFile(cstr FileName, buffer* Buf) {
+  assert((Buf->Data && Buf->Bytes) || (!Buf->Data && !Buf->Bytes));
+
+  FILE* Fp = fopen(FileName, "rb");
+  CLEANUP(0, if (Fp) fclose(Fp); );
+  if (!Fp) return false;
+
+  /* Determine the file size */
+  if (FSEEK(Fp, 0, SEEK_END)) return false;
+  i64 Size = 0;
+  if ((Size = FTELL(Fp)) == -1) return false;
+  if (FSEEK(Fp, 0, SEEK_SET)) return false;
+  if (Buf->Bytes < Size)
+    AllocBuf(Buf, Size);
+
+  /* Read file contents */
+  CLEANUP(1, DeallocBuf(Buf); );
+  if (fread(Buf->Data, size_t(Size), 1, Fp) != 1) return false;
+
+  DISMISS_CLEANUP(1);
+  return true;
+}
+
 template <typename count_t>
 struct prob {
   count_t Low; // from 0 to count
@@ -1318,14 +1376,6 @@ struct arithmetic_coder {
   }
 };
 
-//template <typename t>
-//struct range {
-//  t Begin, End;
-//  INLINE i64 size() const { return End - Begin; }
-//  INLINE t  begin() const { return Begin; }
-//  INLINE t    end() const { return End  ; }
-//};
-
 #define RANGE(...) MACRO_OVERLOAD(RANGE, __VA_ARGS__)
 #define RANGE_0()
 #define RANGE_1(Container) (Container).begin(), (Container).end()
@@ -1403,7 +1453,7 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
-enum class action { Encode, Decode };
+enum class action : int { Encode, Decode };
 struct params {
   cstr Name = nullptr;
   vec2i Version = vec2i(1, 0);
@@ -1434,6 +1484,113 @@ static std::vector<std::vector<i32>> BlockBytes;
 #define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
 #define INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
 
+static bool
+ReadMetaFile(cstr FileName) {
+  buffer Buf;
+  ReadFile(FileName, &Buf);
+  CLEANUP(0, DeallocBuf(&Buf));
+  SExprResult Result = ParseSExpr((cstr)Buf.Data, Size(Buf), nullptr);
+  if(Result.type == SE_SYNTAX_ERROR) {
+    fprintf(stderr, "Error(%d): %s.\n", Result.syntaxError.lineNumber, Result.syntaxError.message);
+    return false;
+  } else { // no syntax error
+    SExpr* Data = (SExpr*)malloc(sizeof(SExpr) * Result.count);
+    CLEANUP(1, free(Data));
+    std::vector<SExpr*> Stack; Stack.reserve(Result.count);
+    // This time we supply the pool
+    SExprPool Pool = { Result.count, Data };
+    Result = ParseSExpr((cstr)Buf.Data, Size(Buf), &Pool);
+    // result.expr contains the successfully parsed SExpr
+//    printf("parse .idx file successfully\n");
+    Stack.push_back(Result.expr);
+    bool GotId = false;
+    SExpr* LastExpr = nullptr;
+    while (Stack.size() > 0) {
+      SExpr* Expr = Stack.back();
+      Stack.pop_back();
+      if (Expr->next)
+        Stack.push_back(Expr->next);
+      if (GotId) {
+        if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "version")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.Version[0] = Expr->i;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          REQUIRE(Expr->type == SE_INT);
+          Params.Version[1] = Expr->i;
+          printf("Version = %d.%d\n", Params.Version[0], Params.Version[1]);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "name")) {
+          REQUIRE(Expr->type == SE_STRING);
+          snprintf((str)Params.Name, Expr->s.len + 1, "%s", (cstr)Buf.Data + Expr->s.start);
+          printf("Name = %s\n", Params.Name);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "grid")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.Dims3.x = Expr->i;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          REQUIRE(Expr->type == SE_INT);
+          Params.Dims3.y = Expr->i;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          REQUIRE(Expr->type == SE_INT);
+          Params.Dims3.z = Expr->i;
+          printf("Dims = %d %d %d\n", EXPvec3(Params.Dims3));
+        } if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "accuracy")) {
+          REQUIRE(Expr->type == SE_FLOAT);
+          Params.Accuracy = Expr->f;
+          printf("Accuracy = %.8g\n", Params.Accuracy);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "bounding-box")) {
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Min.x = Expr->f;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Min.y = Expr->f;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Min.z = Expr->f;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Max.x = Expr->f;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Max.y = Expr->f;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
+          Params.BBox.Max.z = Expr->f;
+          printf("bounding-box %f %f %f %f %f %f\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "particles")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.NParticles = Expr->i;
+          printf("particles = %lld\n", Params.NParticles);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "resolutions")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.NResLevels = Expr->i;
+          printf("resolutions = %d\n", Params.NResLevels);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "block-bits")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.BlockBits = Expr->i;
+          printf("block-bits = %d\n", Params.BlockBits);
+        }
+      }
+      if (Expr->type == SE_ID) {
+        LastExpr = Expr;
+        GotId = true;
+      } else if (Expr->type == SE_LIST) {
+        Stack.push_back(Expr->head);
+        GotId = false;
+      } else {
+        GotId = false;
+      }
+    }
+  }
+  return true;
+}
+
 static void
 WriteMetaFile(const params& Params, cstr FileName) {
   FILE* Fp = fopen(FileName, "w");
@@ -1444,13 +1601,13 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
   fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
   fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
-  fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
-  fprintf(Fp, "    (height %d)\n", Params.Height);
   fprintf(Fp, "  )\n"); // end common)
   fprintf(Fp, "  (format\n");
   fprintf(Fp, "    (version %d %d)\n", Params.Version[0], Params.Version[1]);
   fprintf(Fp, "    (resolutions %d)\n", Params.NResLevels);
   fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
+  fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
+  fprintf(Fp, "    (height %d)\n", Params.Height);
   fprintf(Fp, "  )\n"); // end format)
   fprintf(Fp, ")\n"); // end )
   fclose(Fp);
@@ -1473,7 +1630,7 @@ static void
 DecodeResolutionBlock(bitstream* Bs, block* Block) {
   InitRead(Bs, Bs->Stream);
   Block->Nodes[1] = ReadVarByte(Bs);
-  for (i64 I = 2; I < Block->Nodes.size(); I += 2) {
+  for (i64 I = 2; I < (i64)Block->Nodes.size(); I += 2) {
     i64 J = I / 2;
     Block->Nodes[I    ] = Decode(Bs, Block->Nodes[J]);
     Block->Nodes[I + 1] = Block->Nodes[J] - Block->Nodes[I];
@@ -1634,7 +1791,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
     float W = (Params.BBox.Max[Q.D] - Params.BBox.Min[Q.D]) / Params.Dims3[Q.D];
-    vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / N;
+    vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / f64(N);
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
@@ -1644,7 +1801,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
         int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W));
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
-        Bin = (Bin - Q.Grid.From3[Q.D]) / Q.Grid.Stride3[Q.D];
+        Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
         return IS_EVEN(Bin);
       };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
@@ -1802,7 +1959,8 @@ main(int Argc, cstr* Argv) {
                            .RSplit = Params.NResLevels > 1 }, Accuracy);
     FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
-    
+    if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    ReadMetaFile(Params.InFile);
   }
 
   //RandomLevels(P, &Particles);
