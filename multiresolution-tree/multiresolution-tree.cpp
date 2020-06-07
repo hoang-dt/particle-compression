@@ -55,7 +55,7 @@
 
 #define FOR(Type, It, Begin, End) for (Type It = Begin; It != End; ++It)
 #define FOR_EACH(...) MACRO_OVERLOAD(FOR_EACH, __VA_ARGS__)
-#define FOR_EACH_2(It, Container) for (auto It = begin(Container); It != end(Container); ++It)
+#define FOR_EACH_2(It, Container) for (auto It = (Container).begin(); It != (Container).end(); ++It)
 #define FOR_EACH_3(It, Begin, End) for (auto It = Begin; It != End; ++It)
 #define MAX(A, B) (B) < (A) ? (A) : (B)
 #define MIN(A, B) (A) < (B) ? (A) : (B)
@@ -1651,8 +1651,8 @@ ReadBackwardBuffer(FILE* Fp, buffer* Buf, i64 Sz) {
   FSEEK(Fp, Where, SEEK_SET);
 }
 
-static void
-ReadBlock(i8 Level, u64 BlockId) {
+static bool
+ReadLevelBlock(i8 Level, u64 BlockId) {
   REQUIRE(Level < Params.NResLevels);
   if ((i8)BlockOffsets.size() <= Level) {
     BlockOffsets.resize(Params.NResLevels);
@@ -1673,15 +1673,20 @@ ReadBlock(i8 Level, u64 BlockId) {
     }
   }
 
-  // TODO: read the actual block
   FSEEK(Fp, BlockOffsets[Level][BlockId], SEEK_SET);
   i32 BlockByte = BlockId == 0 ? BlockOffsets[Level][0] : BlockOffsets[Level][BlockId] - BlockOffsets[Level][BlockId - 1];
-  fread(buf, size, 1, Fp);
+  GrowToAccomodate(&LvlStreams[Level], BlockByte);
+  if (BlockByte != 0)
+    fread(LvlStreams[Level].Stream.Data, BlockByte, 1, Fp);
+  else
+    return false;
   fclose(Fp);
+
+  return true;
 }
 
 INLINE static i64
-Decode(bitstream* Bs, i64 M) {
+DecodeNode(bitstream* Bs, i64 M) {
   return ReadVarByte(Bs);
 }
 
@@ -1691,7 +1696,7 @@ DecodeResolutionBlock(bitstream* Bs, block* Block) {
   Block->Nodes[1] = ReadVarByte(Bs);
   for (i64 I = 2; I < (i64)Block->Nodes.size(); I += 2) {
     i64 J = I / 2;
-    Block->Nodes[I    ] = Decode(Bs, Block->Nodes[J]);
+    Block->Nodes[I    ] = DecodeNode(Bs, Block->Nodes[J]);
     Block->Nodes[I + 1] = Block->Nodes[J] - Block->Nodes[I];
   }
 }
@@ -1722,9 +1727,64 @@ DecodeLevelBlock(bitstream* Bs, i8 Level, u64 BlockIdx, const block& ResBlock, b
     u64 L = INDEX_IN_BLOCK(J);
     REQUIRE(L > 0);
     u64 ParentBlockIdx = BLOCK_INDEX(J);
-    Block.Nodes[I    ] = Decode(Bs, BlocksOnLvl[ParentBlockIdx].Nodes[L]);
+    Block.Nodes[I    ] = DecodeNode(Bs, BlocksOnLvl[ParentBlockIdx].Nodes[L]);
     Block.Nodes[I + 1] = BlocksOnLvl[ParentBlockIdx].Nodes[L] - Block.Nodes[I];
   }
+}
+
+struct priority_block {
+  i8 Level = 0;
+  u64 BlockId = 0;
+  // TODO: maybe add a bounding box and a grid?
+  // TODO: each node has a different bounding box
+};
+
+DynamicHeap<priority_block, float> Heap;
+
+// TODO: we need a formula to go from (level, block idx, node idx in block) -> tree depth
+// TODO: and from tree depth to bounding box
+
+static void
+Refine() {
+  // TODO: take the top item from the heap
+  priority_block TopBlock;
+  bool BlockExists = false;
+  while (!BlockExists) {
+    if (Heap.empty()) break;
+    Heap.top(TopBlock);
+    BlockExists = ReadLevelBlock(TopBlock.Level, TopBlock.BlockId);
+  }
+  if (!BlockExists)
+    return;
+  // TODO: for all nodes in the top block, compute the two blocks that are the children of that
+  DecodeLevelBlock(&LvlStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, ResBlock, &LvlBlocks);
+  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
+  priority_block LeftChild, RightChild;
+  //LeftChild.Level = RightChild.Level = TopBlock.Level;
+  //LeftChild.BlockId = TopBlock.BlockId
+  auto& Nodes = LvlBlocks[TopBlock.Level][TopBlock.BlockId].Nodes;
+  if (TopBlock.Level == -1) { // resolution block
+    FOR (i64, NodeIdx, 0, Nodes.size()) {
+      //LeftChild.Level = 
+      // TODO: need to go from index -> level
+      // TODO: note that the children may already be in the current top block
+    }
+    // TODO: add those two into the heap
+  } else { // just a regular block on some resolution
+    // TODO: figure out the two children blocks
+    // TODO: figure out the errors by accumulating errors from the nodes in the top block
+    // TODO: note that the children may already be in the current top block
+  }
+}
+
+static void
+RefineLeftToRight() {
+  // TODO: just refine the tree from left to right, no priority
+}
+
+static void
+RefineByLevel() {
+  // TODO: refine level by level, and in each level, from block 1 to block n
 }
 
 static void
