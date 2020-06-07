@@ -152,6 +152,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="doctest.h" />
+    <ClInclude Include="heap.h" />
     <ClInclude Include="sexpr.h" />
     <ClInclude Include="yocto_math.h" />
   </ItemGroup>

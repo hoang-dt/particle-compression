@@ -13,6 +13,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #include "doctest.h"
+#include "heap.h"
 #define SEXPR_IMPLEMENTATION
 #include "sexpr.h"
 #include "yocto_math.h"
@@ -1479,7 +1480,14 @@ static params Params;
 static bitstream ResStream; // storing the resolution nodes
 static std::vector<bitstream> LvlStreams; // [level] -> bitstream (of the current block)
 static std::vector<u64> CurrBlocks; // [level] -> current block id
-static std::vector<std::vector<i32>> BlockBytes;
+static std::vector<std::vector<i32>> BlockBytes; // [level] -> [block id] -> block size
+static std::vector<std::vector<i32>> BlockOffsets; // [level] -> [block id] -> block offset
+struct block {
+  std::vector<i64> Nodes;
+};
+static block ResBlock;
+using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
+static block_table LvlBlocks;
 
 #define BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
 #define INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
@@ -1613,13 +1621,64 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fclose(Fp);
 }
 
-struct block {
-  std::vector<i64> Nodes;
-};
+template <typename t> INLINE void WritePOD(FILE* Fp, const t Var) { fwrite(&Var, sizeof(Var), 1, Fp); }
+template <typename t> INLINE void WriteBuffer(FILE* Fp, const buffer& Buf) { fwrite(Buf.Data, Size(Buf), 1, Fp); }
+template <typename t> INLINE void WriteBuffer(FILE* Fp, const buffer& Buf, i64 Sz) { fwrite(Buf.Data, Sz, 1, Fp); }
+template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer* Buf) { fread(Buf->Data, Size(*Buf), 1, Fp); }
+template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer* Buf, i64 Sz) { fread(Buf->Data, Sz, 1, Fp); }
+template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer_t<t>* Buf) { fread(Buf->Data, Bytes(*Buf), 1, Fp); }
+template <typename t> INLINE void ReadPOD(FILE* Fp, t* Val) { fread(Val, sizeof(t), 1, Fp); }
+template <typename t> INLINE void
+ReadBackwardPOD(FILE* Fp, t* Val) {
+  auto Where = FTELL(Fp);
+  FSEEK(Fp, Where -= sizeof(t), SEEK_SET);
+  fread(Val, sizeof(t), 1, Fp);
+  FSEEK(Fp, Where, SEEK_SET);
+}
+INLINE void
+ReadBackwardBuffer(FILE* Fp, buffer* Buf) {
+  auto Where = FTELL(Fp);
+  FSEEK(Fp, Where -= Size(*Buf), SEEK_SET);
+  fread(Buf->Data, Size(*Buf), 1, Fp);
+  FSEEK(Fp, Where, SEEK_SET);
+}
+INLINE void
+ReadBackwardBuffer(FILE* Fp, buffer* Buf, i64 Sz) {
+  assert(Sz <= Size(*Buf));
+  auto Where = FTELL(Fp);
+  FSEEK(Fp, Where -= Sz, SEEK_SET);
+  fread(Buf->Data, Sz, 1, Fp);
+  FSEEK(Fp, Where, SEEK_SET);
+}
 
-block ResBlock;
-using block_table = std::vector<std::vector<block>>;
-block_table LvlBlocks;
+static void
+ReadBlock(i8 Level, u64 BlockId) {
+  REQUIRE(Level < Params.NResLevels);
+  if ((i8)BlockOffsets.size() <= Level) {
+    BlockOffsets.resize(Params.NResLevels);
+    LvlStreams.resize(Params.NResLevels);
+  }
+  FILE* Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
+  if (BlockOffsets[Level].empty()) {
+    // read the block bytes
+    FSEEK(Fp, 0, SEEK_END);
+    i64 NBlocks = 0;
+    ReadBackwardPOD(Fp, &NBlocks);
+    REQUIRE(BlockId < NBlocks);
+    BlockOffsets[Level].resize(NBlocks);
+    buffer Buf((byte*)&BlockOffsets[Level][0], (i64)sizeof(BlockOffsets[Level][0]) * NBlocks);
+    ReadBackwardBuffer(Fp, &Buf);
+    FOR (i64, I, 1, NBlocks) {
+      BlockOffsets[Level][I] += BlockOffsets[Level][I - 1];
+    }
+  }
+
+  // TODO: read the actual block
+  FSEEK(Fp, BlockOffsets[Level][BlockId], SEEK_SET);
+  i32 BlockByte = BlockId == 0 ? BlockOffsets[Level][0] : BlockOffsets[Level][BlockId] - BlockOffsets[Level][BlockId - 1];
+  fread(buf, size, 1, Fp);
+  fclose(Fp);
+}
 
 INLINE static i64
 Decode(bitstream* Bs, i64 M) {
@@ -1704,7 +1763,7 @@ FlushBlocksToFiles() {
     FOR(u64, BlockIdx, 0, BlockBytes[L].size()) {
       fwrite(&BlockBytes[L][BlockIdx], sizeof(i32), 1, Fp);
     }
-    u64 NBlocks = BlockBytes[L].size();
+    i64 NBlocks = BlockBytes[L].size();
     fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
     fclose(Fp);
   }
@@ -1925,13 +1984,13 @@ main(int Argc, cstr* Argv) {
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
-    cstr Name = Params.Name;
-    if (!OptVal(Argc, Argv, "--name", &Name)) EXIT_ERROR("missing --name");
+    if (!OptVal(Argc, Argv, "--name", &Params.OutFile)) EXIT_ERROR("missing --name");
+    sprintf(Params.Name, "%s", Params.OutFile);
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NResLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR("missing --height");
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
-    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+//    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
     Particles = ReadXYZ(Params.InFile);
     Params.NParticles = Particles.size();
