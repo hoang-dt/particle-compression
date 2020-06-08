@@ -1745,9 +1745,12 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, const block& ResBlock, block_
 struct block_priority {
   i8 Level = 0;
   u64 BlockId = 0;
-  // TODO: maybe add a bounding box and a grid?
-  // TODO: each node has a different bounding box
 };
+INLINE bool operator<(const block_priority& Lhs,  const block_priority& Rhs) { 
+  if (Lhs.Level == Rhs.Level)
+    return Lhs.BlockId < Rhs.BlockId;
+  return Lhs.Level < Rhs.Level;
+}
 
 DynamicHeap<block_priority, float> Heap;
 
