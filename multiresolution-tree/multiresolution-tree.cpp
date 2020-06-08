@@ -1755,14 +1755,17 @@ INLINE bool operator<(const block_priority& Lhs,  const block_priority& Rhs) {
 DynamicHeap<block_priority, float> Heap;
 
 // TODO: and from tree depth to bounding box
-#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
+#define LEVEL_TO_HEIGHT(Level) ((Params.NResLevels - (Level)) - ((Level) == 0))
 //#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
 #define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
 
-INLINE float
+INLINE double
 NodeVolume(i8 Level, i64 NodeIdx) {
-  // TODO
-  return 0;
+  vec3f V3 = Params.BBox.Max - Params.BBox.Min;
+  float V = V3.x * V3.y * V3.z;
+  int H = NODE_TO_HEIGHT(Level, NodeIdx);
+  double S = ldexp(V, -H);
+  return S;
 }
 
 /* Read the next most important block and add its two children (if existed) to the heap
