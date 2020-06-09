@@ -1759,9 +1759,10 @@ struct block_data {
   u64 BlockId = 0;
 };
 INLINE bool operator<(const block_data& Lhs,  const block_data& Rhs) {
-  if (Lhs.Level == Rhs.Level)
-    return Lhs.BlockId < Rhs.BlockId;
-  return Lhs.Level < Rhs.Level;
+  bool LvlLess   = Lhs.Level < Rhs.Level;
+  bool LvlEq     = Lhs.Level == Rhs.Level;
+  bool BlockLess = Lhs.BlockId < Rhs.BlockId;
+  return LvlLess || (LvlEq && BlockLess);
 }
 
 struct block_priority {
@@ -1770,9 +1771,12 @@ struct block_priority {
   u64 BlockId = 0;
 };
 INLINE bool operator<(const block_priority& Lhs, const block_priority& Rhs) {
-  if (Lhs.Level == Rhs.Level)
-    return Lhs.Error < Rhs.Error;
-  return Lhs.Level < Rhs.Level;
+  bool LvlLess   = Lhs.Level < Rhs.Level;
+  bool LvlEq     = Lhs.Level == Rhs.Level;
+  bool ErrorLess = Lhs.Error < Rhs.Error;
+  bool ErrorEq   = Lhs.Error == Rhs.Error;
+  bool BlockLess = Lhs.BlockId < Rhs.BlockId;
+  return LvlLess || (LvlEq && (ErrorLess || (ErrorEq && BlockLess)));
 }
 
 DynamicHeap<block_data, block_priority> Heap;
@@ -1808,7 +1812,6 @@ Refine() {
   if (!BlockExists)
     return false;
 
-  // TODO: what if this block is the res block
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
   else
@@ -1876,7 +1879,6 @@ RefineByLevel() {
   if (!BlockExists)
     return false;
 
-  // TODO: what if this block is the res block
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
   else
@@ -1885,7 +1887,6 @@ RefineByLevel() {
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
   auto& Nodes = Blocks[TopBlock.Level][TopBlock.BlockId].Nodes;
-  u64 GlobalFirstNodeIdx = TopBlock.BlockId * (1ll << Params.BlockBits);
   if (TopBlock.Level == Params.NLevels) { // resolution block
     int NNodes = Params.NLevels * 2 - 1;
     REQUIRE(NNodes == Nodes.size());
@@ -1905,7 +1906,7 @@ RefineByLevel() {
     RightChild.BlockId = TopBlock.BlockId * 2 + 2;
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
-      u64 GlobalNodeIdx = GlobalFirstNodeIdx + NodeIdx;
+      u64 GlobalNodeIdx = TopBlock.BlockId * (1ll << Params.BlockBits) + NodeIdx;
       u64 ChildrenBlockIdx = NODE_TO_BLOCK_INDEX(GlobalNodeIdx * 2);
       if (ChildrenBlockIdx == TopBlock.BlockId) continue;
       assert(ChildrenBlockIdx == LeftChild.BlockId || ChildrenBlockIdx == RightChild.BlockId);
@@ -1949,7 +1950,7 @@ FlushBlocksToFiles() {
   fclose(Fp);
 
   /* write the level data */
-  REQUIRE(BlockStreams.size() == Params.NLevels);
+  REQUIRE(BlockStreams.size() == Params.NLevels + 1);
   FOR(i8, L, 0, Params.NLevels) {
     WriteBlock(L, CurrBlocks[L]);
     // write an index consisting of all blocks in the file
@@ -2202,7 +2203,7 @@ main(int Argc, cstr* Argv) {
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
     //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
-    BlockStreams.resize(Params.NLevels);
+    BlockStreams.resize(Params.NLevels + 1);
     CurrBlocks.resize(Params.NLevels, 0);
     BlockBytes.resize(Params.NLevels);
     EncodeRoot(Particles.size());
@@ -2220,6 +2221,9 @@ main(int Argc, cstr* Argv) {
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     ReadMetaFile(Params.InFile);
+    Heap.insert(block_data{ .Level = Params.NLevels, .BlockId = 0 },
+                block_priority{ .Level = Params.NLevels, .Error = 0, .BlockId = 0 });
+    RefineByLevel();
   }
 
   //RandomLevels(P, &Particles);
