@@ -2000,6 +2000,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Height = u8(Q.Height + 1),
                          .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
+    printf("%lld\n", Mid - Q.Begin);
+    printf("%lld\n", Q.End - Mid);
     if (Q.Height + 1 < Params.Height && Mid < Q.End) {
       Queue.push(q_item{ .Begin = Mid,
                          .End = Q.End,
