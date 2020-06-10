@@ -1119,8 +1119,11 @@ bool
 OptVal(int NArgs, cstr* Args, cstr Opt, i8* Val) {
   int V = *Val;
   for (int I = 0; I + 1 < NArgs; ++I) {
-    if (strncmp(Args[I], Opt, 32) == 0)
-      return ToInt(Args[I + 1], &V);
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      bool Result = ToInt(Args[I + 1], &V);
+      *Val = V;
+      return Result;
+    }
   }
   *Val = V;
   return false;
@@ -1177,6 +1180,20 @@ OptVal(int NArgs, cstr* Args, cstr Opt, vec2i* Val) {
         ToInt(Args[I + 2], &Val->y);
     }
   }
+  return false;
+}
+
+bool
+OptVal(int NArgs, cstr* Args, cstr Opt, f32* Val) {
+  f64 DVal = 0;
+  for (int I = 0; I + 1 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      bool Result = ToDouble(Args[I + 1], &DVal);
+      *Val = (f32)DVal;
+      return Result;
+    }
+  }
+  *Val = (f32)DVal;
   return false;
 }
 
@@ -1466,7 +1483,7 @@ struct params {
   cstr OutFile;
   int BlockBits = 15; // every 2^15 voxels become one block
   i8 NLevels = 3;
-  u8 Height; // height of the full tree
+  u8 Height = 255; // height of the full tree
   action Action = action::Encode;
   i64 NParticles;
   float Accuracy = 0;
@@ -1940,17 +1957,18 @@ RefineByLevel() {
 static void
 WriteBlock(i8 Level, u64 BlockIdx) {
   bitstream* Bs = &BlockStreams[Level];
-  Flush(Bs);
   if (Size(*Bs) > 0) {
+    Flush(Bs);
     FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
     fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
     fclose(Fp);
+
+    // book-keeping
+    if (BlockBytes[Level].size() <= BlockIdx)
+      BlockBytes[Level].resize(BlockIdx * 3 / 2 + 1);
+    BlockBytes[Level][BlockIdx] = Size(*Bs);
+    Rewind(Bs);
   }
-  // book-keeping
-  if (BlockBytes[Level].size() <= BlockIdx)
-    BlockBytes[Level].resize(BlockBytes[Level].size() * 3 / 2 + 1);
-  BlockBytes[Level][BlockIdx] = Size(*Bs);
-  Rewind(Bs);
 }
 
 /* Write each level to a different file */
@@ -1985,7 +2003,7 @@ INLINE static void
 EncodeNode(i8 Level, i64 LvlIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(LvlIdx);
-  printf("level = %d block = %llu\n", Level, BlockIdx);
+  //printf("level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx > CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
@@ -2053,6 +2071,7 @@ static void
 BuildTreeInner(q_item Q, float Accuracy) {
   std::queue<q_item> Queue;
   Queue.push(Q);
+  vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   while (!Queue.empty()) {
     Q = Queue.front();
     Queue.pop();
@@ -2060,15 +2079,14 @@ BuildTreeInner(q_item Q, float Accuracy) {
     i64 N = Q.End - Q.Begin;
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
-    float W = (Params.BBox.Max[Q.D] - Params.BBox.Min[Q.D]) / Params.Dims3[Q.D];
-    vec3f Error3 = (W * vec3f(Q.Grid.Dims3)) / f64(N);
+    vec3f Error3 = (W3 * Q.Grid.Dims3) / f64(N);
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
     //if (N <= 1) continue;
     if (Q.RSplit) { // resolution split
-      auto RPred = [W, &Q](const particle& P) {
-        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W));
+      auto RPred = [W3, &Q](const particle& P) {
+        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
         Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
@@ -2077,7 +2095,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
     } else { // spatial split
       float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
-      float M = Params.BBox.Min[Q.D] + W * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
+      float M = Params.BBox.Min[Q.D] + W3[Q.D] * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
       auto SPred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
     }
@@ -2086,6 +2104,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
     } else {
       EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
     }
+    if (Mid == Q.Begin)
+      int SS = 0;
     //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
     if (Q.Height + 1 < Params.Height && Q.Begin < Mid) {
       Queue.push(q_item{ .Begin = Q.Begin,
@@ -2100,8 +2120,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
                          .Height = u8(Q.Height + 1),
                          .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
     }
-    printf("%lld\n", Mid - Q.Begin);
-    printf("%lld\n", Q.End - Mid);
+    //printf("%lld\n", Mid - Q.Begin);
+    //printf("%lld\n", Q.End - Mid);
     if (Q.Height + 1 < Params.Height && Mid < Q.End) {
       Queue.push(q_item{ .Begin = Mid,
                          .End = Q.End,
@@ -2201,7 +2221,10 @@ main(int Argc, cstr* Argv) {
     sprintf(Params.Name, "%s", Params.OutFile);
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
-    if (!OptVal(Argc, Argv, "--height", &Params.Height)) EXIT_ERROR("missing --height");
+    if (!OptVal(Argc, Argv, "--height", &Params.Height)) {
+      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
+        EXIT_ERROR("missing --height");
+    }
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
@@ -2212,7 +2235,6 @@ main(int Argc, cstr* Argv) {
     auto LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0);
     Params.Dims3 = vec3i(1 << LogDims3.x, 1 << LogDims3.y, 1 << LogDims3.z);
     grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
-    float Accuracy = 1.0f;
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(LogDims3));
     //Print(NResLevels - 1, 0, 0, 0, 0, Particles.size());
@@ -2229,7 +2251,7 @@ main(int Argc, cstr* Argv) {
                            .Grid = Grid,
                            .Level = i8(Params.NLevels - 1),
                            .Height = 1,
-                           .RSplit = Params.NLevels > 1 }, Accuracy);
+                           .RSplit = Params.NLevels > 1 }, Params.Accuracy);
     FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
