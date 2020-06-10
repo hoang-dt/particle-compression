@@ -1659,7 +1659,7 @@ ReadResBlock() {
   auto Size = FTELL(Fp);
   FSEEK(Fp, 0, SEEK_SET);
   GrowToAccomodate(&BlockStreams[Params.NLevels], Size);
-  fread(&BlockStreams[Params.NLevels].Stream.Data, Size, 1, Fp);
+  fread(BlockStreams[Params.NLevels].Stream.Data, Size, 1, Fp);
   fclose(Fp);
   return true;
 }
@@ -2221,6 +2221,9 @@ main(int Argc, cstr* Argv) {
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     ReadMetaFile(Params.InFile);
+    BlockStreams.resize(Params.NLevels + 1);
+    Blocks.resize(Params.NLevels + 1);
+    Blocks[Params.NLevels].resize(1);
     Heap.insert(block_data{ .Level = Params.NLevels, .BlockId = 0 },
                 block_priority{ .Level = Params.NLevels, .Error = 0, .BlockId = 0 });
     RefineByLevel();
