@@ -1671,9 +1671,13 @@ ReadBlock(i8 Level, u64 BlockId) {
     BlockOffsets.resize(Params.NLevels);
     BlockStreams.resize(Params.NLevels);
   }
-  FILE* Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
+
+  FILE* Fp = nullptr;
   if (BlockOffsets[Level].empty()) {
     // read the block bytes
+    Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
+    if (!Fp)
+      return false;
     FSEEK(Fp, 0, SEEK_END);
     i64 NBlocks = 0;
     ReadBackwardPOD(Fp, &NBlocks);
@@ -1688,7 +1692,9 @@ ReadBlock(i8 Level, u64 BlockId) {
   if (BlockId >= BlockOffsets[Level].size())
     return false;
 
-  FSEEK(Fp, BlockOffsets[Level][BlockId], SEEK_SET);
+  if (!Fp) 
+    Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
+  FSEEK(Fp, BlockId == 0 ? 0 : BlockOffsets[Level][BlockId - 1], SEEK_SET);
   i64 BlockByte = BlockId == 0 ? BlockOffsets[Level][0] : BlockOffsets[Level][BlockId] - BlockOffsets[Level][BlockId - 1];
   GrowToAccomodate(&BlockStreams[Level], BlockByte);
   if (BlockByte != 0)
@@ -1719,6 +1725,7 @@ DecodeResBlock(bitstream* Bs, block* Block) {
     i64 M = Block->Nodes[RES_PARENT(I)];
     Block->Nodes[I    ] = DecodeNode(Bs, M);
     Block->Nodes[I - 1] = M - Block->Nodes[I];
+    printf("%lld %lld\n", Block->Nodes[I-1], Block->Nodes[I]);
     assert(RES_PARENT(I) == RES_PARENT(I - 1));
   }
 }
@@ -1751,6 +1758,7 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     if (M > 0) {
       Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
       Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
+      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
     }
   }
 }
