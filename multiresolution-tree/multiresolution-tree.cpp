@@ -1696,7 +1696,7 @@ ReadBlock(i8 Level, u64 BlockId) {
     if (!Fp)
       return false;
     FSEEK(Fp, 0, SEEK_END);
-    i64 NBlocks = 0;
+    u64 NBlocks = 0;
     ReadBackwardPOD(Fp, &NBlocks);
     REQUIRE(BlockId < NBlocks);
     BlockOffsets[Level].resize(NBlocks);
@@ -1988,10 +1988,10 @@ FlushBlocksToFiles() {
     // TODO: compress the index?
     // TODO: if too many blocks have 0 bytes, maybe we can write a sparse index
     FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, L), "ab");
-    FOR(u64, BlockIdx, 0, BlockBytes[L].size()) {
+    u64 NBlocks = CurrBlocks[L] + 1;
+    FOR(u64, BlockIdx, 0, NBlocks) {
       fwrite(&BlockBytes[L][BlockIdx], sizeof(i64), 1, Fp);
     }
-    i64 NBlocks = BlockBytes[L].size();
     fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
     fclose(Fp);
   }
@@ -2083,6 +2083,9 @@ BuildTreeInner(q_item Q, float Accuracy) {
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
+    if (Q.Level == 0) {
+      printf("%f %f %f %zu\n", Error3.x, Error3.y, Error3.z, Queue.size());
+    }
     //if (N <= 1) continue;
     if (Q.RSplit) { // resolution split
       auto RPred = [W3, &Q](const particle& P) {
