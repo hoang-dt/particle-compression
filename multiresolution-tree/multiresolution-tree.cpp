@@ -1724,6 +1724,35 @@ ReadBlock(i8 Level, u64 BlockId) {
   return true;
 }
 
+/* Bit set stuffs */
+using word = u32;
+enum { WORD_SIZE = sizeof(word) * 8 };
+struct bitset { word* Words; i64 NWords; };
+
+INLINE static i64 BIndex(i64 B) { return B / WORD_SIZE; }
+INLINE static i64 BOffset(i64 B) { return B % WORD_SIZE; }
+
+INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
+INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
+INLINE static bool GetBit(bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
+INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, sizeof(*BitSet->Words) * BitSet->NWords); }
+INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 1, sizeof(*BitSet->Words) * BitSet->NWords); }
+
+static bitset*
+BitSetAlloc(i64 NBits) {
+  bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
+  BitSet->NWords = (NBits / WORD_SIZE + 1);
+  BitSet->Words = (word*)malloc(sizeof(*BitSet->Words) * BitSet->NWords);
+  ClearAll(BitSet);
+  return BitSet;
+}
+
+static void
+BitSetFree(bitset* BitSet) {
+  free(BitSet->Words);
+  free(BitSet);
+}
+
 INLINE static i64
 DecodeNode(bitstream* Bs, i64 M) {
   // TODO: use binomial coding
@@ -1749,6 +1778,36 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 }
 
 #define RES_LVL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
+
+static void
+DecodeRefinementBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
+  const block& ResBlock = (*AllBlocks)[Params.NLevels][0];
+  InitRead(Bs, Bs->Stream);
+  REQUIRE(AllBlocks->size() > Level);
+  auto& Blocks = (*AllBlocks)[Level];
+  if (Blocks.size() <= BlockIdx) {
+    Blocks.resize(BlockIdx * 3 / 2 + 1);
+  }
+  block& Block = (*AllBlocks)[Level][BlockIdx];
+  i64 NNodes = 1ll << Params.BlockBits;
+  Block.Nodes.resize(NNodes, 0);
+  u64 FirstNodeIdx = MAX(BlockIdx << Params.BlockBits, 2); // NOTE: node index always starts at 2
+  u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
+  if (BlockIdx == 0) { // the parent block is the res block
+    REQUIRE(Level < Params.NLevels);
+    Block.Nodes[1] = ResBlock.Nodes[RES_LVL_TO_NODE(Level)];
+  }
+  for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
+    u64 I = NODE_INDEX_IN_BLOCK(K);
+    u64 J = K / 2; // (global) parent index
+    i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
+    if (M > 0) {
+      Block.Nodes[I    ] = Read(Bs); // left child
+      Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
+      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
+    }
+  }
+}
 
 // TODO: be careful not to confuse blocks of two nodes (left and right children) vs blocks of one nodes (only left child)
 static void
@@ -1783,6 +1842,7 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
 
 struct block_data {
   i8 Level = 0;
+  u8 Height = 0;
   u64 BlockId = 0;
 };
 INLINE bool operator<(const block_data& Lhs,  const block_data& Rhs) {
@@ -1911,8 +1971,10 @@ RefineByLevel() {
   printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
-  else
+  else if (TopBlock.Height <= Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z)
     DecodeBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
+  else // refinement block
+    DecodeRefinementBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
@@ -1928,6 +1990,7 @@ RefineByLevel() {
       // NOTE: we have only one child instead of two (BlockBits >= 1)
       LeftChild.Level = Level;
       LeftChild.BlockId = 0;
+      LeftChild.Height = TopBlock.Height + 1;
       LeftError = 1;
       Heap.insert(LeftChild, block_priority{ .Level = LeftChild.Level, .Error = LeftError, .BlockId = LeftChild.BlockId });
     }
@@ -1935,6 +1998,7 @@ RefineByLevel() {
     LeftChild.Level = RightChild.Level = TopBlock.Level;
     LeftChild.BlockId = TopBlock.BlockId * 2;
     RightChild.BlockId = TopBlock.BlockId * 2 + 1;
+    LeftChild.Height = RightChild.Height = TopBlock.Height + 1;
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
       u64 GlobalNodeIdx = TopBlock.BlockId * (1ll << Params.BlockBits) + NodeIdx;
