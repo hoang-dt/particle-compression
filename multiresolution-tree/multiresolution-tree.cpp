@@ -1483,7 +1483,7 @@ struct params {
   cstr OutFile;
   int BlockBits = 18; // every 2^15 voxels become one block
   i8 NLevels = 3;
-  u8 Height = 255; // height of the full tree
+  u8 MaxHeight = 255; // height of the full tree
   action Action = action::Encode;
   i64 NParticles;
   float Accuracy = 0;
@@ -1499,9 +1499,7 @@ struct params {
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
-static std::vector<bitstream> RBlockStreams; // [level] -> bitstream (of the current block)
 static std::vector<u64> CurrBlocks; // [level] -> current block id
-static std::vector<u64> CurrRBlocks; // [level] -> current r-block id
 static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> block size
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
@@ -1636,7 +1634,7 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (resolutions %d)\n", Params.NLevels);
   fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
   fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
-  fprintf(Fp, "    (height %d)\n", Params.Height);
+  fprintf(Fp, "    (height %d)\n", Params.MaxHeight);
   fprintf(Fp, "  )\n"); // end format)
   fprintf(Fp, ")\n"); // end )
   fclose(Fp);
@@ -1957,6 +1955,25 @@ RefineByLevel() {
   return true;
 }
 
+/* resolution block */
+static void
+WriteRBlock(i8 Level, u64 BlockIdx) {
+  bitstream* Bs = &BlockStreams[Level];
+  if (Size(*Bs) > 0) {
+    Flush(Bs);
+    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
+    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
+    fclose(Fp);
+
+    // book-keeping
+    if (BlockBytes[Level].size() <= BlockIdx)
+      BlockBytes[Level].resize(BlockIdx * 3 / 2 + 1);
+    BlockBytes[Level][BlockIdx] = Size(*Bs);
+    Rewind(Bs);
+  }
+}
+
+/* tree block (including refinement block) */
 static void
 WriteBlock(i8 Level, u64 BlockIdx) {
   bitstream* Bs = &BlockStreams[Level];
@@ -2069,43 +2086,68 @@ struct Range {
   u64 From, To;
 };
 
-std::vector<bbox> BBoxes; // one bounding box for each particle
-std::vector<Range> Ranges; // [level] -> from, to
-
+//std::vector<bbox> BBoxes; // one bounding box for each particle
+//std::vector<Range> Ranges; // [level] -> from, to
+//std::vector<u64> NodeIdxes; // one node index for each particle
 
 // TODO: compute the total height using the accuracy and the global grid in the beginning
 // TODO: write the refinement block and flush them to disk
+//static void
+//BuildTreeFineLevels() {
+//  int ParticlesPerBlock = 2 * (1 << Params.BlockBits); // every refinement block is twice the size of the tree block
+//  int BlockBytes = ParticlesPerBlock / 8; // one bit per particle
+//  FOR (i8, L, 0, Params.NLevels) {
+//  FOR (u64, I, Ranges[L].From, Ranges[L].To) {
+//    i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
+//    vec3f P3 = Particles[I].Pos;
+//    bbox BBox = BBoxes[I];
+//    u8 H = 0;
+//    u64 BlockIdx = I / ParticlesPerBlock;
+//    while (H < Params.Height) {
+//      if (RBlockStreams.size() <= H) {
+//        RBlockStreams.resize(H * 3 / 2 + 1);
+//      }
+//      bitstream* Bs = &RBlockStreams[H];
+//      GrowToAccomodate(Bs, BlockBytes);
+//      if (BlockIdx != CurrRBlocks[H]) {
+//        // TODO: write the block to disk here
+//        Rewind(Bs);
+//        CurrRBlocks[H] = BlockIdx;
+//      }
+//      float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
+//      bool Left = (P3[D] - BBox.Min[D]) < Half;
+//      Write(Bs, Left);
+//      BBox.Max[D] = BBox.Max[D] - Half * Left;
+//      BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
+//      D = (D + 1) % 3;
+//      ++H;
+//    }
+//  }}
+//}
+
+/* Encode particle refinement bits */
 static void
-BuildTreeFineLevels() {
-  int ParticlesPerBlock = 2 * (1 << Params.BlockBits); // every refinement block is twice the size of the tree block
-  int BlockBytes = ParticlesPerBlock / 8; // one bit per particle
-  FOR (i8, L, 0, Params.NLevels) {
-  FOR (u64, I, Ranges[L].From, Ranges[L].To) {
-    i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
-    vec3f P3 = Particles[I].Pos;
-    bbox BBox = BBoxes[I];
-    u8 H = 0;
-    u64 BlockIdx = I / ParticlesPerBlock;
-    while (H < Params.Height) {
-      if (RBlockStreams.size() <= H) {
-        RBlockStreams.resize(H * 3 / 2 + 1);
-      }
-      bitstream* Bs = &RBlockStreams[H];
-      GrowToAccomodate(Bs, BlockBytes);
-      if (BlockIdx != CurrRBlocks[H]) {
-        // TODO: write the block to disk here
-        Rewind(Bs);
-        CurrRBlocks[H] = BlockIdx;
-      }
-      float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
-      bool Left = (P3[D] - BBox.Min[D]) < Half;
-      Write(Bs, Left);
-      BBox.Max[D] = BBox.Max[D] - Half * Left;
-      BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
-      D = (D + 1) % 3;
-      ++H;
+EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
+  i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
+  vec3f P3 = Pos;
+  u8 H = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
+  u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx); // TODO: may need a different formula
+  while (H < Params.MaxHeight) {
+    bitstream* Bs = &BlockStreams[Level];
+    if (BlockIdx != CurrBlocks[Level]) {
+      WriteBlock(Level, BlockIdx);
+      Rewind(Bs);
+      CurrBlocks[Level] = BlockIdx;
     }
-  }}
+    GrowToAccomodate(Bs, 1);
+    float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
+    bool Left = (P3[D] - BBox.Min[D]) < Half;
+    Write(Bs, Left);
+    BBox.Max[D] = BBox.Max[D] - Half * Left;
+    BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
+    D = (D + 1) % 3;
+    ++H;
+  }
 }
 
 // TODO: after blocking, we have a tree of blocks
@@ -2122,7 +2164,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
   while (!Queue.empty()) {
     Q = Queue.front();
     Queue.pop();
-    REQUIRE(Q.Height <= Params.Height);
+    REQUIRE(Q.Height <= Params.MaxHeight);
     i64 N = Q.End - Q.Begin;
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
@@ -2148,12 +2190,6 @@ BuildTreeInner(q_item Q, float Accuracy) {
     }
     if (Q.RSplit) {
       EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
-      Ranges[Q.Level].From = Mid;
-      Ranges[Q.Level].To   = Q.End;
-      if (Q.Level == 1) {
-        Ranges[0].From = Q.Begin;
-        Ranges[0].To = Q.End;
-      }
     } else {
       EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
       printf("%lld\n", Mid - Q.Begin);
@@ -2162,11 +2198,13 @@ BuildTreeInner(q_item Q, float Accuracy) {
     if (Q.Height == GridHeight) { // last height
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
-      BBoxes[Q.Begin].Min = Params.BBox.Min + Q.Grid.From3 * W3;
-      BBoxes[Q.Begin].Max = BBoxes[Q.Begin].Min + Q.Grid.Dims3 * W3;
+      bbox BBox;
+      BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
+      BBox.Max = BBox.Min + Q.Grid.Dims3 * W3;
+      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.End - Q.Begin].Pos, BBox);
     } else {
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
-      if (Q.Height + 1 < (Params.Height) && Q.Begin < Mid) {
+      if (Q.Height + 1 < (Params.MaxHeight) && Q.Begin < Mid) {
         Queue.push(q_item{ .Begin = Q.Begin,
                            .End = Mid,
                            .TreeIdx = Q.TreeIdx * 2,
@@ -2179,7 +2217,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                            .Height = u8(Q.Height + 1),
                            .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
       }
-      if (Q.Height + 1 < (Params.Height) && Mid < Q.End) {
+      if (Q.Height + 1 < (Params.MaxHeight) && Mid < Q.End) {
         Queue.push(q_item{ .Begin = Mid,
                            .End = Q.End,
                            .TreeIdx = Q.TreeIdx * 2 + 1,
@@ -2279,9 +2317,9 @@ main(int Argc, cstr* Argv) {
     sprintf(Params.Name, "%s", Params.OutFile);
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
-    if (!OptVal(Argc, Argv, "--height", &Params.Height)) {
+    if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
-        EXIT_ERROR("missing --height");
+        EXIT_ERROR("missing --height and --accuracy");
     }
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
@@ -2299,9 +2337,15 @@ main(int Argc, cstr* Argv) {
     BlockStreams.resize(Params.NLevels + 1);
     CurrBlocks.resize(Params.NLevels, 0);
     BlockBytes.resize(Params.NLevels);
-    Ranges.resize(Params.NLevels);
-    BBoxes.resize(Params.NParticles);
     EncodeRoot(Particles.size());
+    /* compute the maximum height based on the accuracy */
+    if (Params.MaxHeight == 255) {
+      Params.MaxHeight = 0;
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+      while (W3.x > Params.Accuracy) { ++Params.MaxHeight; W3.x *= 0.5; }
+      while (W3.y > Params.Accuracy) { ++Params.MaxHeight; W3.y *= 0.5; }
+      while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
+    }
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
                            .TreeIdx = 1,
