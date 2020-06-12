@@ -1481,7 +1481,7 @@ struct params {
   int NDims = 3;
   cstr InFile;
   cstr OutFile;
-  int BlockBits = 15; // every 2^15 voxels become one block
+  int BlockBits = 18; // every 2^15 voxels become one block
   i8 NLevels = 3;
   u8 Height = 255; // height of the full tree
   action Action = action::Encode;
@@ -1499,7 +1499,9 @@ struct params {
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
+static std::vector<bitstream> RBlockStreams; // [level] -> bitstream (of the current block)
 static std::vector<u64> CurrBlocks; // [level] -> current block id
+static std::vector<u64> CurrRBlocks; // [level] -> current r-block id
 static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> block size
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
@@ -2070,22 +2072,38 @@ struct Range {
 std::vector<bbox> BBoxes; // one bounding box for each particle
 std::vector<Range> Ranges; // [level] -> from, to
 
+
+// TODO: compute the total height using the accuracy and the global grid in the beginning
+// TODO: write the refinement block and flush them to disk
 static void
-BuildTreeFineLevels(u8 Height) {
+BuildTreeFineLevels() {
+  int ParticlesPerBlock = 2 * (1 << Params.BlockBits); // every refinement block is twice the size of the tree block
+  int BlockBytes = ParticlesPerBlock / 8; // one bit per particle
   FOR (i8, L, 0, Params.NLevels) {
   FOR (u64, I, Ranges[L].From, Ranges[L].To) {
     i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
     vec3f P3 = Particles[I].Pos;
     bbox BBox = BBoxes[I];
-    // TODO: use the accuracy and track the block
-    FOR (u8, H, 0, Height) {
-      bitstream* Bs; // TODO: initialize and/or rewind
+    u8 H = 0;
+    u64 BlockIdx = I / ParticlesPerBlock;
+    while (H < Params.Height) {
+      if (RBlockStreams.size() <= H) {
+        RBlockStreams.resize(H * 3 / 2 + 1);
+      }
+      bitstream* Bs = &RBlockStreams[H];
+      GrowToAccomodate(Bs, BlockBytes);
+      if (BlockIdx != CurrRBlocks[H]) {
+        // TODO: write the block to disk here
+        Rewind(Bs);
+        CurrRBlocks[H] = BlockIdx;
+      }
       float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
       bool Left = (P3[D] - BBox.Min[D]) < Half;
       Write(Bs, Left);
       BBox.Max[D] = BBox.Max[D] - Half * Left;
       BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
       D = (D + 1) % 3;
+      ++H;
     }
   }}
 }
