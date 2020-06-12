@@ -2072,7 +2072,22 @@ std::vector<Range> Ranges; // [level] -> from, to
 
 static void
 BuildTreeFineLevels(u8 Height) {
-
+  FOR (i8, L, 0, Params.NLevels) {
+  FOR (u64, I, Ranges[L].From, Ranges[L].To) {
+    i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
+    vec3f P3 = Particles[I].Pos;
+    bbox BBox = BBoxes[I];
+    // TODO: use the accuracy and track the block
+    FOR (u8, H, 0, Height) {
+      bitstream* Bs; // TODO: initialize and/or rewind
+      float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
+      bool Left = (P3[D] - BBox.Min[D]) < Half;
+      Write(Bs, Left);
+      BBox.Max[D] = BBox.Max[D] - Half * Left;
+      BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
+      D = (D + 1) % 3;
+    }
+  }}
 }
 
 // TODO: after blocking, we have a tree of blocks
@@ -2129,8 +2144,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
     if (Q.Height == GridHeight) { // last height
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
-      BBoxes[Q.Begin].Min = Q.Grid.From3;
-      BBoxes[Q.Begin].Max = Q.Grid.From3 + Q.Grid.Dims3;
+      BBoxes[Q.Begin].Min = Params.BBox.Min + Q.Grid.From3 * W3;
+      BBoxes[Q.Begin].Max = BBoxes[Q.Begin].Min + Q.Grid.Dims3 * W3;
     } else {
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
       if (Q.Height + 1 < (Params.Height) && Q.Begin < Mid) {
