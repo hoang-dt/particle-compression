@@ -1868,17 +1868,10 @@ INLINE bool operator<(const block_data& Lhs,  const block_data& Rhs) {
 }
 
 struct block_priority {
-  i8 Level = 0;
   f32 Error = 0;
-  u64 BlockId = 0;
 };
 INLINE bool operator<(const block_priority& Lhs, const block_priority& Rhs) {
-  bool LvlLess   = Lhs.Level > Rhs.Level;
-  bool LvlEq     = Lhs.Level == Rhs.Level;
-  bool ErrorLess = Lhs.Error > Rhs.Error;
-  bool ErrorEq   = Lhs.Error == Rhs.Error;
-  bool BlockLess = Lhs.BlockId > Rhs.BlockId;
-  return LvlLess || (LvlEq && (ErrorLess || (ErrorEq && BlockLess)));
+  return Lhs.Error > Rhs.Error;
 }
 
 DynamicHeap<block_data, block_priority> Heap;
@@ -1937,7 +1930,7 @@ Refine() {
       LeftChild.Level = Level;
       LeftChild.BlockId = 0;
       LeftError = NodeVol / Nodes[NodeIdx];
-      Heap.insert(LeftChild, block_priority{ .Level = LeftChild.Level, .Error = LeftError, .BlockId = LeftChild.BlockId });
+      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
     }
   } else { // just a regular block on some resolution
     LeftChild.Level = RightChild.Level = TopBlock.Level;
@@ -1955,9 +1948,9 @@ Refine() {
         RightError += NodeVol / Nodes[NodeIdx];
     }
     if (LeftError > 0)
-      Heap.insert(LeftChild, block_priority{ .Level = LeftChild.Level, .Error = LeftError, .BlockId = LeftChild.BlockId });
+      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
     if (RightError > 0)
-      Heap.insert(RightChild, block_priority{ .Level = RightChild.Level, .Error = RightError, .BlockId = RightChild.BlockId });
+      Heap.insert(RightChild, block_priority{ .Error = RightError });
   }
 
   return true;
@@ -1970,11 +1963,12 @@ RefineLeftToRight() {
 
 static bool
 RefineByLevel() {
-  block_data TopBlock;
+  block_data     TopBlock;
+  block_priority TopPriority;
   bool BlockExists = false;
   while (!BlockExists) {
     if (Heap.empty()) break;
-    Heap.top(TopBlock);
+    Heap.top(TopBlock, TopPriority);
     Heap.pop();
     if (TopBlock.Level == Params.NLevels)
       BlockExists = ReadResBlock();
@@ -1995,26 +1989,34 @@ RefineByLevel() {
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
   auto& Nodes = Blocks[TopBlock.Level][TopBlock.BlockId].Nodes;
-  if (TopBlock.Level == Params.NLevels) { // resolution block
+  if (TopBlock.Level == Params.NLevels) { // resolution block, one child for each non-even node
     int NNodes = Params.NLevels * 2 - 1;
     REQUIRE(NNodes == Nodes.size());
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
       if (NodeIdx + 1 != NNodes && IS_EVEN(NodeIdx))
         continue;
-      int Level = (2 * (Params.NLevels - 1) - (NodeIdx - 1)) / 2;
+      i8 Level = (2 * (Params.NLevels - 1) - (NodeIdx - 1)) / 2;
       // NOTE: we have only one child instead of two (BlockBits >= 1)
-      LeftChild.Level = Level;
-      LeftChild.BlockId = 0;
-      LeftChild.Height = TopBlock.Height + 1;
-      LeftError = 1;
-      Heap.insert(LeftChild, block_priority{ .Level = LeftChild.Level, .Error = LeftError, .BlockId = LeftChild.BlockId });
+      LeftChild  = block_data {
+        .Level   = Level,
+        .Height  = u8(TopBlock.Height + 1),
+        .BlockId = 0
+      };
+      LeftError = 1; // TODO: is this true?
+      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
     }
-  } else { // just a regular block on some resolution
-    LeftChild.Level = RightChild.Level = TopBlock.Level;
-    LeftChild.BlockId = TopBlock.BlockId * 2;
-    RightChild.BlockId = TopBlock.BlockId * 2 + 1;
-    LeftChild.Height = RightChild.Height = TopBlock.Height + 1;
+  } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
+    LeftChild  = block_data {
+      .Level   = TopBlock.Level,
+      .Height  = u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2
+    };
+    RightChild = block_data {
+      .Level   = TopBlock.Level,
+      .Height  = u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2 + 1
+    };
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
       u64 GlobalNodeIdx = TopBlock.BlockId * (1ll << Params.BlockBits) + NodeIdx;
@@ -2027,9 +2029,19 @@ RefineByLevel() {
         RightError = 1;
     }
     if (LeftError > 0)
-      Heap.insert(LeftChild, block_priority{ .Level = LeftChild.Level, .Error = LeftError, .BlockId = LeftChild.BlockId });
+      Heap.insert(LeftChild, block_priority { .Error = LeftError });
     if (RightError > 0)
-      Heap.insert(RightChild, block_priority{ .Level = RightChild.Level, .Error = RightError, .BlockId = RightChild.BlockId });
+      Heap.insert(RightChild, block_priority { .Error = RightError });
+  } else { // leaf level, each block has only one child
+    i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
+    LeftChild  = block_data {
+      .Level   = TopBlock.Level,
+      .Height  = u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId + NBlocksAtLeaf
+    };
+//    LeftError = TopPriority.Error * 0.5f;
+    LeftError = 1;
+    Heap.insert(LeftChild, block_priority { .Error = LeftError });
   }
 
   return true;
@@ -2450,7 +2462,7 @@ main(int Argc, cstr* Argv) {
     Blocks.resize(Params.NLevels + 1);
     Blocks[Params.NLevels].resize(1);
     Heap.insert(block_data{ .Level = Params.NLevels, .BlockId = 0 },
-                block_priority{ .Level = Params.NLevels, .Error = 0, .BlockId = 0 });
+                block_priority{ .Error = 0 });
     bool Continue = true;
     while (Continue) {
       Continue = RefineByLevel();
