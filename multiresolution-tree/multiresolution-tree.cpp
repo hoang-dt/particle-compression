@@ -1492,6 +1492,35 @@ struct params {
   vec3i Dims3;
 };
 
+/* Bit set stuffs */
+using word = u32;
+enum { WORD_SIZE = sizeof(word) * 8 };
+struct bitset { word* Words; i64 NWords; };
+
+INLINE static i64 BIndex(i64 B) { return B / WORD_SIZE; }
+INLINE static i64 BOffset(i64 B) { return B % WORD_SIZE; }
+
+INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
+INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
+INLINE static bool GetBit(const bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
+INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, sizeof(*BitSet->Words) * BitSet->NWords); }
+INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 1, sizeof(*BitSet->Words) * BitSet->NWords); }
+
+static bitset*
+BitSetAlloc(i64 NBits) {
+  bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
+  BitSet->NWords = (NBits / WORD_SIZE + 1);
+  BitSet->Words = (word*)malloc(sizeof(*BitSet->Words) * BitSet->NWords);
+  ClearAll(BitSet);
+  return BitSet;
+}
+
+static void
+BitSetFree(bitset* BitSet) {
+  free(BitSet->Words);
+  free(BitSet);
+}
+
 // TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
 // TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
 //       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
@@ -1503,7 +1532,32 @@ static std::vector<u64> CurrBlocks; // [level] -> current block id
 static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> block size
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
-  std::vector<i64> Nodes;
+  std::vector<i64> Nodes; // used when level <= logdims3.x + logdim3s.y + logdims3.z
+  bitset BitSet; // used when level < logdims3.x + logdims3.y + logdims3.z
+  bool IsRefinement = false;
+  block() {}
+  block(bool IsRefinement_) {
+    IsRefinement = IsRefinement_;
+    if (IsRefinement_) {
+      Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0);
+      BitSet.Words = (word*)&Nodes[0];
+      BitSet.NWords = Nodes.size() * sizeof(Nodes[0] / sizeof(BitSet.Words));
+    } else {
+      Nodes.resize(1 << Params.BlockBits);
+    }
+  }
+  INLINE i64 Get(int I) const {
+    if (IsRefinement)
+      return GetBit(&BitSet, I);
+    else
+      return Nodes[I];
+  }
+  void FixPointers() {
+    if (IsRefinement) {
+      BitSet.Words = (word*)&Nodes[0];
+      BitSet.NWords = Nodes.size() * sizeof(Nodes[0] / sizeof(BitSet.Words));
+    }
+  }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
@@ -1724,35 +1778,6 @@ ReadBlock(i8 Level, u64 BlockId) {
   return true;
 }
 
-/* Bit set stuffs */
-using word = u32;
-enum { WORD_SIZE = sizeof(word) * 8 };
-struct bitset { word* Words; i64 NWords; };
-
-INLINE static i64 BIndex(i64 B) { return B / WORD_SIZE; }
-INLINE static i64 BOffset(i64 B) { return B % WORD_SIZE; }
-
-INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
-INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
-INLINE static bool GetBit(bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
-INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, sizeof(*BitSet->Words) * BitSet->NWords); }
-INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 1, sizeof(*BitSet->Words) * BitSet->NWords); }
-
-static bitset*
-BitSetAlloc(i64 NBits) {
-  bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
-  BitSet->NWords = (NBits / WORD_SIZE + 1);
-  BitSet->Words = (word*)malloc(sizeof(*BitSet->Words) * BitSet->NWords);
-  ClearAll(BitSet);
-  return BitSet;
-}
-
-static void
-BitSetFree(bitset* BitSet) {
-  free(BitSet->Words);
-  free(BitSet);
-}
-
 INLINE static i64
 DecodeNode(bitstream* Bs, i64 M) {
   // TODO: use binomial coding
@@ -1779,34 +1804,23 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 
 #define RES_LVL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 
+//
 static void
 DecodeRefinementBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
-  const block& ResBlock = (*AllBlocks)[Params.NLevels][0];
   InitRead(Bs, Bs->Stream);
   REQUIRE(AllBlocks->size() > Level);
   auto& Blocks = (*AllBlocks)[Level];
   if (Blocks.size() <= BlockIdx) {
     Blocks.resize(BlockIdx * 3 / 2 + 1);
-  }
-  block& Block = (*AllBlocks)[Level][BlockIdx];
-  i64 NNodes = 1ll << Params.BlockBits;
-  Block.Nodes.resize(NNodes, 0);
-  u64 FirstNodeIdx = MAX(BlockIdx << Params.BlockBits, 2); // NOTE: node index always starts at 2
-  u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
-  if (BlockIdx == 0) { // the parent block is the res block
-    REQUIRE(Level < Params.NLevels);
-    Block.Nodes[1] = ResBlock.Nodes[RES_LVL_TO_NODE(Level)];
-  }
-  for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
-    u64 I = NODE_INDEX_IN_BLOCK(K);
-    u64 J = K / 2; // (global) parent index
-    i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
-    if (M > 0) {
-      Block.Nodes[I    ] = Read(Bs); // left child
-      Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
-      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
+    FOR_EACH (Block, Blocks) {
+      Block->FixPointers();
     }
   }
+  Blocks[BlockIdx] = block(true);
+  block& Block = Blocks[BlockIdx];
+  assert(Block.Nodes.size() * sizeof(Block.Nodes[0]) >= Size(*Bs));
+  memcpy(Block.BitSet.Words, Bs->Stream.Data, Size(*Bs));
+  //printf("%lld %lld\n", Block.Get(I), Block.Get(I+1));
 }
 
 // TODO: be careful not to confuse blocks of two nodes (left and right children) vs blocks of one nodes (only left child)
@@ -1872,6 +1886,7 @@ DynamicHeap<block_data, block_priority> Heap;
 #define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
 //#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
 #define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
+#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.MaxHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
 
 INLINE double
 NodeVolume(i8 Level, i64 NodeIdx) {
@@ -2192,12 +2207,15 @@ struct Range {
 /* Encode particle refinement bits */
 static void
 EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
-  i8 D = (Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z) % Params.NDims;
+  u8 BaseH = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
+  i8 D = BaseH % Params.NDims;
   vec3f P3 = Pos;
-  u8 H = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
-  u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx); // TODO: may need a different formula
+  u8 H = BaseH;
+  u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
+  i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
   while (H < Params.MaxHeight) {
     bitstream* Bs = &BlockStreams[Level];
+    u64 BlockIdx = BaseBlockIdx + (H - BaseH) * NBlocksAtLeaf;
     if (BlockIdx != CurrBlocks[Level]) {
       WriteBlock(Level, BlockIdx);
       Rewind(Bs);
@@ -2214,8 +2232,6 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
   }
 }
 
-// TODO: after blocking, we have a tree of blocks
-// TODO: write a routine to decode the blocks
 // TODO: write a routine to read from disk and reconstruct the tree/particles
 // TODO: write a routine to compute the PSNR of positions
 // TODO: what if we have 0 particles? should we stop the resolution divide?
