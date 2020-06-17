@@ -1522,10 +1522,6 @@ BitSetFree(bitset* BitSet) {
   free(BitSet);
 }
 
-// TODO: at read time, we read the number of particles for all blocks, then decide which block to refine next using a priority queue
-// TODO: when refining a block, we can either read the tree for the block or read the number of particles for the block's children
-//       this is decided based on whether the per-pixel error is small enough (if each voxel and its children project to one pixel then we do not need to refine more)
-
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
@@ -1533,16 +1529,16 @@ static std::vector<u64> CurrBlocks; // [level] -> current block id
 static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> block size
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
-  std::vector<i64> Nodes; // used when level <= logdims3.x + logdim3s.y + logdims3.z
-  bitset BitSet; // used when level < logdims3.x + logdims3.y + logdims3.z
+  std::vector<i64> Nodes; // used when level <= BaseHeight
+  bitset BitSet; // used when level > BaseHeight
   bool IsRefinement = false;
   block() {}
   block(bool IsRefinement_) {
     IsRefinement = IsRefinement_;
     if (IsRefinement_) {
-      Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0);
-      BitSet.Words = (word*)&Nodes[0];
-      BitSet.NWords = Nodes.size() * sizeof(Nodes[0] / sizeof(BitSet.Words));
+      Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0); // the 6 is 2^6 = 64 bits
+      BitSet.Words = (word*)Nodes.data();
+      BitSet.NWords = Nodes.size() * sizeof(Nodes[0]) / sizeof(*BitSet.Words);
     } else {
       Nodes.resize(1 << Params.BlockBits);
     }
@@ -1758,7 +1754,7 @@ ReadBlock(i8 Level, u64 BlockId) {
     BlockOffsets[Level].resize(NBlocks);
     buffer Buf((byte*)&BlockOffsets[Level][0], (i64)sizeof(BlockOffsets[Level][0]) * NBlocks);
     ReadBackwardBuffer(Fp, &Buf);
-    FOR (i64, I, 1, NBlocks) {
+    FOR(i64, I, 1, NBlocks) {
       BlockOffsets[Level][I] += BlockOffsets[Level][I - 1];
     }
   }
@@ -1807,7 +1803,7 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 
 //
 static void
-DecodeRefinementBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
+DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   InitRead(Bs, Bs->Stream);
   REQUIRE(AllBlocks->size() > Level);
   auto& Blocks = (*AllBlocks)[Level];
@@ -1984,8 +1980,9 @@ RefineByLevel() {
   else if (TopBlock.Height <= Params.BaseHeight)
     DecodeBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
   else // refinement block
-    DecodeRefinementBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
+    DecodeRefBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
+  /* enqueue children nodes */
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
   auto& Nodes = Blocks[TopBlock.Level][TopBlock.BlockId].Nodes;
@@ -2003,8 +2000,8 @@ RefineByLevel() {
         .Height  = u8(TopBlock.Height + 1),
         .BlockId = 0
       };
-      LeftError = 1; // TODO: is this true?
-      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
+      LeftError = 1;
+      Heap.insert(LeftChild, block_priority { .Error = LeftError });
     }
   } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
     LeftChild  = block_data {
@@ -2032,7 +2029,7 @@ RefineByLevel() {
       Heap.insert(LeftChild, block_priority { .Error = LeftError });
     if (RightError > 0)
       Heap.insert(RightChild, block_priority { .Error = RightError });
-  } else { // leaf level, each block has only one child
+  } else if (TopBlock.Height < Params.MaxHeight) { // refinement level, each block has only one child
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
@@ -2045,24 +2042,6 @@ RefineByLevel() {
   }
 
   return true;
-}
-
-/* resolution block */
-static void
-WriteRBlock(i8 Level, u64 BlockIdx) {
-  bitstream* Bs = &BlockStreams[Level];
-  if (Size(*Bs) > 0) {
-    Flush(Bs);
-    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
-    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
-    fclose(Fp);
-
-    // book-keeping
-    if (BlockBytes[Level].size() <= BlockIdx)
-      BlockBytes[Level].resize(BlockIdx * 3 / 2 + 1);
-    BlockBytes[Level][BlockIdx] = Size(*Bs);
-    Rewind(Bs);
-  }
 }
 
 /* tree block (including refinement block) */
@@ -2092,7 +2071,7 @@ FlushBlocksToFiles() {
   fwrite(BlockStreams[Params.NLevels].Stream.Data, Size(BlockStreams[Params.NLevels]), 1, Fp);
   fclose(Fp);
 
-  /* write the level data */
+  /* write the regular blocks */
   REQUIRE(BlockStreams.size() == Params.NLevels + 1);
   FOR(i8, L, 0, Params.NLevels) {
     WriteBlock(L, CurrBlocks[L]);
