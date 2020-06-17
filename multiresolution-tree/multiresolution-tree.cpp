@@ -1614,10 +1614,14 @@ ReadMetaFile(cstr FileName) {
           Params.LogDims3.y = LOG2_FLOOR(Params.Dims3.y);
           Params.LogDims3.z = LOG2_FLOOR(Params.Dims3.z);
           Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
-        } if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "accuracy")) {
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "accuracy")) {
           REQUIRE(Expr->type == SE_FLOAT);
           Params.Accuracy = Expr->f;
           printf("Accuracy = %.8g\n", Params.Accuracy);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "height")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.MaxHeight = Expr->i;
+          printf("Max height = %d\n", Params.MaxHeight);
         } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "bounding-box")) {
           assert(Expr->type == SE_FLOAT || Expr->type == SE_INT);
           Params.BBox.Min.x = Expr->f;
@@ -2020,13 +2024,13 @@ RefineByLevel() {
   } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
-      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits - 1) : u8(TopBlock.Height + 1),
-      .BlockId = TopBlock.BlockId * 2 + 1
+      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2
     };
     RightChild = block_data {
       .Level   = TopBlock.Level,
-      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits - 1) : u8(TopBlock.Height + 1),
-      .BlockId = TopBlock.BlockId * 2 + 2
+      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2 + 1
     };
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
@@ -2039,7 +2043,7 @@ RefineByLevel() {
       else
         RightError = 1;
     }
-    if (LeftError > 0)
+    if (TopBlock.BlockId != 0 && LeftError > 0)
       Heap.insert(LeftChild, block_priority { .Error = LeftError });
     if (RightError > 0)
       Heap.insert(RightChild, block_priority { .Error = RightError });
