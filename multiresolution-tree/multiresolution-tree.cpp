@@ -2216,13 +2216,12 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
   u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
   i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
   while (H <= Params.MaxHeight) {
-    bitstream* Bs = &BlockStreams[Level];
     u64 BlockIdx = BaseBlockIdx + (H - Params.BaseHeight) * NBlocksAtLeaf;
     if (BlockIdx != CurrBlocks[Level]) {
-      WriteBlock(Level, BlockIdx);
-      Rewind(Bs);
+      WriteBlock(Level, CurrBlocks[Level]);
       CurrBlocks[Level] = BlockIdx;
     }
+    bitstream* Bs = &BlockStreams[Level];
     GrowToAccomodate(Bs, 1);
     float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
     bool Left = P3[D] < Half;
@@ -2270,23 +2269,18 @@ BuildTreeInner(q_item Q, float Accuracy) {
       auto SPred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
     }
-    if (Q.RSplit) {
-      EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
-    } else {
-      EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
-      printf("%lld\n", Mid - Q.Begin);
-      printf("%lld\n", Q.End - Mid);
-    }
-    if (Q.Height == Params.BaseHeight) { // last height
-      REQUIRE(N == 1);
-      assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
-      bbox BBox;
-      BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
-      BBox.Max = BBox.Min + Q.Grid.Dims3 * W3;
-      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
-    } else {
+    if (Q.Height < Params.BaseHeight) {
+      /* encoding the children (left child in particular) */
+      if (Q.RSplit) {
+        EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
+      } else {
+        EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
+        printf("%lld\n", Mid - Q.Begin);
+        printf("%lld\n", Q.End - Mid);
+      }
+      /* enqueue children */
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
-      if (Q.Height + 1 < (Params.MaxHeight) && Q.Begin < Mid) {
+      if (Q.Begin < Mid) {
         Queue.push(q_item{ .Begin = Q.Begin,
                            .End = Mid,
                            .TreeIdx = Q.TreeIdx * 2,
@@ -2299,7 +2293,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
                            .Height = u8(Q.Height + 1),
                            .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
       }
-      if (Q.Height + 1 < (Params.MaxHeight) && Mid < Q.End) {
+      if (Mid < Q.End) {
         Queue.push(q_item{ .Begin = Mid,
                            .End = Q.End,
                            .TreeIdx = Q.TreeIdx * 2 + 1,
@@ -2312,6 +2306,14 @@ BuildTreeInner(q_item Q, float Accuracy) {
                            .Height = u8(Q.Height + 1),
                            .RSplit = false });
       }
+    } else { // Q.Height == Params.BaseHeight
+      /* encoding the refinement bits */
+      REQUIRE(N == 1);
+      assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
+      bbox BBox;
+      BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
+      BBox.Max = BBox.Min + Q.Grid.Dims3 * W3;
+      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
     }
   }
 }
