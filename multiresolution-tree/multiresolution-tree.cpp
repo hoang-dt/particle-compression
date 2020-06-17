@@ -1494,24 +1494,26 @@ struct params {
 };
 
 /* Bit set stuffs */
-using word = u32;
-enum { WORD_SIZE = sizeof(word) * 8 };
-struct bitset { word* Words; i64 NWords; };
+using word = u64;
+enum { WORD_SIZE = sizeof(word) * 8, WORD_LOG = 6, WORD_MASK = 0x3F };
+struct bitset { word* Words; i64 NBits; };
+#define NBITS_TO_NWORDS(NBits) (((NBits) + WORD_MASK) >> WORD_LOG)
+#define NBYTES(BitSet) (sizeof(*(BitSet)->Words) * NBITS_TO_NWORDS((BitSet)->NBits))
 
-INLINE static i64 BIndex(i64 B) { return B / WORD_SIZE; }
-INLINE static i64 BOffset(i64 B) { return B % WORD_SIZE; }
+INLINE static i64 BIndex(i64 B)  { return B >> WORD_LOG; }
+INLINE static i64 BOffset(i64 B) { return B & WORD_MASK; }
 
 INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
 INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
 INLINE static bool GetBit(const bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
-INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, sizeof(*BitSet->Words) * BitSet->NWords); }
-INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 1, sizeof(*BitSet->Words) * BitSet->NWords); }
+INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, NBYTES(BitSet)); }
+INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 0xFF, NBYTES(BitSet)); }
 
 static bitset*
 BitSetAlloc(i64 NBits) {
   bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
-  BitSet->NWords = (NBits / WORD_SIZE + 1);
-  BitSet->Words = (word*)malloc(sizeof(*BitSet->Words) * BitSet->NWords);
+  BitSet->NBits = NBits;
+  BitSet->Words = (word*)malloc(NBYTES(BitSet));
   ClearAll(BitSet);
   return BitSet;
 }
@@ -1530,30 +1532,25 @@ static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> blo
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
   std::vector<i64> Nodes; // used when level <= BaseHeight
-  bitset BitSet; // used when level > BaseHeight
-  bool IsRefinement = false;
-  block() {}
-  block(bool IsRefinement_) {
-    IsRefinement = IsRefinement_;
-    if (IsRefinement_) {
-      Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0); // the 6 is 2^6 = 64 bits
-      BitSet.Words = (word*)Nodes.data();
-      BitSet.NWords = Nodes.size() * sizeof(Nodes[0]) / sizeof(*BitSet.Words);
-    } else {
-      Nodes.resize(1 << Params.BlockBits);
-    }
+  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
+  int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
+  block() { Nodes.resize(1 << Params.BlockBits); }
+  block(bitstream* Bs) {
+//    Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0); // the 6 is 2^6 = 64 bits
+    BitSet.Words = (word*)Bs->Stream.Data;
+    BitSet.NBits = Size(Bs->Stream) * 8;
   }
   INLINE i64 Get(int I) const {
-    if (IsRefinement)
+    if (BitSet.NBits > 0)
       return GetBit(&BitSet, I);
     else
       return Nodes[I];
   }
-  void FixPointers() {
-    if (IsRefinement) {
-      BitSet.Words = (word*)&Nodes[0];
-      BitSet.NWords = Nodes.size() * sizeof(Nodes[0] / sizeof(BitSet.Words));
-    }
+  INLINE int NumNodes() const {
+    if (BitSet.NBits > 0)
+      return NParticles;
+    else
+      return Nodes.size();
   }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
@@ -1613,6 +1610,10 @@ ReadMetaFile(cstr FileName) {
           REQUIRE(Expr->type == SE_INT);
           Params.Dims3.z = Expr->i;
           printf("Dims = %d %d %d\n", EXPvec3(Params.Dims3));
+          Params.LogDims3.x = LOG2_FLOOR(Params.Dims3.x);
+          Params.LogDims3.y = LOG2_FLOOR(Params.Dims3.y);
+          Params.LogDims3.z = LOG2_FLOOR(Params.Dims3.z);
+          Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
         } if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "accuracy")) {
           REQUIRE(Expr->type == SE_FLOAT);
           Params.Accuracy = Expr->f;
@@ -1794,14 +1795,18 @@ DecodeResBlock(bitstream* Bs, block* Block) {
     i64 M = Block->Nodes[RES_PARENT(I)];
     Block->Nodes[I    ] = DecodeNode(Bs, M);
     Block->Nodes[I - 1] = M - Block->Nodes[I];
-    printf("%lld %lld\n", Block->Nodes[I-1], Block->Nodes[I]);
+    Block->NParticles += M;
+    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
     assert(RES_PARENT(I) == RES_PARENT(I - 1));
   }
 }
 
+// TODO: and from tree depth to bounding box
+#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
+//#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
+#define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
+#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
 #define RES_LVL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
-
-//
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   InitRead(Bs, Bs->Stream);
@@ -1809,18 +1814,26 @@ DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   auto& Blocks = (*AllBlocks)[Level];
   if (Blocks.size() <= BlockIdx) {
     Blocks.resize(BlockIdx * 3 / 2 + 1);
-    FOR_EACH (Block, Blocks) {
-      Block->FixPointers();
+  }
+  Blocks[BlockIdx] = block(Bs);
+  const block& CurrBlock = Blocks[BlockIdx];
+  i64 NumBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
+  u64 ParentBlockIdx = BlockIdx - NumBlocksAtLeaf;
+  const auto& ParentBlock = (*AllBlocks)[Level][ParentBlockIdx];
+  REQUIRE(ParentBlock.NParticles <= CurrBlock.BitSet.NBits);
+  int NNodes = ParentBlock.NumNodes();
+  InitRead(Bs, Bs->Stream);
+  FOR(int, I, 0, NNodes) {
+    REQUIRE(ParentBlock.Get(I) <= 1);
+    if (ParentBlock.Get(I) == 1) {
+      bool Bit = Read(Bs);
+      printf("  refinement bit %d\n", Bit);
     }
   }
-  Blocks[BlockIdx] = block(true);
-  block& Block = Blocks[BlockIdx];
-  assert(Block.Nodes.size() * sizeof(Block.Nodes[0]) >= Size(*Bs));
-  memcpy(Block.BitSet.Words, Bs->Stream.Data, Size(*Bs));
+//  ParentBlock.Nodes
   //printf("%lld %lld\n", Block.Get(I), Block.Get(I+1));
 }
 
-// TODO: be careful not to confuse blocks of two nodes (left and right children) vs blocks of one nodes (only left child)
 static void
 DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   const block& ResBlock = (*AllBlocks)[Params.NLevels][0];
@@ -1872,11 +1885,6 @@ INLINE bool operator<(const block_priority& Lhs, const block_priority& Rhs) {
 
 DynamicHeap<block_data, block_priority> Heap;
 
-// TODO: and from tree depth to bounding box
-#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
-//#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
-#define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
-#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
 
 INLINE double
 NodeVolume(i8 Level, i64 NodeIdx) {
@@ -1959,6 +1967,7 @@ RefineLeftToRight() {
 
 static bool
 RefineByLevel() {
+
   block_data     TopBlock;
   block_priority TopPriority;
   bool BlockExists = false;
@@ -1975,6 +1984,10 @@ RefineByLevel() {
     return false;
 
   printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
+  if (TopBlock.Level == 0)
+    int Stop = 0;
+  if (TopBlock.Level == 0 && TopBlock.BlockId == 2)
+    int Stop = 0;
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
   else if (TopBlock.Height <= Params.BaseHeight)
@@ -1982,6 +1995,7 @@ RefineByLevel() {
   else // refinement block
     DecodeRefBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
+
   /* enqueue children nodes */
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
@@ -1997,7 +2011,7 @@ RefineByLevel() {
       // NOTE: we have only one child instead of two (BlockBits >= 1)
       LeftChild  = block_data {
         .Level   = Level,
-        .Height  = u8(TopBlock.Height + 1),
+        .Height  = u8(LEVEL_TO_HEIGHT(Level)),
         .BlockId = 0
       };
       LeftError = 1;
@@ -2006,13 +2020,13 @@ RefineByLevel() {
   } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
-      .Height  = u8(TopBlock.Height + 1),
-      .BlockId = TopBlock.BlockId * 2
+      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits - 1) : u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2 + 1
     };
     RightChild = block_data {
       .Level   = TopBlock.Level,
-      .Height  = u8(TopBlock.Height + 1),
-      .BlockId = TopBlock.BlockId * 2 + 1
+      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits - 1) : u8(TopBlock.Height + 1),
+      .BlockId = TopBlock.BlockId * 2 + 2
     };
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
@@ -2033,7 +2047,7 @@ RefineByLevel() {
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
-      .Height  = u8(TopBlock.Height + 1),
+      .Height  = u8(TopBlock.Height + 1), // TODO: this is not quite true (the block may occupy more than one height)
       .BlockId = TopBlock.BlockId + NBlocksAtLeaf
     };
 //    LeftError = TopPriority.Error * 0.5f;
@@ -2380,7 +2394,7 @@ main(int Argc, cstr* Argv) {
   context.setAssertHandler(Handler);
   cstr ErrorMsg = "Usage: \n"
                   "  to encode: .exe particle_file.xyz --action encode --ndims 3 --nlevels 4 --height 6 --block 2 --out output\n"
-                  "  to decode: .exe compressed_file --action decode --out particle_file.xyz";
+                  "  to decode: .exe compressed_file --action decode --in particle_file.idx";
   cstr Action = nullptr;
   if (!OptVal(Argc, Argv, "--action", &Action)) EXIT_ERROR(ErrorMsg);
   if (strcmp("encode", Action) == 0) Params.Action = action::Encode;
