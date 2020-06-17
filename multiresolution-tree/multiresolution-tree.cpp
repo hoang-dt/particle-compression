@@ -1489,6 +1489,7 @@ struct params {
   float Accuracy = 0;
   bbox BBox;
   vec3i LogDims3;
+  u8 BaseHeight;
   vec3i Dims3;
 };
 
@@ -1562,8 +1563,8 @@ struct block {
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
 
-#define NODE_TO_BLOCK_INDEX(Idx) (Idx) >> (Params.BlockBits)
-#define NODE_INDEX_IN_BLOCK(Idx) (Idx) & ((1ull << Params.BlockBits) - 1)
+#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
+#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & ((1ull << Params.BlockBits) - 1))
 
 static bool
 ReadMetaFile(cstr FileName) {
@@ -1886,7 +1887,7 @@ DynamicHeap<block_data, block_priority> Heap;
 #define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
 //#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
 #define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
-#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.MaxHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
+#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
 
 INLINE double
 NodeVolume(i8 Level, i64 NodeIdx) {
@@ -1986,7 +1987,7 @@ RefineByLevel() {
   printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
-  else if (TopBlock.Height <= Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z)
+  else if (TopBlock.Height <= Params.BaseHeight)
     DecodeBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
   else // refinement block
     DecodeRefinementBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
@@ -2207,27 +2208,29 @@ struct Range {
 /* Encode particle refinement bits */
 static void
 EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
-  u8 BaseH = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
-  i8 D = BaseH % Params.NDims;
+  assert(BBox.Min.x <= Pos.x && BBox.Min.y <= Pos.y && BBox.Min.z <= Pos.z);
+  assert(BBox.Max.x >= Pos.x && BBox.Max.y >= Pos.y && BBox.Max.z >= Pos.z);
   vec3f P3 = Pos;
-  u8 H = BaseH;
+  u8 H = Params.BaseHeight + 1;
+  i8 D = Params.BaseHeight % Params.NDims;
   u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
   i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
-  while (H < Params.MaxHeight) {
+  while (H <= Params.MaxHeight) {
     bitstream* Bs = &BlockStreams[Level];
-    u64 BlockIdx = BaseBlockIdx + (H - BaseH) * NBlocksAtLeaf;
+    u64 BlockIdx = BaseBlockIdx + (H - Params.BaseHeight) * NBlocksAtLeaf;
     if (BlockIdx != CurrBlocks[Level]) {
       WriteBlock(Level, BlockIdx);
       Rewind(Bs);
       CurrBlocks[Level] = BlockIdx;
     }
     GrowToAccomodate(Bs, 1);
-    float Half = (BBox.Max[D] - BBox.Min[D]) * 0.5;
-    bool Left = (P3[D] - BBox.Min[D]) < Half;
+    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+    bool Left = P3[D] < Half;
     Write(Bs, Left);
+    printf("  nodeidx %llu base block %llu ref block %llu bit %d\n", NodeIdx, BaseBlockIdx, BlockIdx, Left);
     BBox.Max[D] = BBox.Max[D] - Half * Left;
     BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
-    D = (D + 1) % 3;
+    D = (D + 1) % Params.NDims;
     ++H;
   }
 }
@@ -2237,7 +2240,6 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
 // TODO: what if we have 0 particles? should we stop the resolution divide?
 static void
 BuildTreeInner(q_item Q, float Accuracy) {
-  int GridHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
   std::queue<q_item> Queue;
   Queue.push(Q);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
@@ -2275,13 +2277,13 @@ BuildTreeInner(q_item Q, float Accuracy) {
       printf("%lld\n", Mid - Q.Begin);
       printf("%lld\n", Q.End - Mid);
     }
-    if (Q.Height == GridHeight) { // last height
+    if (Q.Height == Params.BaseHeight) { // last height
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
       bbox BBox;
       BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
       BBox.Max = BBox.Min + Q.Grid.Dims3 * W3;
-      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.End - Q.Begin].Pos, BBox);
+      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
     } else {
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
       if (Q.Height + 1 < (Params.MaxHeight) && Q.Begin < Mid) {
@@ -2409,6 +2411,7 @@ main(int Argc, cstr* Argv) {
     printf("number of particles = %zu\n", Particles.size());
     Params.BBox = ComputeBoundingBox(Particles);
     Params.LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0);
+    Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
     Params.Dims3 = vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
     grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
@@ -2426,6 +2429,7 @@ main(int Argc, cstr* Argv) {
       while (W3.y > Params.Accuracy) { ++Params.MaxHeight; W3.y *= 0.5; }
       while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
     }
+    Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
                            .TreeIdx = 1,
