@@ -1971,7 +1971,6 @@ RefineLeftToRight() {
 
 static bool
 RefineByLevel() {
-
   block_data     TopBlock;
   block_priority TopPriority;
   bool BlockExists = false;
@@ -2108,7 +2107,7 @@ INLINE static void
 EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-  printf("level = %d block = %llu\n", Level, BlockIdx);
+  //printf("level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx > CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
@@ -2231,7 +2230,7 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
     bool Left = P3[D] < Half;
     Write(Bs, Left);
-    printf("  nodeidx %llu base block %llu ref block %llu bit %d\n", NodeIdx, BaseBlockIdx, BlockIdx, Left);
+//    printf("  nodeidx %llu base block %llu ref block %llu bit %d\n", NodeIdx, BaseBlockIdx, BlockIdx, Left);
     BBox.Max[D] = BBox.Max[D] - Half * Left;
     BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
     D = (D + 1) % Params.NDims;
@@ -2280,8 +2279,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
         EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
       } else {
         EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
-        printf("%lld\n", Mid - Q.Begin);
-        printf("%lld\n", Q.End - Mid);
+        //printf("%lld\n", Mid - Q.Begin);
+        //printf("%lld\n", Q.End - Mid);
       }
       /* enqueue children */
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
@@ -2317,7 +2316,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
       bbox BBox;
       BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
-      BBox.Max = BBox.Min + Q.Grid.Dims3 * W3;
+      const vec3f& Pos = Particles[Q.Begin].Pos;
+      BBox.Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3;
       EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
     }
   }
