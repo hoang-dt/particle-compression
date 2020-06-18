@@ -1988,10 +1988,6 @@ RefineByLevel() {
     return false;
 
   printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
-  if (TopBlock.Level == 0)
-    int Stop = 0;
-  if (TopBlock.Level == 0 && TopBlock.BlockId == 2)
-    int Stop = 0;
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
   else if (TopBlock.Height <= Params.BaseHeight)
