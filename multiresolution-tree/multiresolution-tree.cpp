@@ -2057,6 +2057,42 @@ RefineByLevel() {
   return true;
 }
 
+struct block_particle {
+  i8 Level = 0;
+  u8 Height = 0;
+  u64 BlockId = 0;
+};
+
+static void
+GenerateParticlesFromBlock() {
+    // TODO
+}
+
+// if the head has children blocks, push the children blocks in
+// else, generate particles from the head
+// if the head is at the leaf level of the regular tree, also generate particles
+// but then, refine the particle positions using the children blocks
+static bool
+GenerateParticles(block_particle Block) {
+//  Q.push(block_particle{ .Level = Params.NLevels, .Height = 0, .BlockId = 0 });
+  if (Block.Level == Params.NLevels) { // resolution block, multiple children
+    std::vector<bool> RefinedLevels;
+    RefinedLevels.resize(Params.NLevels, false);
+    FOR(i8, Level, 0, Params.NLevels) {
+      if (Blocks.size() > Level && Blocks[Level].size() > 0 && Blocks[Level][0].Nodes.size() > 0) {
+        RefinedLevels[Level] = GenerateParticles(block_particle{ .Level = Level, .Height = u8(LEVEL_TO_HEIGHT(Level)), .BlockId = 0 });
+      }
+    }
+    // TODO: generate particles for the missing levels (or not?)
+  } else if (Block.Height < Params.BaseHeight) { // regular block, 2 children
+    // TODO: generate particles for the left and right blocks
+    // TODO: loop through the nodes in here, and generate the particles unless the corresponding children block has been used
+  } else if (Block.Height < Params.MaxHeight) { // refinement block, 1 children
+    // TODO: loop through all nodes and iteratively query the children block(s) to refine the node (particle)
+  }
+  return true;
+}
+
 /* tree block (including refinement block) */
 static void
 WriteBlock(i8 Level, u64 BlockIdx) {
