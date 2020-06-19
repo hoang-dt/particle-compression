@@ -2057,40 +2057,93 @@ RefineByLevel() {
   return true;
 }
 
+static grid
+SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
+  //REQUIRE(IS_EVEN(int(Grid.Dims3[D])));
+  grid Out = Grid;
+  if (RSplit) { // resolution split
+    Out.From3[D] += Right * Out.Stride3[D];
+    Out.Dims3[D] *= 0.5;
+    Out.Stride3[D] *= 2;
+  } else { // spatial split
+    Out.Dims3[D] *= 0.5;
+    Out.From3[D] += Right * Out.Stride3[D] * Out.Dims3[D];
+  }
+  return Out;
+}
+
 struct block_particle {
   i8 Level = 0;
   u8 Height = 0;
   u64 BlockId = 0;
+  grid Grid;
+  i8 D = 0;
 };
 
 static void
-GenerateParticlesFromBlock() {
-    // TODO
+GenerateParticlesFromBlock(const block_particle& Block, bool Left, bool Right) {
+  // TODO
 }
 
 // if the head has children blocks, push the children blocks in
 // else, generate particles from the head
 // if the head is at the leaf level of the regular tree, also generate particles
 // but then, refine the particle positions using the children blocks
-static bool
+static void
 GenerateParticles(block_particle Block) {
 //  Q.push(block_particle{ .Level = Params.NLevels, .Height = 0, .BlockId = 0 });
   if (Block.Level == Params.NLevels) { // resolution block, multiple children
     std::vector<bool> RefinedLevels;
     RefinedLevels.resize(Params.NLevels, false);
     FOR(i8, Level, 0, Params.NLevels) {
-      if (Blocks.size() > Level && Blocks[Level].size() > 0 && Blocks[Level][0].Nodes.size() > 0) {
-        RefinedLevels[Level] = GenerateParticles(block_particle{ .Level = Level, .Height = u8(LEVEL_TO_HEIGHT(Level)), .BlockId = 0 });
+      if (Blocks.size() > Level && Blocks[Level].size() > 0 && !Blocks[Level][0].Nodes.empty()) {
+        RefinedLevels[Level] = true;
+        GenerateParticles(
+          block_particle{
+            .Level = Level,
+            .Height = u8(LEVEL_TO_HEIGHT(Level)),
+            .BlockId = 0,
+            .Grid = SplitGrid(Block.Grid, Block.D, true, true),
+            .D = i8((Block.D + 1) % Params.NDims)
+          }
+        );
       }
     }
     // TODO: generate particles for the missing levels (or not?)
   } else if (Block.Height < Params.BaseHeight) { // regular block, 2 children
-    // TODO: generate particles for the left and right blocks
-    // TODO: loop through the nodes in here, and generate the particles unless the corresponding children block has been used
+    if (Blocks.size() <= Block.Level)
+      return;
+    bool LeftExist = false, RightExist = false;
+    u64 LeftBlockId = Block.BlockId * 2;
+    LeftExist = Block.BlockId > 0 && Blocks[Block.Level].size() > LeftBlockId && !Blocks[Block.Level][LeftBlockId].Nodes.empty();
+    if (LeftExist) {
+      GenerateParticles(
+        block_particle{
+          .Level = Block.Level,
+          .Height = u8(Block.Height + 1),
+          .BlockId = LeftBlockId,
+          .Grid = SplitGrid(Block.Grid, Block.D, false, false),
+          .D = i8((Block.D + 1) % Params.NDims)
+        }
+      );
+    }
+    u64 RightBlockId = Block.BlockId * 2 + 1;
+    RightExist = Blocks[Block.Level].size() > RightBlockId && !Blocks[Block.Level][RightBlockId].Nodes.empty();
+    if (RightExist) {
+      GenerateParticles(
+        block_particle{
+          .Level = Block.Level,
+          .Height = u8(Block.Height + 1),
+          .BlockId = RightBlockId,
+          .Grid = SplitGrid(Block.Grid, Block.D, false, true),
+          .D = i8((Block.D + 1) % Params.NDims)
+        }
+      );
+    }
+    GenerateParticlesFromBlock(Block, LeftExist, RightExist); // TODO: generate particles on the right side
   } else if (Block.Height < Params.MaxHeight) { // refinement block, 1 children
     // TODO: loop through all nodes and iteratively query the children block(s) to refine the node (particle)
   }
-  return true;
 }
 
 /* tree block (including refinement block) */
@@ -2171,21 +2224,6 @@ INLINE static void // N is the number of particles under a node
 Print(i8 Level, u64 TreeIdx, i64 ResIdx, i64 LvlIdx, i64 ParIdx, i64 N) {
   printf("level = %d tree_idx = %llu res_idx = %lld lvl_idx = %lld par_idx = %lld N = %lld \n", Level, TreeIdx, ResIdx, LvlIdx, ParIdx, N);
   return;
-}
-
-static grid
-SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
-  //REQUIRE(IS_EVEN(int(Grid.Dims3[D])));
-  grid Out = Grid;
-  if (RSplit) { // resolution split
-    Out.From3[D] += Right * Out.Stride3[D];
-    Out.Dims3[D] *= 0.5;
-    Out.Stride3[D] *= 2;
-  } else { // spatial split
-    Out.Dims3[D] *= 0.5;
-    Out.From3[D] += Right * Out.Stride3[D] * Out.Dims3[D];
-  }
-  return Out;
 }
 
 struct q_item {
