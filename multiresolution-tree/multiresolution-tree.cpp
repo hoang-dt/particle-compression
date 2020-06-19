@@ -29,6 +29,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#include <optional>
 
 #if defined(_MSC_VER) // Microsoft compilers
 #define EXPAND(X) X
@@ -1810,6 +1811,7 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 //#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
 #define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
 #define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
+#define NUM_NODES_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level))))
 #define RES_LVL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
@@ -2072,77 +2074,115 @@ SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
   return Out;
 }
 
-struct block_particle {
+struct tree_node {
   i8 Level = 0;
   u8 Height = 0;
-  u64 BlockId = 0;
+  u64 NodeId = 0;
   grid Grid;
   i8 D = 0;
 };
 
 static void
-GenerateParticlesFromBlock(const block_particle& Block, bool Left, bool Right) {
+GenerateParticlesPerNode(const tree_node& Node) {
   // TODO
+}
+
+static void
+GenerateOneParticle(const bbox& BBox) {
+  // TODO
+}
+
+INLINE static bool
+GetNode(const tree_node& Node, i64* N) {
+  u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
+  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
+    return false;
+  // TODO
+  return true;
+}
+
+INLINE static bool
+GetRefNode(const tree_node& Node, u8* Bit) {
+  // TODO
+  return false;
 }
 
 // if the head has children blocks, push the children blocks in
 // else, generate particles from the head
 // if the head is at the leaf level of the regular tree, also generate particles
 // but then, refine the particle positions using the children blocks
-static void
-GenerateParticles(block_particle Block) {
+static bool
+GenerateParticles(const tree_node& Node) {
 //  Q.push(block_particle{ .Level = Params.NLevels, .Height = 0, .BlockId = 0 });
-  if (Block.Level == Params.NLevels) { // resolution block, multiple children
-    std::vector<bool> RefinedLevels;
-    RefinedLevels.resize(Params.NLevels, false);
-    FOR(i8, Level, 0, Params.NLevels) {
-      if (Blocks.size() > Level && Blocks[Level].size() > 0 && !Blocks[Level][0].Nodes.empty()) {
-        RefinedLevels[Level] = true;
-        GenerateParticles(
-          block_particle{
-            .Level = Level,
-            .Height = u8(LEVEL_TO_HEIGHT(Level)),
-            .BlockId = 0,
-            .Grid = SplitGrid(Block.Grid, Block.D, true, true),
-            .D = i8((Block.D + 1) % Params.NDims)
-          }
-        );
+  // if the node itself is present, call GenerateParticles on its children
+    // if those return false, call GenerateParticlesPerNode on the current node
+    // return true
+  // else, return false
+  i64 N = 0;
+  if (Node.Level == Params.NLevels) { // resolution node
+    if (GetNode(Node, &N) && N > 0) {
+      GenerateParticles(
+        tree_node{
+          .Level = Node.Level,
+          .Height = u8(LEVEL_TO_HEIGHT(Node.Level)),
+          .NodeId = 1,
+          .Grid = Node.Grid, // TODO: double check this
+          .D = Node.D // TODO: double check this
+        }
+      );
+    } else {
+      return false;
+    }
+  } else if (Node.Height < Params.BaseHeight) { // regular block, 2 children
+    if (GetNode(Node, &N) && N > 0) {
+      bool LeftExist = GenerateParticles(
+        tree_node{
+          .Level = Node.Level,
+          .Height = u8(Node.Height + 1),
+          .NodeId = Node.NodeId * 2,
+          .Grid = SplitGrid(Node.Grid, Node.D, false, false),
+          .D = i8((Node.D + 1) % Params.NDims)
+        }
+      );
+      bool RightExist = GenerateParticles(
+        tree_node{
+          .Level = Node.Level,
+          .Height = u8(Node.Height + 1),
+          .NodeId = Node.NodeId * 2 + 1,
+          .Grid = SplitGrid(Node.Grid, Node.D, false, true),
+          .D = i8((Node.D + 1) % Params.NDims)
+        }
+      );
+      if (!LeftExist) {
+        REQUIRE(!RightExist);
+        GenerateParticlesPerNode(Node);
+      }
+    } else {
+      return false;
+    }
+  } else if (Node.Height < Params.MaxHeight) { // refinement block, 1 children
+    if (GetNode(Node, &N) && N > 0) {
+      // TODO: get the index of the next refinement node (using NNodesAtLeaf)
+      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
+      tree_node ChildNode = Node;
+      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
+      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+      bbox BBox{
+        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
+        .Max = Params.BBox.Min + (Node.Grid.From3 + Node.Grid.Dims3) * W3
+      };
+      u8 Bit = 0;
+      while (GetRefNode(ChildNode, &Bit)) {
+        // TODO: the update of BBox.Max and BBox.Min has a bug
+        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+        BBox.Max[D] = BBox.Max[D] - Half * Bit;
+        BBox.Min[D] = BBox.Min[D] + Half * (1 - Bit);
+        ChildNode.NodeId += NNodesAtLeaf;
+        D = i8((D + 1) % Params.NDims);
+        GenerateOneParticle(BBox);
       }
     }
-    // TODO: generate particles for the missing levels (or not?)
-  } else if (Block.Height < Params.BaseHeight) { // regular block, 2 children
-    if (Blocks.size() <= Block.Level)
-      return;
-    bool LeftExist = false, RightExist = false;
-    u64 LeftBlockId = Block.BlockId * 2;
-    LeftExist = Block.BlockId > 0 && Blocks[Block.Level].size() > LeftBlockId && !Blocks[Block.Level][LeftBlockId].Nodes.empty();
-    if (LeftExist) {
-      GenerateParticles(
-        block_particle{
-          .Level = Block.Level,
-          .Height = u8(Block.Height + 1),
-          .BlockId = LeftBlockId,
-          .Grid = SplitGrid(Block.Grid, Block.D, false, false),
-          .D = i8((Block.D + 1) % Params.NDims)
-        }
-      );
-    }
-    u64 RightBlockId = Block.BlockId * 2 + 1;
-    RightExist = Blocks[Block.Level].size() > RightBlockId && !Blocks[Block.Level][RightBlockId].Nodes.empty();
-    if (RightExist) {
-      GenerateParticles(
-        block_particle{
-          .Level = Block.Level,
-          .Height = u8(Block.Height + 1),
-          .BlockId = RightBlockId,
-          .Grid = SplitGrid(Block.Grid, Block.D, false, true),
-          .D = i8((Block.D + 1) % Params.NDims)
-        }
-      );
-    }
-    GenerateParticlesFromBlock(Block, LeftExist, RightExist); // TODO: generate particles on the right side
-  } else if (Block.Height < Params.MaxHeight) { // refinement block, 1 children
-    // TODO: loop through all nodes and iteratively query the children block(s) to refine the node (particle)
   }
 }
 
@@ -2388,10 +2428,10 @@ BuildTreeInner(q_item Q, float Accuracy) {
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
-      bbox BBox;
-      BBox.Min = Params.BBox.Min + Q.Grid.From3 * W3;
-      const vec3f& Pos = Particles[Q.Begin].Pos;
-      BBox.Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3;
+      bbox BBox{
+        .Min = Params.BBox.Min + Q.Grid.From3 * W3,
+        .Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3
+      };
       EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
     }
   }
