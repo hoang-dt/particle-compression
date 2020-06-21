@@ -1525,6 +1525,7 @@ BitSetFree(bitset* BitSet) {
   free(BitSet);
 }
 
+static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
@@ -1533,26 +1534,11 @@ static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> blo
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
   std::vector<i64> Nodes; // used when level <= BaseHeight
-  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
+//  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
+  bitstream* Bs = nullptr;
   int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
   block() { Nodes.resize(1 << Params.BlockBits); }
-  block(bitstream* Bs) {
-//    Nodes.resize(1 << MAX(0, Params.BlockBits - 6), 0); // the 6 is 2^6 = 64 bits
-    BitSet.Words = (word*)Bs->Stream.Data;
-    BitSet.NBits = Size(Bs->Stream) * 8;
-  }
-  INLINE i64 Get(int I) const {
-    if (BitSet.NBits > 0)
-      return GetBit(&BitSet, I);
-    else
-      return Nodes[I];
-  }
-  INLINE int NumNodes() const {
-    if (BitSet.NBits > 0)
-      return NParticles;
-    else
-      return Nodes.size();
-  }
+  block(bitstream* Bs) { this->Bs = Bs; }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
@@ -2082,14 +2068,46 @@ struct tree_node {
   i8 D = 0;
 };
 
-static void
-GenerateParticlesPerNode(const tree_node& Node) {
-  // TODO
-}
-
-static void
+INLINE static void
 GenerateOneParticle(const bbox& BBox) {
   // TODO
+  f32 Rx = f32(rand()) / f32(RAND_MAX);
+  f32 Ry = f32(rand()) / f32(RAND_MAX);
+  f32 Rz = f32(rand()) / f32(RAND_MAX);
+  vec3f P3 = BBox.Min + (BBox.Max - BBox.Min) * vec3f(Rx, Ry, Rz);
+  Particles.push_back(particle{.Pos = P3});
+}
+
+/* Generate N random particles inside Grid */
+static void
+GenerateParticlesPerNode(i64 N, const grid& Grid) {
+  assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
+  GridPoints.resize(N);
+  vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+  vec3i Dims3 = vec3i(Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
+
+  i64 NElems = N;
+  i64 I = 0;
+  FOR(int, Z, 0, Dims3.z) {
+  FOR(int, Y, 0, Dims3.y) {
+  FOR(int, X, 0, Dims3.x) {
+    if (I < N) {
+      GridPoints[I] = vec3i(X, Y, Z);
+    } else {
+      ++NElems;
+      i64 J = rand() % NElems; // exclusive
+      if (J < N) {
+        GridPoints[J] = vec3i(X, Y, Z);
+      }
+    }
+    ++I;
+  }}}
+  FOR_EACH(P, GridPoints) {
+    bbox BBox;
+    BBox.Min = Params.BBox.Min + (vec3f(*P) + Grid.From3) * W3;
+    BBox.Max = Params.BBox.Min + (vec3f(*P) + Grid.From3 + 1) * W3;
+    GenerateOneParticle(BBox);
+  }
 }
 
 INLINE static bool
@@ -2097,43 +2115,26 @@ GetNode(const tree_node& Node, i64* N) {
   u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
   if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
     return false;
-  // TODO
+  const block& Block = Blocks[Node.Level][BlockId];
+  REQUIRE(Block.Nodes.size() > 0);
+  *N = Block.Nodes[NODE_INDEX_IN_BLOCK(Node.NodeId)];
   return true;
 }
 
 INLINE static bool
 GetRefNode(const tree_node& Node, u8* Bit) {
-  // TODO
-  return false;
+  u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
+  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
+    return false;
+  const block& Block = Blocks[Node.Level][BlockId];
+  *Bit = Read(Block.Bs);
+  return true;
 }
 
-// if the head has children blocks, push the children blocks in
-// else, generate particles from the head
-// if the head is at the leaf level of the regular tree, also generate particles
-// but then, refine the particle positions using the children blocks
 static bool
 GenerateParticles(const tree_node& Node) {
-//  Q.push(block_particle{ .Level = Params.NLevels, .Height = 0, .BlockId = 0 });
-  // if the node itself is present, call GenerateParticles on its children
-    // if those return false, call GenerateParticlesPerNode on the current node
-    // return true
-  // else, return false
   i64 N = 0;
-  if (Node.Level == Params.NLevels) { // resolution node
-    if (GetNode(Node, &N) && N > 0) {
-      GenerateParticles(
-        tree_node{
-          .Level = Node.Level,
-          .Height = u8(LEVEL_TO_HEIGHT(Node.Level)),
-          .NodeId = 1,
-          .Grid = Node.Grid, // TODO: double check this
-          .D = Node.D // TODO: double check this
-        }
-      );
-    } else {
-      return false;
-    }
-  } else if (Node.Height < Params.BaseHeight) { // regular block, 2 children
+  if (Node.Height < Params.BaseHeight) { // regular block, 2 children
     if (GetNode(Node, &N) && N > 0) {
       bool LeftExist = GenerateParticles(
         tree_node{
@@ -2155,14 +2156,13 @@ GenerateParticles(const tree_node& Node) {
       );
       if (!LeftExist) {
         REQUIRE(!RightExist);
-        GenerateParticlesPerNode(Node);
+        GenerateParticlesPerNode(N, Node.Grid);
       }
     } else {
       return false;
     }
   } else if (Node.Height < Params.MaxHeight) { // refinement block, 1 children
     if (GetNode(Node, &N) && N > 0) {
-      // TODO: get the index of the next refinement node (using NNodesAtLeaf)
       i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
       tree_node ChildNode = Node;
       ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
@@ -2172,16 +2172,15 @@ GenerateParticles(const tree_node& Node) {
         .Min = Params.BBox.Min + Node.Grid.From3 * W3,
         .Max = Params.BBox.Min + (Node.Grid.From3 + Node.Grid.Dims3) * W3
       };
-      u8 Bit = 0;
-      while (GetRefNode(ChildNode, &Bit)) {
-        // TODO: the update of BBox.Max and BBox.Min has a bug
+      u8 Left = 0;
+      while (GetRefNode(ChildNode, &Left)) {
         float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-        BBox.Max[D] = BBox.Max[D] - Half * Bit;
-        BBox.Min[D] = BBox.Min[D] + Half * (1 - Bit);
+        if (Left) BBox.Max[D] = Half;
+        else BBox.Min[D] = Half;
         ChildNode.NodeId += NNodesAtLeaf;
         D = i8((D + 1) % Params.NDims);
-        GenerateOneParticle(BBox);
       }
+      GenerateOneParticle(BBox);
     }
   }
 }
@@ -2345,8 +2344,8 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     bool Left = P3[D] < Half;
     Write(Bs, Left);
 //    printf("  nodeidx %llu base block %llu ref block %llu bit %d\n", NodeIdx, BaseBlockIdx, BlockIdx, Left);
-    BBox.Max[D] = BBox.Max[D] - Half * Left;
-    BBox.Min[D] = BBox.Min[D] + Half * (1 - Left);
+    if (Left) BBox.Max[D] = Half;
+    else BBox.Min[D] = Half;
     D = (D + 1) % Params.NDims;
     ++H;
   }
