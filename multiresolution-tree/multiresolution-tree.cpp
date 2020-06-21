@@ -2163,23 +2163,26 @@ GenerateParticles(const tree_node& Node) {
     } else {
       return false;
     }
-  } else if (Node.Height < Params.MaxHeight) { // refinement block, 1 children
+  } else if (Node.Height == Params.BaseHeight) { // refinement block, 1 children
     if (GetNode(Node, &N) && N > 0) {
       i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
       tree_node ChildNode = Node;
+      ChildNode.Height = Node.Height + 1;
       ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
       i8 D = Node.D; // NOTE: we won't be using ChildNode.D
       vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
       bbox BBox{
         .Min = Params.BBox.Min + Node.Grid.From3 * W3,
         .Max = Params.BBox.Min + (Node.Grid.From3 + Node.Grid.Dims3) * W3
       };
       u8 Left = 0;
-      while (GetRefNode(ChildNode, &Left)) {
+      while (ChildNode.Height < Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
         float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
         if (Left) BBox.Max[D] = Half;
         else BBox.Min[D] = Half;
         ChildNode.NodeId += NNodesAtLeaf;
+        ++ChildNode.Height;
         D = i8((D + 1) % Params.NDims);
       }
       GenerateOneParticle(BBox);
@@ -2565,6 +2568,19 @@ main(int Argc, cstr* Argv) {
     FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    u8 MaxHeight = 0;
+    if (!OptVal(Argc, Argv, "--height", &MaxHeight)) {
+      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
+        EXIT_ERROR("missing --height and --accuracy");
+    }
+    if (Params.Accuracy != 0) {
+      MaxHeight = 0;
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+      while (W3.x > Params.Accuracy) { ++MaxHeight; W3.x *= 0.5; }
+      while (W3.y > Params.Accuracy) { ++MaxHeight; W3.y *= 0.5; }
+      while (W3.z > Params.Accuracy) { ++MaxHeight; W3.z *= 0.5; }
+    }
+    Params.MaxHeight = MIN(Params.MaxHeight, MaxHeight);
     ReadMetaFile(Params.InFile);
     BlockStreams.resize(Params.NLevels + 1);
     Blocks.resize(Params.NLevels + 1);
@@ -2576,6 +2592,7 @@ main(int Argc, cstr* Argv) {
       Continue = RefineByLevel();
     }
     if (!Blocks[Params.NLevels].empty()) {
+      Particles.reserve(Blocks[Params.NLevels][0].Nodes[0]);
       i8 D = 0;
       grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
       i8 Level = Params.NLevels - 1;
@@ -2586,7 +2603,7 @@ main(int Argc, cstr* Argv) {
         Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
         TreeNode.D = (D = (D + 1) % Params.NDims);
         TreeNode.Level = Level--;
-        TreeNode.Height = (Height = Height + 1);
+        TreeNode.Height = Height++;
         TreeNode.NodeId = 1;
         GenerateParticles(TreeNode);
         if (Level == 0) {
@@ -2597,7 +2614,6 @@ main(int Argc, cstr* Argv) {
         }
       }
     }
-    // TODO: take as input an accuracy or height to decode
   }
 
   //RandomLevels(P, &Particles);
