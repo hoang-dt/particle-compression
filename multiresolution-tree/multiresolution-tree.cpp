@@ -1538,7 +1538,7 @@ struct block {
   bitstream* Bs = nullptr;
   int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
   block() { Nodes.resize(1 << Params.BlockBits); }
-  block(bitstream* Bs) { this->Bs = Bs; }
+  block(bitstream* Bs) { this->Bs = Bs; InitRead(this->Bs, this->Bs->Stream); }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
@@ -1793,12 +1793,13 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 }
 
 // TODO: and from tree depth to bounding box
+#define POW2(X) (1ull << (X))
 #define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
 //#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
 #define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
-#define NUM_BLOCKS_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits)))
-#define NUM_NODES_AT_LEAF(Level) (1 << (MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level))))
-#define RES_LVL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
+#define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
+#define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
+#define RES_LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   InitRead(Bs, Bs->Stream);
@@ -1808,20 +1809,20 @@ DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     Blocks.resize(BlockIdx * 3 / 2 + 1);
   }
   Blocks[BlockIdx] = block(Bs);
-  const block& CurrBlock = Blocks[BlockIdx];
-  i64 NumBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
-  u64 ParentBlockIdx = BlockIdx - NumBlocksAtLeaf;
-  const auto& ParentBlock = (*AllBlocks)[Level][ParentBlockIdx];
-  REQUIRE(ParentBlock.NParticles <= CurrBlock.BitSet.NBits);
-  int NNodes = ParentBlock.NumNodes();
-  InitRead(Bs, Bs->Stream);
-  FOR(int, I, 0, NNodes) {
-    REQUIRE(ParentBlock.Get(I) <= 1);
-    if (ParentBlock.Get(I) == 1) {
-      bool Bit = Read(Bs);
-      printf("  refinement bit %d\n", Bit);
-    }
-  }
+//  const block& CurrBlock = Blocks[BlockIdx];
+//  i64 NumBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
+//  u64 ParentBlockIdx = BlockIdx - NumBlocksAtLeaf;
+//  const auto& ParentBlock = (*AllBlocks)[Level][ParentBlockIdx];
+//  REQUIRE(ParentBlock.NParticles <= CurrBlock.BitSet.NBits);
+//  int NNodes = ParentBlock.NumNodes();
+//  InitRead(Bs, Bs->Stream);
+//  FOR(int, I, 0, NNodes) {
+//    REQUIRE(ParentBlock.Get(I) <= 1);
+//    if (ParentBlock.Get(I) == 1) {
+//      bool Bit = Read(Bs);
+//      printf("  refinement bit %d\n", Bit);
+//    }
+//  }
 //  ParentBlock.Nodes
   //printf("%lld %lld\n", Block.Get(I), Block.Get(I+1));
 }
@@ -1842,7 +1843,7 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
   if (BlockIdx == 0) { // the parent block is the res block
     REQUIRE(Level < Params.NLevels);
-    Block.Nodes[1] = ResBlock.Nodes[RES_LVL_TO_NODE(Level)];
+    Block.Nodes[1] = ResBlock.Nodes[RES_LEVEL_TO_NODE(Level)];
   }
   for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
     u64 I = NODE_INDEX_IN_BLOCK(K);
@@ -2027,9 +2028,9 @@ RefineByLevel() {
         RightError = 1;
     }
     if (TopBlock.BlockId != 0 && LeftError > 0)
-      Heap.insert(LeftChild, block_priority { .Error = LeftError });
+      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
     if (RightError > 0)
-      Heap.insert(RightChild, block_priority { .Error = RightError });
+      Heap.insert(RightChild, block_priority{ .Error = RightError });
   } else if (TopBlock.Height < Params.MaxHeight) { // refinement level, each block has only one child
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
@@ -2039,23 +2040,24 @@ RefineByLevel() {
     };
 //    LeftError = TopPriority.Error * 0.5f;
     LeftError = 1;
-    Heap.insert(LeftChild, block_priority { .Error = LeftError });
+    Heap.insert(LeftChild, block_priority{ .Error = LeftError });
   }
 
   return true;
 }
 
+enum split_type { ResolutionSplit, SpatialSplit };
+enum side { Left, Right };
 static grid
-SplitGrid(const grid& Grid, int D, bool RSplit, bool Right) {
-  //REQUIRE(IS_EVEN(int(Grid.Dims3[D])));
+SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
   grid Out = Grid;
-  if (RSplit) { // resolution split
-    Out.From3[D] += Right * Out.Stride3[D];
+  if (SplitType == ResolutionSplit) {
+    Out.From3[D] += (Side == Right) * Out.Stride3[D];
     Out.Dims3[D] *= 0.5;
     Out.Stride3[D] *= 2;
   } else { // spatial split
     Out.Dims3[D] *= 0.5;
-    Out.From3[D] += Right * Out.Stride3[D] * Out.Dims3[D];
+    Out.From3[D] += (Side == Right) * Out.Stride3[D] * Out.Dims3[D];
   }
   return Out;
 }
@@ -2141,7 +2143,7 @@ GenerateParticles(const tree_node& Node) {
           .Level = Node.Level,
           .Height = u8(Node.Height + 1),
           .NodeId = Node.NodeId * 2,
-          .Grid = SplitGrid(Node.Grid, Node.D, false, false),
+          .Grid = SplitGrid(Node.Grid, Node.D, SpatialSplit, Left),
           .D = i8((Node.D + 1) % Params.NDims)
         }
       );
@@ -2150,7 +2152,7 @@ GenerateParticles(const tree_node& Node) {
           .Level = Node.Level,
           .Height = u8(Node.Height + 1),
           .NodeId = Node.NodeId * 2 + 1,
-          .Grid = SplitGrid(Node.Grid, Node.D, false, true),
+          .Grid = SplitGrid(Node.Grid, Node.D, SpatialSplit, Right),
           .D = i8((Node.D + 1) % Params.NDims)
         }
       );
@@ -2276,7 +2278,7 @@ struct q_item {
   i8 D;
   i8 Level;
   u8 Height;
-  bool RSplit;
+  split_type SplitType;
 };
 
 struct Range {
@@ -2371,7 +2373,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
     //if (N <= 1) continue;
-    if (Q.RSplit) { // resolution split
+    if (Q.SplitType == ResolutionSplit) { // resolution split
       auto RPred = [W3, &Q](const particle& P) {
         int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
@@ -2388,10 +2390,10 @@ BuildTreeInner(q_item Q, float Accuracy) {
     }
     if (Q.Height < Params.BaseHeight) {
       /* encoding the children (left child in particular) */
-      if (Q.RSplit) {
+      if (Q.SplitType == ResolutionSplit) {
         EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
       } else {
-        EncodeNode(Q.Level - Q.RSplit, Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
+        EncodeNode(Q.Level - (Q.SplitType == ResolutionSplit), Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
         //printf("%lld\n", Mid - Q.Begin);
         //printf("%lld\n", Q.End - Mid);
       }
@@ -2401,27 +2403,27 @@ BuildTreeInner(q_item Q, float Accuracy) {
         Queue.push(q_item{ .Begin = Q.Begin,
                            .End = Mid,
                            .TreeIdx = Q.TreeIdx * 2,
-                           .ResIdx = Q.RSplit ? Q.ResIdx + 2 : Q.ResIdx,
-                           .NodeIdx = Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2,
+                           .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 2 : Q.ResIdx,
+                           .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2,
                            .ParIdx = Q.ParIdx,
-                           .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, false),
+                           .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Left),
                            .D = i8((Q.D + 1) % Params.NDims),
-                           .Level = i8(Q.Level - Q.RSplit),
+                           .Level = i8(Q.Level - (Q.SplitType == ResolutionSplit)),
                            .Height = u8(Q.Height + 1),
-                           .RSplit = N > 1 && Q.RSplit && Q.Level > 1 });
+                           .SplitType = (N > 1 && (Q.SplitType == ResolutionSplit) && Q.Level > 1) ? ResolutionSplit : SpatialSplit });
       }
       if (Mid < Q.End) {
         Queue.push(q_item{ .Begin = Mid,
                            .End = Q.End,
                            .TreeIdx = Q.TreeIdx * 2 + 1,
-                           .ResIdx = Q.RSplit ? Q.ResIdx + 1 : Q.ResIdx,
-                           .NodeIdx = Q.RSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
+                           .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 1 : Q.ResIdx,
+                           .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
                            .ParIdx = Q.ParIdx + Mid - Q.Begin,
-                           .Grid = SplitGrid(Q.Grid, Q.D, Q.RSplit, true),
+                           .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Right),
                            .D = i8((Q.D + 1) % Params.NDims),
                            .Level = Q.Level,
                            .Height = u8(Q.Height + 1),
-                           .RSplit = false });
+                           .SplitType = SpatialSplit });
       }
     } else { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
@@ -2559,7 +2561,7 @@ main(int Argc, cstr* Argv) {
                            .Grid = Grid,
                            .Level = i8(Params.NLevels - 1),
                            .Height = 0,
-                           .RSplit = Params.NLevels > 1 }, Params.Accuracy);
+                           .SplitType = Params.NLevels > 1 ? ResolutionSplit : SpatialSplit }, Params.Accuracy);
     FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -2573,6 +2575,29 @@ main(int Argc, cstr* Argv) {
     while (Continue) {
       Continue = RefineByLevel();
     }
+    if (!Blocks[Params.NLevels].empty()) {
+      i8 D = 0;
+      grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
+      i8 Level = Params.NLevels - 1;
+      u8 Height = 0;
+      while (true) {
+        tree_node TreeNode;
+        TreeNode.Grid = SplitGrid(Grid, D, ResolutionSplit, Right);
+        Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
+        TreeNode.D = (D = (D + 1) % Params.NDims);
+        TreeNode.Level = Level--;
+        TreeNode.Height = (Height = Height + 1);
+        TreeNode.NodeId = 1;
+        GenerateParticles(TreeNode);
+        if (Level == 0) {
+          TreeNode.Level = Level;
+          TreeNode.Grid = Grid;
+          GenerateParticles(TreeNode);
+          break;
+        }
+      }
+    }
+    // TODO: take as input an accuracy or height to decode
   }
 
   //RandomLevels(P, &Particles);
