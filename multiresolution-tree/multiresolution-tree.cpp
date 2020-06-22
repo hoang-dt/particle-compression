@@ -1535,10 +1535,16 @@ static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> b
 struct block {
   std::vector<i64> Nodes; // used when level <= BaseHeight
 //  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
-  bitstream* Bs = nullptr;
+  bitstream Bs;
   int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
   block() { Nodes.resize(1 << Params.BlockBits); }
-  block(bitstream* Bs) { this->Bs = Bs; InitRead(this->Bs, this->Bs->Stream); }
+  block(bitstream* Bs) { 
+    Nodes.resize(Size(Bs->Stream) / sizeof(Nodes[0]) + 1);
+    memcpy(Nodes.data(), Bs->Stream.Data, Size(Bs->Stream));
+    this->Bs.Stream.Data = (byte*)Nodes.data();
+    this->Bs.Stream.Bytes = Bs->Stream.Bytes;
+    InitRead(&this->Bs, this->Bs.Stream); 
+  }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
@@ -1805,7 +1811,7 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 #define RES_LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
-  InitRead(Bs, Bs->Stream);
+  //InitRead(Bs, Bs->Stream);
   REQUIRE(AllBlocks->size() > Level);
   auto& Blocks = (*AllBlocks)[Level];
   if (Blocks.size() <= BlockIdx) {
@@ -2130,10 +2136,10 @@ GetNode(const tree_node& Node, i64* N) {
 INLINE static bool
 GetRefNode(const tree_node& Node, u8* Bit) {
   u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
-  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
+  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Size(Blocks[Node.Level][BlockId].Bs.Stream) == 0)
     return false;
-  const block& Block = Blocks[Node.Level][BlockId];
-  *Bit = Read(Block.Bs);
+  block& Block = Blocks[Node.Level][BlockId];
+  *Bit = Read(&Block.Bs);
   return true;
 }
 
@@ -2184,6 +2190,7 @@ GenerateParticles(const tree_node& Node) {
       u8 Left = 0;
       while (ChildNode.Height < Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
         float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
         if (Left) BBox.Max[D] = Half;
         else BBox.Min[D] = Half;
         ChildNode.NodeId += NNodesAtLeaf;
@@ -2354,7 +2361,7 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
     bool Left = P3[D] < Half;
     Write(Bs, Left);
-//    printf("  nodeidx %llu base block %llu ref block %llu bit %d\n", NodeIdx, BaseBlockIdx, BlockIdx, Left);
+    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BlockIdx, Left);
     if (Left) BBox.Max[D] = Half;
     else BBox.Min[D] = Half;
     D = (D + 1) % Params.NDims;
