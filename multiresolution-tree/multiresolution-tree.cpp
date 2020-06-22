@@ -1585,6 +1585,9 @@ ReadMetaFile(cstr FileName) {
           REQUIRE(Expr->type == SE_STRING);
           snprintf((str)Params.Name, Expr->s.len + 1, "%s", (cstr)Buf.Data + Expr->s.start);
           printf("Name = %s\n", Params.Name);
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "dimensions")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.NDims = Expr->i;
         } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "grid")) {
           REQUIRE(Expr->type == SE_INT);
           Params.Dims3.x = Expr->i;
@@ -2083,6 +2086,7 @@ GenerateOneParticle(const bbox& BBox) {
 /* Generate N random particles inside Grid */
 static void
 GenerateParticlesPerNode(i64 N, const grid& Grid) {
+  if (N == 0) return;
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
   GridPoints.resize(N);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
@@ -2133,12 +2137,12 @@ GetRefNode(const tree_node& Node, u8* Bit) {
   return true;
 }
 
-static bool
+static i64
 GenerateParticles(const tree_node& Node) {
   i64 N = 0;
   if (Node.Height < Params.BaseHeight) { // regular block, 2 children
     if (GetNode(Node, &N) && N > 0) {
-      bool LeftExist = GenerateParticles(
+      i64 LeftN = GenerateParticles(
         tree_node{
           .Level = Node.Level,
           .Height = u8(Node.Height + 1),
@@ -2147,7 +2151,7 @@ GenerateParticles(const tree_node& Node) {
           .D = i8((Node.D + 1) % Params.NDims)
         }
       );
-      bool RightExist = GenerateParticles(
+      i64 RightN = GenerateParticles(
         tree_node{
           .Level = Node.Level,
           .Height = u8(Node.Height + 1),
@@ -2156,12 +2160,13 @@ GenerateParticles(const tree_node& Node) {
           .D = i8((Node.D + 1) % Params.NDims)
         }
       );
-      if (!LeftExist) {
-        REQUIRE(!RightExist);
+      if (LeftN == 0 && RightN == 0) { // generate particles for the parent
         GenerateParticlesPerNode(N, Node.Grid);
+      } else if (LeftN > 0 && RightN == 0) { // generate particles for the right child
+        GenerateParticlesPerNode(N - LeftN, SplitGrid(Node.Grid, Node.D, SpatialSplit, Right));
+      } else if (LeftN == 0 && RightN > 0) { // generate particles for the left child
+        GenerateParticlesPerNode(N - RightN, SplitGrid(Node.Grid, Node.D, SpatialSplit, Left));
       }
-    } else {
-      return false;
     }
   } else if (Node.Height == Params.BaseHeight) { // refinement block, 1 children
     if (GetNode(Node, &N) && N > 0) {
@@ -2188,6 +2193,7 @@ GenerateParticles(const tree_node& Node) {
       GenerateOneParticle(BBox);
     }
   }
+  return N;
 }
 
 /* tree block (including refinement block) */
@@ -2603,7 +2609,7 @@ main(int Argc, cstr* Argv) {
         Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
         TreeNode.D = (D = (D + 1) % Params.NDims);
         TreeNode.Level = Level--;
-        TreeNode.Height = Height++;
+        TreeNode.Height = ++Height;
         TreeNode.NodeId = 1;
         GenerateParticles(TreeNode);
         if (Level == 0) {
