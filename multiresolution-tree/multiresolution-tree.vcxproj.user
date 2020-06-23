@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--action decode --in test.idx --height 6                        </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action encode --ndims 2 --nlevels 3 --height 6 --block 2 --name test --in ../../test.xyz                                                        </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
