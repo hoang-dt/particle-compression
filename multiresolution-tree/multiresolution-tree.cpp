@@ -1742,6 +1742,7 @@ ReadResBlock() {
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   REQUIRE(Level < Params.NLevels);
+  printf("--------- reading level %d block %llu height %d\n", Level, BlockId, Height);
 
   FILE* Fp = nullptr;
   /* read the block offsets if not done so */
@@ -1760,8 +1761,10 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
     FOR(u64, I, 1, NBlocks)
       BlockOffsets[Level][I] += BlockOffsets[Level][I - 1];
   }
-  if (BlockId >= BlockOffsets[Level].size())
+  if (BlockId >= BlockOffsets[Level].size()) {
+    printf("    NOT FOUND !!!!\n");
     return false;
+  }
 
   if (!Fp) 
     Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
@@ -2139,7 +2142,7 @@ GetNode(const tree_node& Node, i64* N) {
 INLINE static bool
 GetRefNode(const tree_node& Node, u8* Bit) {
   u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
-  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() < BlockId || Size(Blocks[Node.Level][BlockId].Bs.Stream) == 0)
+  if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() <= BlockId || Size(Blocks[Node.Level][BlockId].Bs.Stream) == 0)
     return false;
   block& Block = Blocks[Node.Level][BlockId];
   *Bit = Read(&Block.Bs);
@@ -2209,6 +2212,7 @@ GenerateParticles(const tree_node& Node) {
 /* tree block (including refinement block) */
 static void
 WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
+  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
   if (Size(*Bs) > 0) {
     Flush(Bs);
     FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
@@ -2226,6 +2230,7 @@ WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
 /* Write each level to a different file */
 static void
 FlushBlocksToFiles() {
+  printf("--------- flushing blocks\n");
   /* write the resolution tree */
   FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NLevels), "wb");
   REQUIRE(Size(BlockStreams[Params.NLevels]) > 0);
@@ -2238,9 +2243,10 @@ FlushBlocksToFiles() {
   FOR(i8, L, 0, Params.NLevels) {
     WriteBlock(&BlockStreams[L], L, CurrBlocks[L]);
     if (Params.MaxHeight > Params.BaseHeight) { // flush refinement blocks
+      u64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(L);
       FOR(u8, H, 0, Params.MaxHeight - Params.BaseHeight) {
         if (CurrRefBlocks[H].Level == L)
-          WriteBlock(&RefBlockStreams[H], L, CurrRefBlocks[H].BlockId);
+          WriteBlock(&RefBlockStreams[H], L, CurrRefBlocks[H].BlockId + (H + 1) * NBlocksAtLeaf);
       }
     }
     // write an index consisting of all blocks in the file
@@ -2262,7 +2268,7 @@ INLINE static void
 EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-  //printf("level = %d block = %llu\n", Level, BlockIdx);
+  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(&BlockStreams[Level], Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
@@ -2306,7 +2312,7 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     bool NewBlock = BaseBlockIdx != CurrRefBlocks[K].BlockId;
     bool NewLevel = CurrRefBlocks[K].Level != Level;
     if (NewBlock || NewLevel) {
-      WriteBlock(&RefBlockStreams[K], Level, CurrRefBlocks[K].BlockId + (K + 1) * NBlocksAtLeaf);
+      WriteBlock(&RefBlockStreams[K], CurrRefBlocks[K].Level, CurrRefBlocks[K].BlockId + (K + 1) * NBlocksAtLeaf);
       CurrRefBlocks[K].Level = Level;
       CurrRefBlocks[K].BlockId = BaseBlockIdx;
     }
