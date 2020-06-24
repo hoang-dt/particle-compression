@@ -1529,14 +1529,14 @@ static std::vector<vec3i> GridPoints; // stores the grid points that contain the
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
-struct ref_block_stream {
+struct ref_block {
   i8 Level = 0;
-  bitstream Bs;
+  u64 BlockId = 0;
 };
 
-static std::vector<ref_block_stream> RefBlockStreams; // [level] -> bitstream (of the current block)
+static std::vector<bitstream> RefBlockStreams; // [height] -> bitstream (of the current block)
 static std::vector<u64> CurrBlocks; // [level] -> current block id
-static std::vector<u64> CurrRefBlocks; // [level] -> current refinement block id
+static std::vector<ref_block> CurrRefBlocks; // [height] -> current refinement block
 static std::vector<std::vector<i64>> BlockBytes; // [level] -> [block id] -> block size
 static std::vector<std::vector<i64>> BlockOffsets; // [level] -> [block id] -> block offset
 struct block {
@@ -1556,8 +1556,6 @@ struct block {
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 static block_table Blocks;
 
-#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
-#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & ((1ull << Params.BlockBits) - 1))
 
 static bool
 ReadMetaFile(cstr FileName) {
@@ -1744,13 +1742,9 @@ ReadResBlock() {
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   REQUIRE(Level < Params.NLevels);
-  if ((i8)BlockOffsets.size() <= Level) {
-    BlockOffsets.resize(Params.NLevels);
-    BlockStreams.resize(Params.NLevels);
-    RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
-  }
 
   FILE* Fp = nullptr;
+  /* read the block offsets if not done so */
   if (BlockOffsets[Level].empty()) {
     // read the block bytes
     Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
@@ -1763,9 +1757,8 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
     BlockOffsets[Level].resize(NBlocks);
     buffer Buf((byte*)&BlockOffsets[Level][0], (i64)sizeof(BlockOffsets[Level][0]) * NBlocks);
     ReadBackwardBuffer(Fp, &Buf);
-    FOR(u64, I, 1, NBlocks) {
+    FOR(u64, I, 1, NBlocks)
       BlockOffsets[Level][I] += BlockOffsets[Level][I - 1];
-    }
   }
   if (BlockId >= BlockOffsets[Level].size())
     return false;
@@ -1774,7 +1767,7 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
     Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
   FSEEK(Fp, BlockId == 0 ? 0 : BlockOffsets[Level][BlockId - 1], SEEK_SET);
   i64 BlockByte = BlockId == 0 ? BlockOffsets[Level][0] : BlockOffsets[Level][BlockId] - BlockOffsets[Level][BlockId - 1];
-  bitstream& Bs = (Height <= Params.BaseHeight) ? BlockStreams[Level] : RefBlockStreams[Height - Params.BaseHeight - 1].Bs;
+  bitstream& Bs = (Height <= Params.BaseHeight) ? BlockStreams[Level] : RefBlockStreams[Height - Params.BaseHeight - 1];
   GrowToAccomodate(&Bs, BlockByte);
   if (BlockByte != 0)
     fread(Bs.Stream.Data, BlockByte, 1, Fp);
@@ -1812,12 +1805,12 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 
 // TODO: and from tree depth to bounding box
 #define POW2(X) (1ull << (X))
+#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
+#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
 #define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
-//#define NODE_TO_HEIGHT(Level, BlockIdx, NodeIdx) (LOG2_FLOOR((BlockIdx) * (1ll << Params.BlockBits) + (NodeIdx)) + LEVEL_TO_HEIGHT(Level))
-#define NODE_TO_HEIGHT(Level, NodeIdx) (LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level))
 #define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
 #define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
-#define RES_LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
+#define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   //InitRead(Bs, Bs->Stream);
@@ -1861,7 +1854,7 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
   if (BlockIdx == 0) { // the parent block is the res block
     REQUIRE(Level < Params.NLevels);
-    Block.Nodes[1] = ResBlock.Nodes[RES_LEVEL_TO_NODE(Level)];
+    Block.Nodes[1] = ResBlock.Nodes[LEVEL_TO_NODE(Level)];
   }
   for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
     u64 I = NODE_INDEX_IN_BLOCK(K);
@@ -1901,7 +1894,7 @@ INLINE double
 NodeVolume(i8 Level, i64 NodeIdx) {
   vec3f V3 = Params.BBox.Max - Params.BBox.Min;
   float V = V3.x * V3.y * V3.z;
-  int H = NODE_TO_HEIGHT(Level, NodeIdx);
+  int H = LOG2_FLOOR(NodeIdx) + LEVEL_TO_HEIGHT(Level);
   double S = ldexp(V, -H);
   return S;
 }
@@ -1986,8 +1979,6 @@ RefineByLevel() {
     if (Heap.empty()) break;
     Heap.top(TopBlock, TopPriority);
     Heap.pop();
-    if (TopBlock.Level != Params.NLevels && TopBlock.Height > Params.BaseHeight)
-      int Stop = 0;
     if (TopBlock.Level == Params.NLevels)
       BlockExists = ReadResBlock();
     else
@@ -2002,7 +1993,7 @@ RefineByLevel() {
   else if (TopBlock.Height <= Params.BaseHeight)
     DecodeBlock(&BlockStreams[TopBlock.Level], TopBlock.Level, TopBlock.BlockId, &Blocks);
   else // refinement block
-    DecodeRefBlock(&RefBlockStreams[TopBlock.Height - Params.BaseHeight - 1].Bs, TopBlock.Level, TopBlock.BlockId, &Blocks);
+    DecodeRefBlock(&RefBlockStreams[TopBlock.Height - Params.BaseHeight - 1], TopBlock.Level, TopBlock.BlockId, &Blocks);
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
 
   /* enqueue children nodes */
@@ -2225,8 +2216,8 @@ WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
     fclose(Fp);
 
     // book-keeping
-    if (BlockBytes[Level].size() <= BlockIdx)
-      BlockBytes[Level].resize(BlockIdx * 3 / 2 + 1);
+    while (BlockBytes[Level].size() <= BlockIdx)
+      BlockBytes[Level].push_back(0);
     BlockBytes[Level][BlockIdx] = Size(*Bs);
     Rewind(Bs);
   }
@@ -2237,6 +2228,7 @@ static void
 FlushBlocksToFiles() {
   /* write the resolution tree */
   FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Params.NLevels), "wb");
+  REQUIRE(Size(BlockStreams[Params.NLevels]) > 0);
   Flush(&BlockStreams[Params.NLevels]);
   fwrite(BlockStreams[Params.NLevels].Stream.Data, Size(BlockStreams[Params.NLevels]), 1, Fp);
   fclose(Fp);
@@ -2245,20 +2237,19 @@ FlushBlocksToFiles() {
   REQUIRE(BlockStreams.size() == Params.NLevels + 1);
   FOR(i8, L, 0, Params.NLevels) {
     WriteBlock(&BlockStreams[L], L, CurrBlocks[L]);
-    u64 NBlocks = CurrBlocks[L] + 1;
-    if (Params.MaxHeight > Params.BaseHeight) {
-      i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(L);
-      i8 H = (CurrRefBlocks[L] - 2 * NBlocksAtLeaf) / NBlocksAtLeaf;
-      WriteBlock(&RefBlockStreams[H].Bs, L, CurrRefBlocks[L]);
-      NBlocks = CurrRefBlocks[L] + 1;
+    if (Params.MaxHeight > Params.BaseHeight) { // flush refinement blocks
+      FOR(u8, H, 0, Params.MaxHeight - Params.BaseHeight) {
+        if (CurrRefBlocks[H].Level == L)
+          WriteBlock(&RefBlockStreams[H], L, CurrRefBlocks[H].BlockId);
+      }
     }
     // write an index consisting of all blocks in the file
     // TODO: compress the index?
     // TODO: if too many blocks have 0 bytes, maybe we can write a sparse index
     FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, L), "ab");
-    FOR(u64, BlockIdx, 0, NBlocks) {
+    u64 NBlocks = BlockBytes[L].size();
+    FOR(u64, BlockIdx, 0, NBlocks)
       fwrite(&BlockBytes[L][BlockIdx], sizeof(i64), 1, Fp);
-    }
     fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
     fclose(Fp);
   }
@@ -2272,7 +2263,7 @@ EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
   //printf("level = %d block = %llu\n", Level, BlockIdx);
-  if (BlockIdx > CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
+  if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(&BlockStreams[Level], Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
   }
@@ -2293,6 +2284,43 @@ EncodeResNode(i64 M, i64 N) {
   // TODO: use binomial coding
   GrowToAccomodate(&BlockStreams[Params.NLevels], 8);
   WriteVarByte(&BlockStreams[Params.NLevels], N);
+}
+
+/* Encode particle refinement bits */
+static void
+EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
+  assert(BBox.Min.x <= Pos.x && BBox.Min.y <= Pos.y && BBox.Min.z <= Pos.z);
+  assert(BBox.Max.x >= Pos.x && BBox.Max.y >= Pos.y && BBox.Max.z >= Pos.z);
+  vec3f P3 = Pos;
+  u8 H = Params.BaseHeight + 1;
+  i8 D = Params.BaseHeight % Params.NDims;
+  u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
+  i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
+  while (H <= Params.MaxHeight) {
+    i8 K = H - Params.BaseHeight - 1;
+    if (CurrRefBlocks[K].BlockId == u64(-1))
+      CurrRefBlocks[K].BlockId = BaseBlockIdx;
+    if (CurrRefBlocks[K].Level == -1)
+      CurrRefBlocks[K].Level = Level;
+    //u64 BlockIdx = BaseBlockIdx + (K + 1) * NBlocksAtLeaf;
+    bool NewBlock = BaseBlockIdx != CurrRefBlocks[K].BlockId;
+    bool NewLevel = CurrRefBlocks[K].Level != Level;
+    if (NewBlock || NewLevel) {
+      WriteBlock(&RefBlockStreams[K], Level, CurrRefBlocks[K].BlockId + (K + 1) * NBlocksAtLeaf);
+      CurrRefBlocks[K].Level = Level;
+      CurrRefBlocks[K].BlockId = BaseBlockIdx;
+    }
+    bitstream* Bs = &RefBlockStreams[K];
+    GrowToAccomodate(Bs, 1);
+    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+    bool Left = P3[D] < Half;
+    Write(Bs, Left);
+    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BaseBlockIdx, Left);
+    if (Left) BBox.Max[D] = Half;
+    else BBox.Min[D] = Half;
+    D = (D + 1) % Params.NDims;
+    ++H;
+  }
 }
 
 INLINE static void // N is the number of particles under a node
@@ -2358,39 +2386,6 @@ struct Range {
 //  }}
 //}
 
-/* Encode particle refinement bits */
-static void
-EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
-  assert(BBox.Min.x <= Pos.x && BBox.Min.y <= Pos.y && BBox.Min.z <= Pos.z);
-  assert(BBox.Max.x >= Pos.x && BBox.Max.y >= Pos.y && BBox.Max.z >= Pos.z);
-  vec3f P3 = Pos;
-  u8 H = Params.BaseHeight + 1;
-  i8 D = Params.BaseHeight % Params.NDims;
-  u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-  i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
-  // TODO: CONTINUE from here: this won't work (CurrRefBlocks is not enough)
-  while (H <= Params.MaxHeight) {
-    i8 K = H - Params.BaseHeight - 1;
-    //u64 BlockIdx = BaseBlockIdx + (K + 1) * NBlocksAtLeaf;
-    u64 BlockIdxAtLeaf = BaseBlockIdx - NBlocksAtLeaf;
-    if (BlockIdx != CurrRefBlocks[Level] + ) {
-      REQUIRE(K >= 1);
-      WriteBlock(&RefBlockStreams[K - 1].Bs, Level, CurrRefBlocks[K].BlockId);
-      CurrRefBlocks[K].BlockId = BlockIdx;
-    }
-    bitstream* Bs = &BlockStreams[Level];
-    GrowToAccomodate(Bs, 1);
-    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-    bool Left = P3[D] < Half;
-    Write(Bs, Left);
-    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BlockIdx, Left);
-    if (Left) BBox.Max[D] = Half;
-    else BBox.Min[D] = Half;
-    D = (D + 1) % Params.NDims;
-    ++H;
-  }
-}
-
 // TODO: write a routine to read from disk and reconstruct the tree/particles
 // TODO: write a routine to compute the PSNR of positions
 // TODO: what if we have 0 particles? should we stop the resolution divide?
@@ -2410,21 +2405,21 @@ BuildTreeInner(q_item Q, float Accuracy) {
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
     if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
     if (Stop) continue;
-    //if (N <= 1) continue;
+    //if (N <= 1) continue; // enable this to stop the tree construction after the base height
     if (Q.SplitType == ResolutionSplit) { // resolution split
-      auto RPred = [W3, &Q](const particle& P) {
+      auto Pred = [W3, &Q](const particle& P) {
         int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
         assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
         Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
         return IS_EVEN(Bin);
       };
-      Mid = partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
+      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
     } else { // spatial split
       float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
       float M = Params.BBox.Min[Q.D] + W3[Q.D] * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
-      auto SPred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
-      Mid = partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+      auto Pred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
+      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
     }
     if (Q.Height < Params.BaseHeight) {
       /* encoding the children (left child in particular) */
@@ -2438,30 +2433,34 @@ BuildTreeInner(q_item Q, float Accuracy) {
       /* enqueue children */
       //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
       if (Q.Begin < Mid) {
-        Queue.push(q_item{ .Begin = Q.Begin,
-                           .End = Mid,
-                           .TreeIdx = Q.TreeIdx * 2,
-                           .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 2 : Q.ResIdx,
-                           .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2,
-                           .ParIdx = Q.ParIdx,
-                           .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Left),
-                           .D = i8((Q.D + 1) % Params.NDims),
-                           .Level = i8(Q.Level - (Q.SplitType == ResolutionSplit)),
-                           .Height = u8(Q.Height + 1),
-                           .SplitType = (N > 1 && (Q.SplitType == ResolutionSplit) && Q.Level > 1) ? ResolutionSplit : SpatialSplit });
+        Queue.push(q_item{
+          .Begin = Q.Begin,
+          .End = Mid,
+          .TreeIdx = Q.TreeIdx * 2,
+          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 2 : Q.ResIdx,
+          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2,
+          .ParIdx = Q.ParIdx,
+          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Left),
+          .D = i8((Q.D + 1) % Params.NDims),
+          .Level = i8(Q.Level - (Q.SplitType == ResolutionSplit)),
+          .Height = u8(Q.Height + 1),
+          .SplitType = (N > 1 && (Q.SplitType == ResolutionSplit) && Q.Level > 1) ? ResolutionSplit : SpatialSplit
+        });
       }
       if (Mid < Q.End) {
-        Queue.push(q_item{ .Begin = Mid,
-                           .End = Q.End,
-                           .TreeIdx = Q.TreeIdx * 2 + 1,
-                           .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 1 : Q.ResIdx,
-                           .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
-                           .ParIdx = Q.ParIdx + Mid - Q.Begin,
-                           .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Right),
-                           .D = i8((Q.D + 1) % Params.NDims),
-                           .Level = Q.Level,
-                           .Height = u8(Q.Height + 1),
-                           .SplitType = SpatialSplit });
+        Queue.push(q_item{
+          .Begin = Mid,
+          .End = Q.End,
+          .TreeIdx = Q.TreeIdx * 2 + 1,
+          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 1 : Q.ResIdx,
+          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
+          .ParIdx = Q.ParIdx + Mid - Q.Begin,
+          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Right),
+          .D = i8((Q.D + 1) % Params.NDims),
+          .Level = Q.Level,
+          .Height = u8(Q.Height + 1),
+          .SplitType = SpatialSplit
+        });
       }
     } else { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
@@ -2580,10 +2579,10 @@ main(int Argc, cstr* Argv) {
     BlockStreams.resize(Params.NLevels + 1);
     RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
     CurrBlocks.resize(Params.NLevels, 0);
-    CurrRefBlocks.resize(Params.NLevels, 0);
-    FOR(i8, Level, 0, Params.NLevels) {
-      i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
-      CurrRefBlocks[Level] = 2 * NBlocksAtLeaf;
+    CurrRefBlocks.resize(Params.MaxHeight - Params.BaseHeight);
+    FOR(u8, H, 0, CurrRefBlocks.size()) {
+      CurrRefBlocks[H].Level = -1;
+      CurrRefBlocks[H].BlockId = u64(-1);
     }
     BlockBytes.resize(Params.NLevels);
     EncodeRoot(Particles.size());
@@ -2623,7 +2622,9 @@ main(int Argc, cstr* Argv) {
     }
     Params.MaxHeight = MIN(Params.MaxHeight, MaxHeight);
     ReadMetaFile(Params.InFile);
+    BlockOffsets.resize(Params.NLevels);
     BlockStreams.resize(Params.NLevels + 1);
+    RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
     Blocks.resize(Params.NLevels + 1);
     Blocks[Params.NLevels].resize(1);
     Heap.insert(block_data{ .Level = Params.NLevels, .BlockId = 0 },
