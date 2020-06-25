@@ -2284,7 +2284,7 @@ INLINE static void
 EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
+//  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
     WriteBlock(&BlockStreams[Level], Level, CurrBlocks[Level]);
     CurrBlocks[Level] = BlockIdx;
@@ -2337,7 +2337,7 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
     bool Left = P3[D] < Half;
     Write(Bs, Left);
-    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BaseBlockIdx + (K + 1) * NUM_BLOCKS_AT_LEAF(Level), Left);
+//    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BaseBlockIdx + (K + 1) * NUM_BLOCKS_AT_LEAF(Level), Left);
     if (Left) BBox.Max[D] = Half;
     else BBox.Min[D] = Half;
     D = (D + 1) % Params.NDims;
