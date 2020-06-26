@@ -1814,7 +1814,7 @@ DecodeResBlock(bitstream* Bs, block* Block) {
     Block->Nodes[I    ] = DecodeNode(Bs, M);
     Block->Nodes[I - 1] = M - Block->Nodes[I];
     Block->NParticles += M;
-    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
+//    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
     assert(RES_PARENT(I) == RES_PARENT(I - 1));
   }
 }
@@ -1879,7 +1879,7 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     if (M > 0) {
       Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
       Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
-      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
+//      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
     }
   }
 }
@@ -2003,7 +2003,7 @@ RefineByLevel() {
   if (!BlockExists)
     return false;
 
-  printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
+//  printf("level %d block %llu\n", TopBlock.Level, TopBlock.BlockId);
   if (TopBlock.Level == Params.NLevels)
     DecodeResBlock(&BlockStreams[TopBlock.Level], &Blocks[TopBlock.Level][0]);
   else if (TopBlock.Height <= Params.BaseHeight)
@@ -2209,7 +2209,7 @@ GenerateParticles(const tree_node& Node) {
       u8 Left = 0;
       while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
         float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
+//        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
         if (Left) BBox.Max[D] = Half;
         else BBox.Min[D] = Half;
         ChildNode.NodeId += NNodesAtLeaf;
@@ -2239,7 +2239,10 @@ WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
   }
 }
 
-// TODO: CONTINUE from here: need to write block id to the file together with the offsets
+// TODO: CONTINUE from here: fix the code so that we really refine by levels
+// TODO: CONTINUE from here: re-implement the refine by error
+// TODO: CONTINUE from here: output an .xyz
+// TODO: CONTINUE from here: 
 /* Write each level to a different file */
 static void
 FlushBlocksToFiles() {
