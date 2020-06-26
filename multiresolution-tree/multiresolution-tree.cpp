@@ -1897,10 +1897,16 @@ INLINE bool operator<(const block_data& Lhs,  const block_data& Rhs) {
 }
 
 struct block_priority {
+  i8 Level = 0;
+  u64 BlockId = 0;
   f32 Error = 0;
 };
 INLINE bool operator<(const block_priority& Lhs, const block_priority& Rhs) {
-  return Lhs.Error > Rhs.Error;
+  bool LvlLess   = Lhs.Level > Rhs.Level;
+  bool LvlEq     = Lhs.Level == Rhs.Level;
+  bool BlockLess = Lhs.BlockId > Rhs.BlockId;
+  bool BlockEq   = Lhs.BlockId == Rhs.BlockId;
+  return LvlLess || (LvlEq && (BlockLess || (BlockEq && Lhs.Error > Rhs.Error)));
 }
 
 DynamicHeap<block_data, block_priority> Heap;
@@ -2025,21 +2031,21 @@ RefineByLevel() {
         continue;
       i8 Level = (2 * (Params.NLevels - 1) - (NodeIdx - 1)) / 2;
       // NOTE: we have only one child instead of two (BlockBits >= 1)
-      LeftChild  = block_data {
+      LeftChild  = block_data{
         .Level   = Level,
         .Height  = u8(LEVEL_TO_HEIGHT(Level)),
         .BlockId = 0
       };
       LeftError = 1;
-      Heap.insert(LeftChild, block_priority { .Error = LeftError });
+      Heap.insert(LeftChild, block_priority{.Level = Level, .BlockId = 0, .Error = LeftError});
     }
   } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
-    LeftChild  = block_data {
+    LeftChild  = block_data{
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId * 2
     };
-    RightChild = block_data {
+    RightChild = block_data{
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId * 2 + 1
@@ -2056,9 +2062,9 @@ RefineByLevel() {
         RightError = 1;
     }
     if (TopBlock.BlockId != 0 && LeftError > 0)
-      Heap.insert(LeftChild, block_priority{ .Error = LeftError });
+      Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
     if (RightError > 0)
-      Heap.insert(RightChild, block_priority{ .Error = RightError });
+      Heap.insert(RightChild, block_priority{.Level = RightChild.Level, .BlockId = RightChild.BlockId, .Error = RightError});
   } else if (TopBlock.Height < Params.MaxHeight) { // refinement level, each block has only one child
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
@@ -2068,7 +2074,7 @@ RefineByLevel() {
     };
 //    LeftError = TopPriority.Error * 0.5f;
     LeftError = 1;
-    Heap.insert(LeftChild, block_priority{ .Error = LeftError });
+    Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
   }
 
   return true;
