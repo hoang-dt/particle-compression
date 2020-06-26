@@ -1452,7 +1452,7 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   fprintf(Fp, "%zu\n", NParticles);
   fprintf(Fp, "dummy\n");
   FOR_EACH (P3, Begin, End) {
-    fprintf(Fp, "C %f %f %f\n", P3->x, P3->y, P3->z);
+    fprintf(Fp, "C %f %f %f\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
   }
   fclose(Fp);
 }
@@ -2036,6 +2036,8 @@ RefineByLevel() {
         .Height  = u8(LEVEL_TO_HEIGHT(Level)),
         .BlockId = 0
       };
+      if (LeftChild.Height > Params.MaxHeight)
+        continue;
       LeftError = 1;
       Heap.insert(LeftChild, block_priority{.Level = Level, .BlockId = 0, .Error = LeftError});
     }
@@ -2045,6 +2047,8 @@ RefineByLevel() {
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId * 2
     };
+    if (LeftChild.Height > Params.MaxHeight || RightChild.Height > Params.MaxHeight)
+      return false;
     RightChild = block_data{
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
@@ -2052,7 +2056,7 @@ RefineByLevel() {
     };
     FOR (int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
-      u64 GlobalNodeIdx = TopBlock.BlockId * (1ll << Params.BlockBits) + NodeIdx;
+      u64 GlobalNodeIdx = TopBlock.BlockId * POW2(Params.BlockBits) + NodeIdx;
       u64 ChildrenBlockIdx = NODE_TO_BLOCK_INDEX(GlobalNodeIdx * 2);
       if (ChildrenBlockIdx == TopBlock.BlockId) continue;
       assert(ChildrenBlockIdx == LeftChild.BlockId || ChildrenBlockIdx == RightChild.BlockId);
@@ -2069,9 +2073,11 @@ RefineByLevel() {
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
-      .Height  = u8(TopBlock.Height + 1), // TODO: this is not quite true (the block may occupy more than one height)
+      .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId + NBlocksAtLeaf
     };
+    if (LeftChild.Height > Params.MaxHeight)
+      return false;
 //    LeftError = TopPriority.Error * 0.5f;
     LeftError = 1;
     Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
@@ -2527,14 +2533,14 @@ ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 E
 
 static void
 RandomLevels(std::vector<vec3f>* Points) {
-  std::random_device Rd;
-  std::mt19937 G(Rd());
-  shuffle(Points->begin(), Points->end(), G);
-  auto Size = Points->size();
-  FOR (int, I, 0, 5) {
-    WriteXYZ(PRINT("random-particles-%d.xyz", I), RANGE(*Points, Size / 2, Size));
-    Size /= 2;
-  }
+  //std::random_device Rd;
+  //std::mt19937 G(Rd());
+  //shuffle(Points->begin(), Points->end(), G);
+  //auto Size = Points->size();
+  //FOR (int, I, 0, 5) {
+  //  WriteXYZ(PRINT("random-particles-%d.xyz", I), RANGE(*Points, Size / 2, Size));
+  //  Size /= 2;
+  //}
 }
 
 static void
@@ -2639,27 +2645,30 @@ main(int Argc, cstr* Argv) {
     FlushBlocksToFiles();
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     u8 MaxHeight = 0;
+    f32 Accuracy = 0;
     if (!OptVal(Argc, Argv, "--height", &MaxHeight)) {
-      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
+      if (!OptVal(Argc, Argv, "--accuracy", &Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
-    if (Params.Accuracy != 0) {
+    ReadMetaFile(Params.InFile);
+    if (Accuracy != 0) {
       MaxHeight = 0;
       vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-      while (W3.x > Params.Accuracy) { ++MaxHeight; W3.x *= 0.5; }
-      while (W3.y > Params.Accuracy) { ++MaxHeight; W3.y *= 0.5; }
-      while (W3.z > Params.Accuracy) { ++MaxHeight; W3.z *= 0.5; }
+      while (W3.x > Accuracy) { ++MaxHeight; W3.x *= 0.5; }
+      while (W3.y > Accuracy) { ++MaxHeight; W3.y *= 0.5; }
+      while (W3.z > Accuracy) { ++MaxHeight; W3.z *= 0.5; }
     }
-    Params.MaxHeight = MIN(Params.MaxHeight, MaxHeight);
-    ReadMetaFile(Params.InFile);
+    Params.MaxHeight = MAX(MIN(Params.MaxHeight, MaxHeight), Params.BaseHeight);
+    Params.Accuracy = Accuracy;
     BlockOffsets.resize(Params.NLevels);
     BlockStreams.resize(Params.NLevels + 1);
     RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
+    printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
     Blocks.resize(Params.NLevels + 1);
     Blocks[Params.NLevels].resize(1);
-    Heap.insert(block_data{ .Level = Params.NLevels, .BlockId = 0 },
-                block_priority{ .Error = 0 });
+    Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
     bool Continue = true;
     while (Continue) {
       Continue = RefineByLevel();
@@ -2686,6 +2695,7 @@ main(int Argc, cstr* Argv) {
           break;
         }
       }
+      WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     }
   }
 
