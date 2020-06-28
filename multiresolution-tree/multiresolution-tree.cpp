@@ -2067,9 +2067,9 @@ RefineByLevel() {
     }
     if (TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
       Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
-    if (RightError > 0)
+    if (RightError > 0 && RightChild.Height <= Params.MaxHeight)
       Heap.insert(RightChild, block_priority{.Level = RightChild.Level, .BlockId = RightChild.BlockId, .Error = RightError});
-  } else if (TopBlock.Height < Params.MaxHeight && RightChild.Height <= Params.MaxHeight) { // refinement level, each block has only one child
+  } else if (TopBlock.Height < Params.MaxHeight) { // refinement level, each block has only one child
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
