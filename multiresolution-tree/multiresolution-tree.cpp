@@ -1750,8 +1750,6 @@ ReadResBlock() {
 
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
-  if (Level == 0 && BlockId == 0)
-    int Stop = 0;
   REQUIRE(Level < Params.NLevels);
   printf("--------- reading level %d block %llu height %d\n", Level, BlockId, Height);
 
@@ -1786,7 +1784,7 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
 
   if (!Fp) 
     Fp = fopen(PRINT("%s-%d.bin", Params.Name, Level), "rb");
-  FSEEK(Fp, BlockId == 0 ? 0 : It->Size, SEEK_SET);
+  FSEEK(Fp, It->Size, SEEK_SET);
   bitstream& Bs = (Height <= Params.BaseHeight) ? BlockStreams[Level] : RefBlockStreams[Height - Params.BaseHeight - 1];
   Rewind(&Bs);
   GrowToAccomodate(&Bs, MaxBlockSize);
@@ -1879,8 +1877,6 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     u64 J = K / 2; // (global) parent index
     i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
     if (M > 0) {
-      if (Level == 0 && BlockIdx == 0)
-        int Stop = 0;
       Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
       Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
       assert(Block.Nodes[I] >= 0 && Block.Nodes[I] <= Params.NParticles);
@@ -2179,6 +2175,7 @@ GetRefNode(const tree_node& Node, u8* Bit) {
 static i64
 GenerateParticles(const tree_node& Node) {
   REQUIRE(Node.NodeId != 0);
+  assert(Node.Grid.Dims3.x >= 1 && Node.Grid.Dims3.y >= 1 && Node.Grid.Dims3.z >= 1);
   i64 N = 0;
   if (Node.Height < Params.BaseHeight) { // regular node, 2 children
     if (GetNode(Node, &N) && N > 0) {
@@ -2241,8 +2238,6 @@ GenerateParticles(const tree_node& Node) {
 /* tree block (including refinement block) */
 static void
 WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
-  if (Level == 0 && BlockIdx == 0)
-    int Stop = 0;
   printf("--------- writing level %d block %llu\n", Level, BlockIdx);
   if (Size(*Bs) > 0) {
     Flush(Bs);
@@ -2304,8 +2299,6 @@ FlushBlocksToFiles() {
 INLINE static void
 EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
-  if (Level == 0)
-    int Stop = 0;
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
 //  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
@@ -2687,17 +2680,16 @@ main(int Argc, cstr* Argv) {
       grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
       i8 Level = Params.NLevels - 1;
       u8 Height = 0;
-      while (true) {
-        if (Level == 0) {
-          GenerateParticles(tree_node{
-            .Level = Level,
-            .Height = 0,
-            .NodeId = 1,
-            .Grid = Grid,
-            .D = 0
-          });
-          break;
-        } else {
+      if (Params.NLevels == 1) {
+        GenerateParticles(tree_node{
+          .Level = Level,
+          .Height = 0,
+          .NodeId = 1,
+          .Grid = Grid,
+          .D = 0
+        });
+      } else {
+        while (true) {
           GenerateParticles(tree_node{
             .Level = Level,
             .Height = u8(Height + 1),
@@ -2709,6 +2701,16 @@ main(int Argc, cstr* Argv) {
           D = (D + 1) % Params.NDims;
           --Level;
           ++Height;
+          if (Level == 0) {
+            GenerateParticles(tree_node{
+              .Level = Level,
+              .Height = Height,
+              .NodeId = 1,
+              .Grid = Grid,
+              .D = D
+            });
+            break;
+          } 
         }
       }
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
