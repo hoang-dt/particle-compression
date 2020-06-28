@@ -1750,6 +1750,8 @@ ReadResBlock() {
 
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
+  if (Level == 0 && BlockId == 0)
+    int Stop = 0;
   REQUIRE(Level < Params.NLevels);
   printf("--------- reading level %d block %llu height %d\n", Level, BlockId, Height);
 
@@ -1877,8 +1879,12 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     u64 J = K / 2; // (global) parent index
     i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
     if (M > 0) {
+      if (Level == 0 && BlockIdx == 0)
+        int Stop = 0;
       Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
       Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
+      assert(Block.Nodes[I] >= 0 && Block.Nodes[I] <= Params.NParticles);
+      assert(Block.Nodes[I + 1] >= 0 && Block.Nodes[I + 1] <= Params.NParticles);
 //      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
     }
   }
@@ -2018,14 +2024,14 @@ RefineByLevel() {
     DecodeRefBlock(&RefBlockStreams[TopBlock.Height - Params.BaseHeight - 1], TopBlock.Level, TopBlock.BlockId, &Blocks);
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
 
-  /* enqueue children nodes */
+  /* enqueue children blocks */
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
   auto& Nodes = Blocks[TopBlock.Level][TopBlock.BlockId].Nodes;
   if (TopBlock.Level == Params.NLevels) { // resolution block, one child for each non-even node
     int NNodes = Params.NLevels * 2 - 1;
     REQUIRE(NNodes == Nodes.size());
-    FOR (int, NodeIdx, 0, (int)Nodes.size()) {
+    FOR(int, NodeIdx, 0, NNodes) {
       if (Nodes[NodeIdx] == 0) continue;
       if (NodeIdx + 1 != NNodes && IS_EVEN(NodeIdx))
         continue;
@@ -2033,54 +2039,52 @@ RefineByLevel() {
       // NOTE: we have only one child instead of two (BlockBits >= 1)
       LeftChild  = block_data{
         .Level   = Level,
-        .Height  = u8(LEVEL_TO_HEIGHT(Level)),
+        .Height  = u8(LEVEL_TO_HEIGHT(Level)), // NOTE: assume that the child block implicitly contains the level-root node
         .BlockId = 0
       };
-      if (LeftChild.Height > Params.MaxHeight)
-        continue;
-      LeftError = 1;
-      Heap.insert(LeftChild, block_priority{.Level = Level, .BlockId = 0, .Error = LeftError});
+      if (LeftChild.Height <= Params.MaxHeight) {
+        LeftError = 1;
+        Heap.insert(LeftChild, block_priority{.Level = Level, .BlockId = 0, .Error = LeftError});
+      }
     }
   } else if (TopBlock.Height < Params.BaseHeight) { // regular block, each having 2 children
     LeftChild  = block_data{
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
-      .BlockId = TopBlock.BlockId * 2
+      .BlockId = TopBlock.BlockId * 2 // NOTE: if BlockId == 0, the true (only) child is the right child
     };
-    if (LeftChild.Height > Params.MaxHeight || RightChild.Height > Params.MaxHeight)
-      return false;
     RightChild = block_data{
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId * 2 + 1
     };
-    FOR (int, NodeIdx, 0, (int)Nodes.size()) {
+    FOR(int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
       u64 GlobalNodeIdx = TopBlock.BlockId * POW2(Params.BlockBits) + NodeIdx;
       u64 ChildrenBlockIdx = NODE_TO_BLOCK_INDEX(GlobalNodeIdx * 2);
-      if (ChildrenBlockIdx == TopBlock.BlockId) continue;
+      if (ChildrenBlockIdx == TopBlock.BlockId) continue; // NOTE: to avoid parent block 0 and child block 0
       assert(ChildrenBlockIdx == LeftChild.BlockId || ChildrenBlockIdx == RightChild.BlockId);
       if (ChildrenBlockIdx == LeftChild.BlockId)
         LeftError = 1;
       else
         RightError = 1;
     }
-    if (TopBlock.BlockId != 0 && LeftError > 0)
+    if (TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
       Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
     if (RightError > 0)
       Heap.insert(RightChild, block_priority{.Level = RightChild.Level, .BlockId = RightChild.BlockId, .Error = RightError});
-  } else if (TopBlock.Height < Params.MaxHeight) { // refinement level, each block has only one child
+  } else if (TopBlock.Height < Params.MaxHeight && RightChild.Height <= Params.MaxHeight) { // refinement level, each block has only one child
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
     LeftChild  = block_data {
       .Level   = TopBlock.Level,
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId + NBlocksAtLeaf
     };
-    if (LeftChild.Height > Params.MaxHeight)
-      return false;
+    if (LeftChild.Height <= Params.MaxHeight) {
 //    LeftError = TopPriority.Error * 0.5f;
-    LeftError = 1;
-    Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
+      LeftError = 1;
+      Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
+    }
   }
 
   return true;
@@ -2112,7 +2116,6 @@ struct tree_node {
 
 INLINE static void
 GenerateOneParticle(const bbox& BBox) {
-  // TODO
   f32 Rx = f32(rand()) / f32(RAND_MAX);
   f32 Ry = f32(rand()) / f32(RAND_MAX);
   f32 Rz = f32(rand()) / f32(RAND_MAX);
@@ -2139,16 +2142,16 @@ GenerateParticlesPerNode(i64 N, const grid& Grid) {
     } else {
       ++NElems;
       i64 J = rand() % NElems; // exclusive
-      if (J < N) {
+      if (J < N)
         GridPoints[J] = vec3i(X, Y, Z);
-      }
     }
     ++I;
   }}}
   FOR_EACH(P, GridPoints) {
-    bbox BBox;
-    BBox.Min = Params.BBox.Min + (vec3f(*P) + Grid.From3) * W3;
-    BBox.Max = Params.BBox.Min + (vec3f(*P) + Grid.From3 + 1) * W3;
+    bbox BBox{
+      .Min = Params.BBox.Min + (vec3f(*P) + Grid.From3) * W3,
+      .Max = Params.BBox.Min + (vec3f(*P) + Grid.From3 + 1) * W3
+    };
     GenerateOneParticle(BBox);
   }
 }
@@ -2159,7 +2162,6 @@ GetNode(const tree_node& Node, i64* N) {
   if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() <= BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
     return false;
   const block& Block = Blocks[Node.Level][BlockId];
-  REQUIRE(Block.Nodes.size() > 0);
   *N = Block.Nodes[NODE_INDEX_IN_BLOCK(Node.NodeId)];
   return true;
 }
@@ -2176,9 +2178,11 @@ GetRefNode(const tree_node& Node, u8* Bit) {
 
 static i64
 GenerateParticles(const tree_node& Node) {
+  REQUIRE(Node.NodeId != 0);
   i64 N = 0;
-  if (Node.Height < Params.BaseHeight) { // regular block, 2 children
+  if (Node.Height < Params.BaseHeight) { // regular node, 2 children
     if (GetNode(Node, &N) && N > 0) {
+      REQUIRE(N <= Params.NParticles);
       i64 LeftN = GenerateParticles(
         tree_node{
           .Level = Node.Level,
@@ -2205,8 +2209,9 @@ GenerateParticles(const tree_node& Node) {
         GenerateParticlesPerNode(N - RightN, SplitGrid(Node.Grid, Node.D, SpatialSplit, Left));
       }
     }
-  } else if (Node.Height == Params.BaseHeight) { // refinement block, 1 children
+  } else if (Node.Height == Params.BaseHeight) { // refinement node, 1 children
     if (GetNode(Node, &N) && N > 0) {
+      REQUIRE(N <= Params.NParticles);
       i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
       tree_node ChildNode = Node;
       ChildNode.Height = Node.Height + 1;
@@ -2216,14 +2221,13 @@ GenerateParticles(const tree_node& Node) {
       assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
       bbox BBox{
         .Min = Params.BBox.Min + Node.Grid.From3 * W3,
-        .Max = Params.BBox.Min + (Node.Grid.From3 + Node.Grid.Dims3) * W3
+        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
       };
       u8 Left = 0;
       while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
         float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
 //        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
-        if (Left) BBox.Max[D] = Half;
-        else BBox.Min[D] = Half;
+        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
         ChildNode.NodeId += NNodesAtLeaf;
         ++ChildNode.Height;
         D = i8((D + 1) % Params.NDims);
@@ -2237,6 +2241,8 @@ GenerateParticles(const tree_node& Node) {
 /* tree block (including refinement block) */
 static void
 WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
+  if (Level == 0 && BlockIdx == 0)
+    int Stop = 0;
   printf("--------- writing level %d block %llu\n", Level, BlockIdx);
   if (Size(*Bs) > 0) {
     Flush(Bs);
@@ -2298,6 +2304,8 @@ FlushBlocksToFiles() {
 INLINE static void
 EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   // TODO: use binomial coding
+  if (Level == 0)
+    int Stop = 0;
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
 //  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
   if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
@@ -2680,19 +2688,27 @@ main(int Argc, cstr* Argv) {
       i8 Level = Params.NLevels - 1;
       u8 Height = 0;
       while (true) {
-        tree_node TreeNode;
-        TreeNode.Grid = SplitGrid(Grid, D, ResolutionSplit, Right);
-        Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
-        TreeNode.D = (D = (D + 1) % Params.NDims);
-        TreeNode.Level = Level--;
-        TreeNode.Height = ++Height;
-        TreeNode.NodeId = 1;
-        GenerateParticles(TreeNode);
         if (Level == 0) {
-          TreeNode.Level = Level;
-          TreeNode.Grid = Grid;
-          GenerateParticles(TreeNode);
+          GenerateParticles(tree_node{
+            .Level = Level,
+            .Height = 0,
+            .NodeId = 1,
+            .Grid = Grid,
+            .D = 0
+          });
           break;
+        } else {
+          GenerateParticles(tree_node{
+            .Level = Level,
+            .Height = u8(Height + 1),
+            .NodeId = 1,
+            .Grid = SplitGrid(Grid, D, ResolutionSplit, Right),
+            .D = i8((D + 1) % Params.NDims)
+          });
+          Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
+          D = (D + 1) % Params.NDims;
+          --Level;
+          ++Height;
         }
       }
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
