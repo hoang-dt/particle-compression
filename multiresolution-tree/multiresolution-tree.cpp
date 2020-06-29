@@ -1492,6 +1492,7 @@ struct params {
   vec3i LogDims3;
   u8 BaseHeight;
   vec3i Dims3;
+  int MaxNBlocks = INT_MAX;
 };
 
 /* Bit set stuffs */
@@ -2268,6 +2269,8 @@ GenerateParticles(const tree_node& Node) {
   return N;
 }
 
+static int NBlocksWritten = 0;
+
 /* tree block (including refinement block) */
 static void
 WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
@@ -2282,6 +2285,7 @@ WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
     BlockBytes[Level].push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
     MaxBlockSize = MAX(MaxBlockSize, Size(*Bs));
     Rewind(Bs);
+    ++NBlocksWritten;
   }
 }
 
@@ -2686,6 +2690,8 @@ main(int Argc, cstr* Argv) {
       if (!OptVal(Argc, Argv, "--accuracy", &Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
+    OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
+
     ReadMetaFile(Params.InFile);
     if (Accuracy != 0) {
       MaxHeight = 0;
@@ -2704,8 +2710,10 @@ main(int Argc, cstr* Argv) {
     Blocks[Params.NLevels].resize(1);
     Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
     bool Continue = true;
-    while (Continue) {
+    int NBlocks = 0;
+    while (Continue && NBlocks < Params.MaxNBlocks) {
       Continue = RefineByLevel();
+      ++NBlocks;
     }
     if (!Blocks[Params.NLevels].empty()) {
       Particles.reserve(Blocks[Params.NLevels][0].Nodes[0]);
