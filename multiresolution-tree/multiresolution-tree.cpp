@@ -1526,7 +1526,7 @@ BitSetFree(bitset* BitSet) {
   free(BitSet);
 }
 
-static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
+static std::vector<vec3f> GridPoints; // stores the grid points that contain the (to be generated) particles
 static std::vector<particle> Particles;
 static params Params;
 static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
@@ -1909,7 +1909,9 @@ INLINE bool operator<(const block_priority& Lhs, const block_priority& Rhs) {
   bool LvlEq     = Lhs.Level == Rhs.Level;
   bool BlockLess = Lhs.BlockId > Rhs.BlockId;
   bool BlockEq   = Lhs.BlockId == Rhs.BlockId;
-  return LvlLess || (LvlEq && (BlockLess || (BlockEq && Lhs.Error > Rhs.Error)));
+  bool ErrorLess = Lhs.Error < Rhs.Error;
+  bool ErrorEq   = Lhs.Error == Rhs.Error;
+  return ErrorLess || (ErrorEq && (LvlLess || (LvlEq && (BlockLess || BlockEq))));
 }
 
 DynamicHeap<block_data, block_priority> Heap;
@@ -2157,37 +2159,50 @@ GenerateOneParticle(const bbox& BBox) {
 static void
 GenerateParticlesPerNode(i64 N, const grid& Grid) {
   if (N == 0) return;
+  //printf("generating %lld particles\n", N);
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
-  GridPoints.resize(N);
+  GridPoints.reserve(N);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   vec3i Dims3 = vec3i(Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
 
   i64 NElems = N;
   i64 I = 0;
+  f32 M = Dims3.z * Dims3.y * Dims3.x;
   FOR(int, Z, 0, Dims3.z) {
   FOR(int, Y, 0, Dims3.y) {
   FOR(int, X, 0, Dims3.x) {
-    if (I < N) {
-      GridPoints[I] = vec3i(X, Y, Z);
-    } else {
+    //if (I < N) {
+    //  GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
+    //} else {
       ++NElems;
-      i64 J = rand() % NElems; // exclusive
-      if (J < N)
-        GridPoints[J] = vec3i(X, Y, Z);
-    }
-    ++I;
+      f32 K = rand() * 1.0 / RAND_MAX;
+      //i64 J = rand() % NElems; // exclusive
+      //if (J < N)
+      if (K < N * 1.0 / M && GridPoints.size() < N)
+        //GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
+        GridPoints.push_back(Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z));
+    //}
+    //++I;
   }}}
   FOR_EACH(P, GridPoints) {
     bbox BBox{
-      .Min = Params.BBox.Min + (vec3f(*P) + Grid.From3) * W3,
-      .Max = Params.BBox.Min + (vec3f(*P) + Grid.From3 + 1) * W3
+      .Min = Params.BBox.Min + (vec3f(*P)) * W3,
+      .Max = Params.BBox.Min + (vec3f(*P) + 1) * W3
     };
     GenerateOneParticle(BBox);
   }
 }
 
+//std::set<u64> Nodes;
+
 INLINE static bool
 GetNode(const tree_node& Node, i64* N) {
+  //printf("getting node %lld\n", Node.NodeId);
+  //if (Nodes.find(Node.NodeId) == Nodes.end())
+  //  Nodes.insert(Node.NodeId);
+  //else
+  //  printf("---------------something is wrong!!!!!!\n");
+  REQUIRE(Node.Height <= Params.BaseHeight);
   u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
   if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() <= BlockId || Blocks[Node.Level][BlockId].Nodes.empty())
     return false;
@@ -2198,6 +2213,7 @@ GetNode(const tree_node& Node, i64* N) {
 
 INLINE static bool
 GetRefNode(const tree_node& Node, u8* Bit) {
+  REQUIRE(Node.Height > Params.BaseHeight);
   u64 BlockId = NODE_TO_BLOCK_INDEX(Node.NodeId);
   if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() <= BlockId || Size(Blocks[Node.Level][BlockId].Bs.Stream) == 0)
     return false;
@@ -2205,6 +2221,8 @@ GetRefNode(const tree_node& Node, u8* Bit) {
   *Bit = Read(&Block.Bs);
   return true;
 }
+
+i64 NCount = 0;
 
 static i64
 GenerateParticles(const tree_node& Node) {
@@ -2234,15 +2252,23 @@ GenerateParticles(const tree_node& Node) {
       );
       if (LeftN == 0 && RightN == 0) { // generate particles for the parent
         GenerateParticlesPerNode(N, Node.Grid);
+        NCount += N;
+        REQUIRE(LeftN + RightN <= N);
       } else if (LeftN > 0 && RightN == 0) { // generate particles for the right child
         GenerateParticlesPerNode(N - LeftN, SplitGrid(Node.Grid, Node.D, SpatialSplit, Right));
+        REQUIRE(LeftN + RightN <= N);
+        NCount += N - LeftN;
       } else if (LeftN == 0 && RightN > 0) { // generate particles for the left child
         GenerateParticlesPerNode(N - RightN, SplitGrid(Node.Grid, Node.D, SpatialSplit, Left));
+        REQUIRE(LeftN + RightN <= N);
+        NCount += N - RightN;
+      } else {
+        REQUIRE(LeftN + RightN == N);
       }
-    }
+    } 
   } else if (Node.Height == Params.BaseHeight) { // refinement node, 1 children
     if (GetNode(Node, &N) && N > 0) {
-      REQUIRE(N <= Params.NParticles);
+      REQUIRE(N == 1);
       i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
       tree_node ChildNode = Node;
       ChildNode.Height = Node.Height + 1;
@@ -2264,6 +2290,7 @@ GenerateParticles(const tree_node& Node) {
         D = i8((D + 1) % Params.NDims);
       }
       GenerateOneParticle(BBox);
+      //++NCount;
     }
   }
   return N;
@@ -2616,6 +2643,7 @@ Handler(const doctest::AssertData& ad) {
 
 int
 main(int Argc, cstr* Argv) {
+  srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
   context.setAssertHandler(Handler);
@@ -2713,6 +2741,7 @@ main(int Argc, cstr* Argv) {
     int NBlocks = 0;
     while (Continue && NBlocks < Params.MaxNBlocks) {
       Continue = RefineByLevel();
+      //Continue = RefineByError();
       ++NBlocks;
     }
     if (!Blocks[Params.NLevels].empty()) {
@@ -2731,13 +2760,15 @@ main(int Argc, cstr* Argv) {
         });
       } else {
         while (true) {
-          GenerateParticles(tree_node{
+          if (0 == GenerateParticles(tree_node{
             .Level = Level,
             .Height = u8(Height + 1),
             .NodeId = 1,
             .Grid = SplitGrid(Grid, D, ResolutionSplit, Right),
             .D = i8((D + 1) % Params.NDims)
-          });
+          })) {
+            //GenerateParticlesPerNode(Blocks[Params.NLevels][0].Nodes[LEVEL_TO_NODE(Level)], SplitGrid(Grid, D, ResolutionSplit, Right));
+          }
           Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
           D = (D + 1) % Params.NDims;
           --Level;
@@ -2754,6 +2785,7 @@ main(int Argc, cstr* Argv) {
           } 
         }
       }
+      printf("ncount = %lld\n", NCount);
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     }
   }
