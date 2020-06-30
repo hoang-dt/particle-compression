@@ -1962,6 +1962,8 @@ RefineByError() {
 //  REQUIRE(LvlBlocks[TopBlock.Level].size() > TopBlock.BlockId);
   block_data LeftChild, RightChild;
   float LeftError = 0, RightError = 0;
+  float LeftVol = 0, RightVol = 0;
+  i64 LeftN = 0, RightN = 0;
   auto& Nodes = Blocks[TopBlock.Level][TopBlock.BlockId].Nodes;
   u64 GlobalFirstNodeIdx = TopBlock.BlockId * POW2(Params.BlockBits);
   if (TopBlock.Level == Params.NLevels) { // resolution block
@@ -2002,11 +2004,18 @@ RefineByError() {
       u64 ChildrenBlockIdx = NODE_TO_BLOCK_INDEX(GlobalNodeIdx * 2);
       if (ChildrenBlockIdx == TopBlock.BlockId) continue;
       assert(ChildrenBlockIdx == LeftChild.BlockId || ChildrenBlockIdx == RightChild.BlockId);
-      if (ChildrenBlockIdx == LeftChild.BlockId)
-        LeftError += Vol / Nodes[NodeIdx];
-      else
-        RightError += Vol / Nodes[NodeIdx];
+      if (ChildrenBlockIdx == LeftChild.BlockId) {
+        //LeftError += Vol / Nodes[NodeIdx];
+        LeftN += Nodes[NodeIdx];
+        LeftVol += Vol;
+      } else {
+        //RightError += Vol / Nodes[NodeIdx];
+        RightN += Nodes[NodeIdx];
+        RightVol += Vol;
+      }
     }
+    LeftError = LeftVol / LeftN;
+    RightError = RightVol / RightN;
     if (TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
       Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
     if (RightError > 0 && RightChild.Height <= Params.MaxHeight)
@@ -2155,13 +2164,17 @@ GenerateOneParticle(const bbox& BBox) {
   Particles.push_back(particle{.Pos = P3});
 }
 
+static i64 NCount2 = 0;
+
 /* Generate N random particles inside Grid */
 static void
 GenerateParticlesPerNode(i64 N, const grid& Grid) {
   if (N == 0) return;
   //printf("generating %lld particles\n", N);
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
-  GridPoints.reserve(N);
+  //GridPoints.reserve(N);
+  //GridPoints.clear();
+  GridPoints.resize(N);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   vec3i Dims3 = vec3i(Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
 
@@ -2171,18 +2184,18 @@ GenerateParticlesPerNode(i64 N, const grid& Grid) {
   FOR(int, Z, 0, Dims3.z) {
   FOR(int, Y, 0, Dims3.y) {
   FOR(int, X, 0, Dims3.x) {
-    //if (I < N) {
-    //  GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
-    //} else {
+    if (I < N) {
+      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
+    } else {
       ++NElems;
-      f32 K = rand() * 1.0 / RAND_MAX;
-      //i64 J = rand() % NElems; // exclusive
-      //if (J < N)
-      if (K < N * 1.0 / M && GridPoints.size() < N)
-        //GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
-        GridPoints.push_back(Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z));
-    //}
-    //++I;
+      //f32 K = rand() * 1.0 / RAND_MAX;
+      i64 J = rand() % NElems; // exclusive
+      if (J < N)
+      //if (K < N * 1.0 / M && GridPoints.size() < N)
+        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
+        //GridPoints.push_back(Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z));
+    }
+    ++I;
   }}}
   FOR_EACH(P, GridPoints) {
     bbox BBox{
@@ -2191,6 +2204,7 @@ GenerateParticlesPerNode(i64 N, const grid& Grid) {
     };
     GenerateOneParticle(BBox);
   }
+  NCount2 += GridPoints.size();
 }
 
 //std::set<u64> Nodes;
@@ -2267,31 +2281,31 @@ GenerateParticles(const tree_node& Node) {
       }
     } 
   } else if (Node.Height == Params.BaseHeight) { // refinement node, 1 children
-    if (GetNode(Node, &N) && N > 0) {
-      REQUIRE(N == 1);
-      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
-      tree_node ChildNode = Node;
-      ChildNode.Height = Node.Height + 1;
-      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
-      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
-      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
-      bbox BBox{
-        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
-        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
-      };
-      u8 Left = 0;
-      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
-        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-//        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
-        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
-        ChildNode.NodeId += NNodesAtLeaf;
-        ++ChildNode.Height;
-        D = i8((D + 1) % Params.NDims);
-      }
-      GenerateOneParticle(BBox);
-      //++NCount;
-    }
+//    if (GetNode(Node, &N) && N > 0) {
+//      REQUIRE(N == 1);
+//      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
+//      tree_node ChildNode = Node;
+//      ChildNode.Height = Node.Height + 1;
+//      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
+//      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
+//      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+//      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
+//      bbox BBox{
+//        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
+//        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
+//      };
+//      u8 Left = 0;
+//      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
+//        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+////        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
+//        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
+//        ChildNode.NodeId += NNodesAtLeaf;
+//        ++ChildNode.Height;
+//        D = i8((D + 1) % Params.NDims);
+//      }
+//      GenerateOneParticle(BBox);
+//      ++NCount;
+//    }
   }
   return N;
 }
@@ -2785,7 +2799,7 @@ main(int Argc, cstr* Argv) {
           } 
         }
       }
-      printf("ncount = %lld\n", NCount);
+      printf("ncount = %lld %lld\n", NCount, NCount2);
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     }
   }
