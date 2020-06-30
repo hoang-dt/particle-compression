@@ -1475,7 +1475,7 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
-enum class action : int { Encode, Decode };
+enum class action : int { Encode, Decode, Error };
 struct params {
   char Name[64];
   vec2i Version = vec2i(1, 0);
@@ -2281,31 +2281,31 @@ GenerateParticles(const tree_node& Node) {
       }
     } 
   } else if (Node.Height == Params.BaseHeight) { // refinement node, 1 children
-//    if (GetNode(Node, &N) && N > 0) {
-//      REQUIRE(N == 1);
-//      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
-//      tree_node ChildNode = Node;
-//      ChildNode.Height = Node.Height + 1;
-//      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
-//      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
-//      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-//      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
-//      bbox BBox{
-//        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
-//        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
-//      };
-//      u8 Left = 0;
-//      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
-//        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-////        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
-//        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
-//        ChildNode.NodeId += NNodesAtLeaf;
-//        ++ChildNode.Height;
-//        D = i8((D + 1) % Params.NDims);
-//      }
-//      GenerateOneParticle(BBox);
-//      ++NCount;
-//    }
+    if (GetNode(Node, &N) && N > 0) {
+      REQUIRE(N == 1);
+      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
+      tree_node ChildNode = Node;
+      ChildNode.Height = Node.Height + 1;
+      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
+      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
+      bbox BBox{
+        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
+        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
+      };
+      u8 Left = 0;
+      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
+        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+//        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
+        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
+        ChildNode.NodeId += NNodesAtLeaf;
+        ++ChildNode.Height;
+        D = i8((D + 1) % Params.NDims);
+      }
+      GenerateOneParticle(BBox);
+      ++NCount;
+    }
   }
   return N;
 }
@@ -2655,6 +2655,32 @@ Handler(const doctest::AssertData& ad) {
 
 #define EXIT_ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
 
+static f32
+Error(const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3) {
+  bbox BBox = ComputeBoundingBox(Particles1);
+  vec3f W3 = (BBox.Max - BBox.Min) / vec3f(Dims3);
+  std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z);
+  FOR_EACH(P, Particles1) {
+    vec3i Coord{
+      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
+      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+      MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
+    Grid[Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x] = P->Pos;
+  }
+  float Err = 0;
+  FOR_EACH(P, Particles2) {
+    vec3i Coord{
+      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
+      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+      MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
+    vec3f Diff = Grid[Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x] - P->Pos;
+    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+  }
+  Err = std::sqrt(Err) / Particles2.size();
+  return Err;
+}
+
+// TODO: add the number of blocks to the .idx file
 int
 main(int Argc, cstr* Argv) {
   srand(1234567);
@@ -2668,6 +2694,7 @@ main(int Argc, cstr* Argv) {
   if (!OptVal(Argc, Argv, "--action", &Action)) EXIT_ERROR(ErrorMsg);
   if (strcmp("encode", Action) == 0) Params.Action = action::Encode;
   else if (strcmp("decode", Action) == 0) Params.Action = action::Decode;
+  else if (strcmp("error", Action) == 0) Params.Action = action::Error;
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
@@ -2802,6 +2829,14 @@ main(int Argc, cstr* Argv) {
       printf("ncount = %lld %lld\n", NCount, NCount2);
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     }
+  } else if (Params.Action == action::Error) {
+    if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+    if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
+    std::vector<particle> Particles1 = ReadXYZ(Params.InFile);
+    std::vector<particle> Particles2 = ReadXYZ(Params.OutFile);
+    f32 Err = Error(Particles1, Particles2, Params.Dims3);
+    printf("error = %f\n", Err);
   }
 
   //RandomLevels(P, &Particles);
