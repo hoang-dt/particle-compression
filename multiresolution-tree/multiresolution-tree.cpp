@@ -1752,7 +1752,7 @@ ReadResBlock() {
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   REQUIRE(Level < Params.NLevels);
-  printf("--------- reading level %d block %llu height %d\n", Level, BlockId, Height);
+//  printf("--------- reading level %d block %llu height %d\n", Level, BlockId, Height);
 
   FILE* Fp = nullptr;
   /* read the block offsets if not done so */
@@ -1998,6 +1998,7 @@ RefineByError() {
     };
     int H = TopBlock.BlockId == 0 ? TopBlock.Height + Params.BlockBits - 1 : TopBlock.Height;
     double Vol = NodeVolume(H);
+    //int C = 0;
     FOR(int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
       u64 GlobalNodeIdx = TopBlock.BlockId * POW2(Params.BlockBits) + NodeIdx;
@@ -2013,7 +2014,12 @@ RefineByError() {
         RightN += Nodes[NodeIdx];
         RightVol += Vol;
       }
+      //++C;
     }
+    //if (C > 0) {
+    //  LeftError /= C;
+    //  RightError /= C;
+    //}
     LeftError = LeftVol / LeftN;
     RightError = RightVol / RightN;
     if (TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
@@ -2310,12 +2316,12 @@ GenerateParticles(const tree_node& Node) {
   return N;
 }
 
-static int NBlocksWritten = 0;
+static i64 NBlocksWritten = 0;
 
 /* tree block (including refinement block) */
 static void
 WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
-  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
+//  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
   if (Size(*Bs) > 0) {
     Flush(Bs);
     FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
@@ -2405,8 +2411,8 @@ EncodeResNode(i64 M, i64 N) {
 /* Encode particle refinement bits */
 static void
 EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
-  assert(BBox.Min.x <= Pos.x && BBox.Min.y <= Pos.y && BBox.Min.z <= Pos.z);
-  assert(BBox.Max.x >= Pos.x && BBox.Max.y >= Pos.y && BBox.Max.z >= Pos.z);
+  //assert(BBox.Min.x <= Pos.x && BBox.Min.y <= Pos.y && BBox.Min.z <= Pos.z);
+  //assert(BBox.Max.x >= Pos.x && BBox.Max.y >= Pos.y && BBox.Max.z >= Pos.z);
   vec3f P3 = Pos;
   u8 H = Params.BaseHeight + 1;
   i8 D = Params.BaseHeight % Params.NDims;
@@ -2582,6 +2588,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
+      // TODO: sometimes there are numerical issues where the particle is outside of BBox
       bbox BBox{
         .Min = Params.BBox.Min + Q.Grid.From3 * W3,
         .Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3
@@ -2681,6 +2688,8 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
 }
 
 // TODO: add the number of blocks to the .idx file
+// TODO: add the size of each block
+// TODO: 
 int
 main(int Argc, cstr* Argv) {
   srand(1234567);
@@ -2750,6 +2759,7 @@ main(int Argc, cstr* Argv) {
                            .Height = 0,
                            .SplitType = Params.NLevels > 1 ? ResolutionSplit : SpatialSplit }, Params.Accuracy);
     FlushBlocksToFiles();
+    printf("nblocks written = %lld\n", NBlocksWritten);
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
@@ -2781,8 +2791,8 @@ main(int Argc, cstr* Argv) {
     bool Continue = true;
     int NBlocks = 0;
     while (Continue && NBlocks < Params.MaxNBlocks) {
-      Continue = RefineByLevel();
-      //Continue = RefineByError();
+      //Continue = RefineByLevel();
+      Continue = RefineByError();
       ++NBlocks;
     }
     if (!Blocks[Params.NLevels].empty()) {
