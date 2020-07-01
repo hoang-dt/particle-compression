@@ -1436,7 +1436,7 @@ ReadXYZ(cstr FileName) {
   u32 NParticles; sscanf(Line, "%" PRIu32, &NParticles);
   Particles.resize(NParticles);
   fgets(Line, sizeof(Line), Fp); // dummy second line
-  FOR (int, I, 0, NParticles) {
+  FOR(int, I, 0, NParticles) {
     fgets(Line, sizeof(Line), Fp);
     vec3f P3; char C;
     sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
@@ -1749,6 +1749,8 @@ ReadResBlock() {
   return true;
 }
 
+static i64 BlockBytesRead = 0;
+
 static bool
 ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   REQUIRE(Level < Params.NLevels);
@@ -1769,6 +1771,7 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
     BlockOffsets[Level].resize(NBlocks);
     buffer Buf((byte*)BlockOffsets[Level].data(), (i64)sizeof(block_meta) * NBlocks);
     ReadBackwardBuffer(Fp, &Buf);
+    BlockBytes[Level] = BlockOffsets[Level];
     u64 S = 0;
     FOR(u64, I, 0, NBlocks) {
       u64 Temp = BlockOffsets[Level][I].Size;
@@ -1776,6 +1779,7 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
       S += Temp;
     }
     std::sort(BlockOffsets[Level].begin(), BlockOffsets[Level].end());
+    std::sort(BlockBytes[Level].begin(), BlockBytes[Level].end());
   }
   auto It = std::lower_bound(BlockOffsets[Level].begin(), BlockOffsets[Level].end(), block_meta{.Size = 0, .BlockId = BlockId});
   if (It == BlockOffsets[Level].end() || It->BlockId != BlockId) {
@@ -1789,6 +1793,8 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   bitstream& Bs = (Height <= Params.BaseHeight) ? BlockStreams[Level] : RefBlockStreams[Height - Params.BaseHeight - 1];
   Rewind(&Bs);
   GrowToAccomodate(&Bs, MaxBlockSize);
+  It = std::lower_bound(BlockBytes[Level].begin(), BlockBytes[Level].end(), block_meta{.Size = 0, .BlockId = BlockId});
+  BlockBytesRead += It->Size;
   fread(Bs.Stream.Data, MaxBlockSize, 1, Fp);
   fclose(Fp);
 
@@ -1886,6 +1892,281 @@ DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
     }
   }
 }
+
+const static int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
+const static int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
+
+const static double sqrt2 = sqrt(2.0);
+const static long all_nbins = 1 << 30;
+const static double epsilon = 1.0 / double(all_nbins);
+
+#define erfinv_a3 -0.140543331
+#define erfinv_a2 0.914624893
+#define erfinv_a1 -1.645349621
+#define erfinv_a0 0.886226899
+
+#define erfinv_b4 0.012229801
+#define erfinv_b3 -0.329097515
+#define erfinv_b2 1.442710462
+#define erfinv_b1 -2.118377725
+#define erfinv_b0 1
+
+#define erfinv_c3 1.641345311
+#define erfinv_c2 3.429567803
+#define erfinv_c1 -1.62490649
+#define erfinv_c0 -1.970840454
+
+#define erfinv_d2 1.637067800
+#define erfinv_d1 3.543889200
+#define erfinv_d0 1
+#define M_PI 3.141592653589793238462643383279502884197169399375105820974944
+
+double erfinv (double x)
+{
+  double x2, r, y;
+  int  sign_x;
+
+  if (x < -1 || x > 1)
+    return NAN;
+
+  if (x == 0)
+    return 0;
+
+  if (x > 0)
+    sign_x = 1;
+  else {
+    sign_x = -1;
+    x = -x;
+  }
+
+  if (x <= 0.7) {
+
+    x2 = x * x;
+    r =
+      x * (((erfinv_a3 * x2 + erfinv_a2) * x2 + erfinv_a1) * x2 + erfinv_a0);
+    r /= (((erfinv_b4 * x2 + erfinv_b3) * x2 + erfinv_b2) * x2 +
+      erfinv_b1) * x2 + erfinv_b0;
+  }
+  else {
+    y = sqrt (-log ((1 - x) / 2));
+    r = (((erfinv_c3 * y + erfinv_c2) * y + erfinv_c1) * y + erfinv_c0);
+    r /= ((erfinv_d2 * y + erfinv_d1) * y + erfinv_d0);
+  }
+
+  r = r * sign_x;
+  x = x * sign_x;
+
+  r -= (erf (r) - x) / (2 / sqrt (M_PI) * exp (-r * r));
+  r -= (erf (r) - x) / (2 / sqrt (M_PI) * exp (-r * r));
+
+  return r;
+}
+
+#undef erfinv_a3
+#undef erfinv_a2
+#undef erfinv_a1
+#undef erfinv_a0
+
+#undef erfinv_b4
+#undef erfinv_b3
+#undef erfinv_b2
+#undef erfinv_b1
+#undef erfinv_b0
+
+#undef erfinv_c3
+#undef erfinv_c2
+#undef erfinv_c1
+#undef erfinv_c0
+
+#undef erfinv_d2
+#undef erfinv_d1
+#undef erfinv_d0
+
+// TODO: count the number of bits per level
+
+/* The Gaussian CDF. m = mean, s = standard deviation */
+INLINE double
+F(double m, double s, double x) {
+  return 0.5 * std::erfc((m - x) / (s * sqrt2));
+}
+
+/* The inverse Gaussian CDF. m = mean, s = standard deviation */
+INLINE double
+Finv(double m, double s, double y) {
+  return m + s * (erfinv(2 * y - 1) * sqrt2);
+}
+
+using cdf = std::vector<u32>;
+using cdf_table = std::vector<cdf>;
+
+static void
+EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
+  assert(v >= 0 && v <= n);
+  u32 lo = v == 0 ? 0 : CdfTable[v - 1];
+  u32 hi = CdfTable[v];
+  u32 scale = 1 << n;
+  prob<u32> prob{lo, hi, scale};
+  Coder->Encode(prob);
+}
+
+static int
+DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) {
+  size_t v = Coder->Decode(CdfTable);
+  assert(v <= n);
+  return (int)v;
+}
+
+/* Reverse the bits in the input */
+static uint
+BitReverse(uint a) {
+  uint t;
+  a = (a << 15) | (a >> 17);
+  t = (a ^ (a >> 10)) & 0x003f801f;
+  a = (t + (t << 10)) ^ a;
+  t = (a ^ (a >>  4)) & 0x0e038421;
+  a = (t + (t <<  4)) ^ a;
+  t = (a ^ (a >>  2)) & 0x22488842;
+  a = (t + (t <<  2)) ^ a;
+  return a;
+}
+
+/* v is from 0 to n-1 */
+static void
+EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
+  assert(n > 0);
+  assert(v < n);
+  int l1 = Msb(n);
+  int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
+  int d = (1 << l2) - n;
+  int m = (n - d) / 2;
+  if (v < m) {
+    bool print = false;
+    v = BitReverse(v);
+    v >>= sizeof(v) * 8 - l2;
+    Write(Bs, v, l2);
+  } else if (v >= m + d) {
+    v = BitReverse(v - d);
+    v >>= sizeof(v) * 8 - l2;
+    Write(Bs, v, l2);
+  } else { // middle
+    v = BitReverse(v);
+    v >>= sizeof(v) * 8 - l1;
+    Write(Bs, v, l1);
+  }
+}
+
+static int
+DecodeCenteredMinimal(u32 n, bitstream* Bs) {
+  assert(n > 0);
+  int l1 = Msb(n);
+  int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
+  u32 d = (1 << l2) - n;
+  u32 m = (n - d) / 2;
+  Refill(Bs); // TODO: minimize the number of refill
+  uint v = (int)Peek(Bs, l2);
+  v <<= sizeof(v) * 8 - l2;
+  v = BitReverse(v);
+  if (v < m) {
+    Consume(Bs, l2);
+    return v;
+  } else if (v < 2 * m) {
+    Consume(Bs, l2);
+    return v + d;
+  } else {
+    Consume(Bs, l1);
+    return v >> 1;
+  }
+}
+
+/* The inverse of encode */
+// TODO: refactor to put part the logic of this function to the decode function
+static int
+DecodeRange(
+  double m, double s, double a, double b,
+  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) {
+  assert(a <= b);
+  bool first = true;
+  while (true) {
+    int beg = (int)std::ceil(a);
+    int end = (int)std::floor(b);
+    if (beg == end)
+      return beg; // no need to write any bit
+    int n = end - beg + 1;
+    if (first && n <= cutoff1)
+      return DecodeBinomialSmallRange(n - 1, CdfTable[n - 1], Coder);
+    if (!first && n <= cutoff2)
+      return beg + DecodeCenteredMinimal(n, Bs);
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    // TODO: what if fa==fb
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa + fb) * 0.5);
+    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a == mid || b == mid)
+      return beg + DecodeCenteredMinimal(n, Bs);
+    assert(a <= mid && mid <= b);
+    auto bit = Read(Bs);
+    if (bit == 0)
+      b = std::floor(mid);
+    else
+      a = std::ceil(mid);
+    first = false;
+  }
+}
+
+/* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
+into two bins of equal probability */
+static void
+EncodeRange(
+  double m, double s, double a, double b, double c,
+  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) {
+  assert(a <= b);
+  bool first = true;
+
+  /* comment out the below to use uniform encoding instead of gaussian distribution */
+  //int beg = cast(int)ceil(a);
+  //int end = cast(int)floor(b);
+  //int v = cast(int)c-beg;
+  //int n = end - beg + 1; // v can be from 0 to n-1
+  //if (end-beg+1 <= cutoff)
+  //  return encode_binomial_small_range(n-1, v, CdfTable[n-1], coder);
+  //else
+  //  return encode_centered_minimal(v, n, bs);
+
+  while (true) {
+    int beg = (int)std::ceil(a);
+    int end = (int)std::floor(b);
+    if (beg == end)
+      return; // no need to write any bit
+    int n = end - beg + 1; // v can be from 0 to n-1
+    int v = int(c - beg);
+    if (first && n <= cutoff1)
+      return EncodeBinomialSmallRange(n - 1, v, CdfTable[n - 1], Coder);
+    if (!first && n <= cutoff2)
+      return EncodeCenteredMinimal(v, n, Bs);
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa + fb) * 0.5);
+    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a == mid || b == mid)
+      return EncodeCenteredMinimal(v, n, Bs);
+    assert(a <= mid && mid <= b);
+    if (c < mid) {
+      Write(Bs, 0);
+      b = floor(mid);
+    } else { // c >= mid
+      Write(Bs, 1);
+      a = ceil(mid);
+    }
+    first = false;
+  }
+}
+
 
 struct block_data {
   i8 Level = 0;
@@ -2782,6 +3063,7 @@ main(int Argc, cstr* Argv) {
     Params.MaxHeight = MAX(MIN(Params.MaxHeight, MaxHeight), Params.BaseHeight);
     Params.Accuracy = Accuracy;
     BlockOffsets.resize(Params.NLevels);
+    BlockBytes.resize(Params.NLevels + 1);
     BlockStreams.resize(Params.NLevels + 1);
     RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
@@ -2790,7 +3072,7 @@ main(int Argc, cstr* Argv) {
     Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
     bool Continue = true;
     int NBlocks = 0;
-    while (Continue && NBlocks < Params.MaxNBlocks) {
+    while (Continue && /*NBlocks < Params.MaxNBlocks*/BlockBytesRead < Params.MaxNBlocks) {
       //Continue = RefineByLevel();
       Continue = RefineByError();
       ++NBlocks;
@@ -2837,6 +3119,7 @@ main(int Argc, cstr* Argv) {
         }
       }
       printf("ncount = %lld %lld\n", NCount, NCount2);
+      printf("bytes read = %lld\n", BlockBytesRead);
       WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     }
   } else if (Params.Action == action::Error) {
