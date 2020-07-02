@@ -1801,98 +1801,6 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   return true;
 }
 
-INLINE static i64
-DecodeNode(bitstream* Bs, i64 M) {
-  // TODO: use binomial coding
-  return ReadVarByte(Bs);
-}
-
-#define RES_PARENT(NodeIdx) ((NodeIdx) - (2 - ((NodeIdx) & 1)))
-
-static void
-DecodeResBlock(bitstream* Bs, block* Block) {
-  int NNodes = Params.NLevels * 2 - 1;
-  Block->Nodes.resize(NNodes);
-  InitRead(Bs, Bs->Stream);
-  // TODO: use binomial coding
-  Block->Nodes[0] = ReadVarByte(Bs);
-  for (int I = 2; I < NNodes; I += 2) {
-    i64 M = Block->Nodes[RES_PARENT(I)];
-    Block->Nodes[I    ] = DecodeNode(Bs, M);
-    Block->Nodes[I - 1] = M - Block->Nodes[I];
-    Block->NParticles += M;
-//    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
-    assert(RES_PARENT(I) == RES_PARENT(I - 1));
-  }
-}
-
-// TODO: and from tree depth to bounding box
-#define POW2(X) (1ull << (X))
-#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
-#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
-#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
-#define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
-#define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
-#define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
-static void
-DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
-  //InitRead(Bs, Bs->Stream);
-  REQUIRE(AllBlocks->size() > Level);
-  auto& Blocks = (*AllBlocks)[Level];
-  if (Blocks.size() <= BlockIdx) {
-    Blocks.resize(BlockIdx * 3 / 2 + 1);
-  }
-  Blocks[BlockIdx] = block(Bs);
-//  const block& CurrBlock = Blocks[BlockIdx];
-//  i64 NumBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
-//  u64 ParentBlockIdx = BlockIdx - NumBlocksAtLeaf;
-//  const auto& ParentBlock = (*AllBlocks)[Level][ParentBlockIdx];
-//  REQUIRE(ParentBlock.NParticles <= CurrBlock.BitSet.NBits);
-//  int NNodes = ParentBlock.NumNodes();
-//  InitRead(Bs, Bs->Stream);
-//  FOR(int, I, 0, NNodes) {
-//    REQUIRE(ParentBlock.Get(I) <= 1);
-//    if (ParentBlock.Get(I) == 1) {
-//      bool Bit = Read(Bs);
-//      printf("  refinement bit %d\n", Bit);
-//    }
-//  }
-//  ParentBlock.Nodes
-  //printf("%lld %lld\n", Block.Get(I), Block.Get(I+1));
-}
-
-static void
-DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
-  const block& ResBlock = (*AllBlocks)[Params.NLevels][0];
-  InitRead(Bs, Bs->Stream);
-  REQUIRE(AllBlocks->size() > Level);
-  auto& Blocks = (*AllBlocks)[Level];
-  if (Blocks.size() <= BlockIdx) {
-    Blocks.resize(BlockIdx * 3 / 2 + 1);
-  }
-  block& Block = (*AllBlocks)[Level][BlockIdx];
-  i64 NNodes = 1ll << Params.BlockBits;
-  Block.Nodes.resize(NNodes, 0);
-  u64 FirstNodeIdx = MAX(BlockIdx << Params.BlockBits, 2); // NOTE: node index always starts at 2
-  u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
-  if (BlockIdx == 0) { // the parent block is the res block
-    REQUIRE(Level < Params.NLevels);
-    Block.Nodes[1] = ResBlock.Nodes[LEVEL_TO_NODE(Level)];
-  }
-  for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
-    u64 I = NODE_INDEX_IN_BLOCK(K);
-    u64 J = K / 2; // (global) parent index
-    i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
-    if (M > 0) {
-      Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
-      Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
-      assert(Block.Nodes[I] >= 0 && Block.Nodes[I] <= Params.NParticles);
-      assert(Block.Nodes[I + 1] >= 0 && Block.Nodes[I + 1] <= Params.NParticles);
-//      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
-    }
-  }
-}
-
 const static int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
 const static int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
@@ -2035,12 +1943,15 @@ static void
 EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   assert(n > 0);
   assert(v < n);
+  if (n == 2) {
+    Write(Bs, v == 1);
+    return;
+  }
   int l1 = Msb(n);
   int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
   int d = (1 << l2) - n;
   int m = (n - d) / 2;
   if (v < m) {
-    bool print = false;
     v = BitReverse(v);
     v >>= sizeof(v) * 8 - l2;
     Write(Bs, v, l2);
@@ -2058,6 +1969,9 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
 static int
 DecodeCenteredMinimal(u32 n, bitstream* Bs) {
   assert(n > 0);
+  if (n == 2) {
+    return Read(Bs);
+  }
   int l1 = Msb(n);
   int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
   u32 d = (1 << l2) - n;
@@ -2164,6 +2078,99 @@ EncodeRange(
       a = ceil(mid);
     }
     first = false;
+  }
+}
+
+INLINE static i64
+DecodeNode(bitstream* Bs, i64 M) {
+  // TODO: use binomial coding
+//  return ReadVarByte(Bs);
+  return DecodeCenteredMinimal(M + 1, Bs);
+}
+
+#define RES_PARENT(NodeIdx) ((NodeIdx) - (2 - ((NodeIdx) & 1)))
+
+static void
+DecodeResBlock(bitstream* Bs, block* Block) {
+  int NNodes = Params.NLevels * 2 - 1;
+  Block->Nodes.resize(NNodes);
+  InitRead(Bs, Bs->Stream);
+  // TODO: use binomial coding
+  Block->Nodes[0] = ReadVarByte(Bs);
+  for (int I = 2; I < NNodes; I += 2) {
+    i64 M = Block->Nodes[RES_PARENT(I)];
+    Block->Nodes[I    ] = DecodeNode(Bs, M);
+    Block->Nodes[I - 1] = M - Block->Nodes[I];
+    Block->NParticles += M;
+//    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
+    assert(RES_PARENT(I) == RES_PARENT(I - 1));
+  }
+}
+
+// TODO: and from tree depth to bounding box
+#define POW2(X) (1ull << (X))
+#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
+#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
+#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
+#define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
+#define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
+#define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
+static void
+DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
+  //InitRead(Bs, Bs->Stream);
+  REQUIRE(AllBlocks->size() > Level);
+  auto& Blocks = (*AllBlocks)[Level];
+  if (Blocks.size() <= BlockIdx) {
+    Blocks.resize(BlockIdx * 3 / 2 + 1);
+  }
+  Blocks[BlockIdx] = block(Bs);
+//  const block& CurrBlock = Blocks[BlockIdx];
+//  i64 NumBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(Level);
+//  u64 ParentBlockIdx = BlockIdx - NumBlocksAtLeaf;
+//  const auto& ParentBlock = (*AllBlocks)[Level][ParentBlockIdx];
+//  REQUIRE(ParentBlock.NParticles <= CurrBlock.BitSet.NBits);
+//  int NNodes = ParentBlock.NumNodes();
+//  InitRead(Bs, Bs->Stream);
+//  FOR(int, I, 0, NNodes) {
+//    REQUIRE(ParentBlock.Get(I) <= 1);
+//    if (ParentBlock.Get(I) == 1) {
+//      bool Bit = Read(Bs);
+//      printf("  refinement bit %d\n", Bit);
+//    }
+//  }
+//  ParentBlock.Nodes
+  //printf("%lld %lld\n", Block.Get(I), Block.Get(I+1));
+}
+
+static void
+DecodeBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
+  const block& ResBlock = (*AllBlocks)[Params.NLevels][0];
+  InitRead(Bs, Bs->Stream);
+  REQUIRE(AllBlocks->size() > Level);
+  auto& Blocks = (*AllBlocks)[Level];
+  if (Blocks.size() <= BlockIdx) {
+    Blocks.resize(BlockIdx * 3 / 2 + 1);
+  }
+  block& Block = (*AllBlocks)[Level][BlockIdx];
+  i64 NNodes = 1ll << Params.BlockBits;
+  Block.Nodes.resize(NNodes, 0);
+  u64 FirstNodeIdx = MAX(BlockIdx << Params.BlockBits, 2); // NOTE: node index always starts at 2
+  u64 LastNodeIdx = (BlockIdx + 1) << Params.BlockBits;
+  if (BlockIdx == 0) { // the parent block is the res block
+    REQUIRE(Level < Params.NLevels);
+    Block.Nodes[1] = ResBlock.Nodes[LEVEL_TO_NODE(Level)];
+  }
+  for (u64 K = FirstNodeIdx; K < LastNodeIdx; K += 2) {
+    u64 I = NODE_INDEX_IN_BLOCK(K);
+    u64 J = K / 2; // (global) parent index
+    i64 M = Blocks[NODE_TO_BLOCK_INDEX(J)].Nodes[NODE_INDEX_IN_BLOCK(J)];
+    if (M > 0) {
+      Block.Nodes[I    ] = DecodeNode(Bs, M); // left child
+      Block.Nodes[I + 1] = M - Block.Nodes[I]; // right child
+      assert(Block.Nodes[I] >= 0 && Block.Nodes[I] <= Params.NParticles);
+      assert(Block.Nodes[I + 1] >= 0 && Block.Nodes[I + 1] <= Params.NParticles);
+//      printf("%lld %lld\n", Block.Nodes[I], Block.Nodes[I+1]);
+    }
   }
 }
 
@@ -2672,7 +2679,8 @@ EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   }
   bitstream* Bs = &BlockStreams[Level];
   GrowToAccomodate(Bs, 8);
-  WriteVarByte(Bs, N);
+//  WriteVarByte(Bs, N);
+  EncodeCenteredMinimal(N, M + 1, Bs);
 }
 
 INLINE static void
@@ -2686,7 +2694,8 @@ INLINE static void /* encode a resolution node */
 EncodeResNode(i64 M, i64 N) {
   // TODO: use binomial coding
   GrowToAccomodate(&BlockStreams[Params.NLevels], 8);
-  WriteVarByte(&BlockStreams[Params.NLevels], N);
+//  WriteVarByte(&BlockStreams[Params.NLevels], N);
+  EncodeCenteredMinimal(N, M + 1, &BlockStreams[Params.NLevels]);
 }
 
 /* Encode particle refinement bits */
