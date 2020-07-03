@@ -1493,6 +1493,7 @@ struct params {
   u8 BaseHeight;
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
+  i8 MaxLevel = 127;
 };
 
 /* Bit set stuffs */
@@ -2310,9 +2311,9 @@ RefineByError() {
     //}
     LeftError = LeftVol / LeftN;
     RightError = RightVol / RightN;
-    if (TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
+    if (LeftChild.Level <= Params.MaxLevel && TopBlock.BlockId != 0 && LeftError > 0 && LeftChild.Height <= Params.MaxHeight)
       Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
-    if (RightError > 0 && RightChild.Height <= Params.MaxHeight)
+    if (RightChild.Level <= Params.MaxLevel && RightError > 0 && RightChild.Height <= Params.MaxHeight)
       Heap.insert(RightChild, block_priority{.Level = RightChild.Level, .BlockId = RightChild.BlockId, .Error = RightError});
   } else if (TopBlock.Height < Params.MaxHeight) { // refinement level
     i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(TopBlock.Level);
@@ -2321,7 +2322,7 @@ RefineByError() {
       .Height  = TopBlock.BlockId == 0 ? u8(TopBlock.Height + Params.BlockBits) : u8(TopBlock.Height + 1),
       .BlockId = TopBlock.BlockId + NBlocksAtLeaf
     };
-    if (LeftChild.Height <= Params.MaxHeight) {
+    if (LeftChild.Level <= Params.MaxLevel && LeftChild.Height <= Params.MaxHeight) {
       LeftError = TopPriority.Error * 0.5f;
       Heap.insert(LeftChild, block_priority{.Level = LeftChild.Level, .BlockId = LeftChild.BlockId, .Error = LeftError});
     }
@@ -2825,6 +2826,8 @@ BuildTreeInner(q_item Q, float Accuracy) {
         REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
         Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
         return IS_EVEN(Bin);
+//        float S = rand() * 1.0 / RAND_MAX;
+//        return S < 0.5f;
       };
       Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
     } else { // spatial split
@@ -2908,15 +2911,15 @@ ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 E
 }
 
 static void
-RandomLevels(std::vector<vec3f>* Points) {
-  //std::random_device Rd;
-  //std::mt19937 G(Rd());
-  //shuffle(Points->begin(), Points->end(), G);
-  //auto Size = Points->size();
-  //FOR (int, I, 0, 5) {
-  //  WriteXYZ(PRINT("random-particles-%d.xyz", I), RANGE(*Points, Size / 2, Size));
-  //  Size /= 2;
-  //}
+RandomLevels(std::vector<particle>* Points) {
+  std::random_device Rd;
+  std::mt19937 G(Rd());
+  shuffle(Points->begin(), Points->end(), G);
+  auto Size = Points->size();
+  FOR (int, I, 0, 10) {
+    WriteXYZ(PRINT("random-particles-%d.xyz", I), RANGE(*Points, Size / 2, Size));
+    Size /= 2;
+  }
 }
 
 static void
@@ -3059,6 +3062,7 @@ main(int Argc, cstr* Argv) {
       if (!OptVal(Argc, Argv, "--accuracy", &Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
+    OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
 
     ReadMetaFile(Params.InFile);
@@ -3102,7 +3106,7 @@ main(int Argc, cstr* Argv) {
         });
       } else {
         while (true) {
-          if (0 == GenerateParticles(tree_node{
+          if (Level <= Params.MaxLevel && 0 == GenerateParticles(tree_node{
             .Level = Level,
             .Height = u8(Height + 1),
             .NodeId = 1,
@@ -3141,6 +3145,6 @@ main(int Argc, cstr* Argv) {
     printf("error = %f\n", Err);
   }
 
-  //RandomLevels(P, &Particles);
+  //RandomLevels(&Particles);
 }
 
