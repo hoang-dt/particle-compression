@@ -2022,21 +2022,69 @@ DecodeRange(
     if (a == mid || b == mid)
       return beg + DecodeCenteredMinimal(n, Bs);
     assert(a <= mid && mid <= b);
+
     auto bit = Read(Bs);
-    if (bit == 0)
-      b = std::floor(mid);
-    else
-      a = std::ceil(mid);
+    if (bit == 0) b = std::floor(mid);
+    else          a = std::ceil(mid);
+
     first = false;
   }
+}
+
+/* Generate the Pascal triangle */
+cdf_table pascal_triangle
+  (int n)
+{
+  cdf_table triangle(n + 1);
+
+  for
+    (int i = 0; i <= n; ++i)
+    triangle[i] = std::vector<u32>(i + 1);
+
+  for
+    (int i = 0; i <= n; ++i) {
+    triangle[i][0] = 1;
+    for
+      (int j = 1; j < i; ++j) {
+      triangle[i][j] = triangle[i-1][j-1] + triangle[i-1][j];
+    }
+    triangle[i][i] = 1;
+  }
+
+  return triangle;
+}
+
+/* Create a probability table for small N */
+static cdf_table
+CreateBinomialTable
+  (int N)
+{
+  auto table = pascal_triangle(N);
+
+  for
+    (int n = 0; n <= N; ++n) {
+    for
+      (int k = 1; k <= n; ++k) {
+      table[n][k] += table[n][k-1];
+    }
+  }
+
+  return table;
 }
 
 /* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability */
 static void
 EncodeRange(
-  double m, double s, double a, double b, double c,
-  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) {
+  double m,
+  double s,
+  double a,
+  double b,
+  double c,
+  const cdf_table& CdfTable,
+  bitstream* Bs,
+  arithmetic_coder<>* Coder
+){
   assert(a <= b);
   bool first = true;
 
@@ -2981,7 +3029,6 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
 }
 
 // TODO: add the number of blocks to the .idx file
-// TODO: add the size of each block
 // TODO: 
 int
 main(int Argc, cstr* Argv) {
