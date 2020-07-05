@@ -31,6 +31,8 @@
 #include <vector>
 #include <optional>
 
+#define POW2(X) (1ull << (X))
+
 #if defined(_MSC_VER) // Microsoft compilers
 #define EXPAND(X) X
 #define __NARGS(_1, _2, _3, _4, _5, VAL, ...) VAL
@@ -1494,6 +1496,7 @@ struct params {
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
   i8 MaxLevel = 127;
+  int MaxParticleSubSampling = 0;
 };
 
 /* Bit set stuffs */
@@ -1506,26 +1509,26 @@ struct bitset { word* Words; i64 NBits; };
 INLINE static i64 BIndex(i64 B)  { return B >> WORD_LOG; }
 INLINE static i64 BOffset(i64 B) { return B & WORD_MASK; }
 
-INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
-INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
-INLINE static bool GetBit(const bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
-INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, NBYTES(BitSet)); }
-INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 0xFF, NBYTES(BitSet)); }
+//INLINE static void SetBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] |= 1 << (BOffset(B)); }
+//INLINE static void ClearBit(bitset* BitSet, i64 B) { BitSet->Words[BIndex(B)] &= ~(1 << (BOffset(B))); }
+//INLINE static bool GetBit(const bitset* BitSet, i64 B) { return BitSet->Words[BIndex(B)] & (1 << (BOffset(B))); }
+//INLINE static void ClearAll(bitset* BitSet) { memset(BitSet->Words, 0, NBYTES(BitSet)); }
+//INLINE static void SetAll(bitset* BitSet) { memset(BitSet->Words, 0xFF, NBYTES(BitSet)); }
 
-static bitset*
-BitSetAlloc(i64 NBits) {
-  bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
-  BitSet->NBits = NBits;
-  BitSet->Words = (word*)malloc(NBYTES(BitSet));
-  ClearAll(BitSet);
-  return BitSet;
-}
+//static bitset*
+//BitSetAlloc(i64 NBits) {
+//  bitset* BitSet = (bitset*)malloc(sizeof(*BitSet));
+//  BitSet->NBits = NBits;
+//  BitSet->Words = (word*)malloc(NBYTES(BitSet));
+//  ClearAll(BitSet);
+//  return BitSet;
+//}
 
-static void
-BitSetFree(bitset* BitSet) {
-  free(BitSet->Words);
-  free(BitSet);
-}
+//static void
+//BitSetFree(bitset* BitSet) {
+//  free(BitSet->Words);
+//  free(BitSet);
+//}
 
 static std::vector<vec3f> GridPoints; // stores the grid points that contain the (to be generated) particles
 static std::vector<particle> Particles;
@@ -1555,7 +1558,7 @@ struct block {
 //  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
   bitstream Bs;
   int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
-  block() { Nodes.resize(1 << Params.BlockBits); }
+  block() { Nodes.resize(POW2(Params.BlockBits)); }
   block(bitstream* Bs) { 
     Nodes.resize(Size(Bs->Stream) / sizeof(Nodes[0]) + 1);
     memcpy(Nodes.data(), Bs->Stream.Data, Size(Bs->Stream));
@@ -1948,10 +1951,10 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
     Write(Bs, v == 1);
     return;
   }
-  int l1 = Msb(n);
-  int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
-  int d = (1 << l2) - n;
-  int m = (n - d) / 2;
+  u32 l1 = Msb(n);
+  u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
+  u32 d = (1 << l2) - n;
+  u32 m = (n - d) / 2;
   if (v < m) {
     v = BitReverse(v);
     v >>= sizeof(v) * 8 - l2;
@@ -1967,18 +1970,18 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   }
 }
 
-static int
+static u32
 DecodeCenteredMinimal(u32 n, bitstream* Bs) {
   assert(n > 0);
   if (n == 2) {
-    return Read(Bs);
+    return (u32)Read(Bs);
   }
-  int l1 = Msb(n);
-  int l2 = ((1 << l1) == n) ? l1 : l1 + 1;
+  u32 l1 = Msb(n);
+  u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
   u32 d = (1 << l2) - n;
   u32 m = (n - d) / 2;
   Refill(Bs); // TODO: minimize the number of refill
-  uint v = (int)Peek(Bs, l2);
+  u32 v = (u32)Peek(Bs, l2);
   v <<= sizeof(v) * 8 - l2;
   v = BitReverse(v);
   if (v < m) {
@@ -2134,7 +2137,7 @@ INLINE static i64
 DecodeNode(bitstream* Bs, i64 M) {
   // TODO: use binomial coding
 //  return ReadVarByte(Bs);
-  return DecodeCenteredMinimal(M + 1, Bs);
+  return (i64)DecodeCenteredMinimal((u32)M + 1, Bs);
 }
 
 #define RES_PARENT(NodeIdx) ((NodeIdx) - (2 - ((NodeIdx) & 1)))
@@ -2150,14 +2153,13 @@ DecodeResBlock(bitstream* Bs, block* Block) {
     i64 M = Block->Nodes[RES_PARENT(I)];
     Block->Nodes[I    ] = DecodeNode(Bs, M);
     Block->Nodes[I - 1] = M - Block->Nodes[I];
-    Block->NParticles += M;
+    Block->NParticles += (int)M;
 //    printf("%lld %lld\n", Block->Nodes[I], Block->Nodes[I - 1]);
     assert(RES_PARENT(I) == RES_PARENT(I - 1));
   }
 }
 
 // TODO: and from tree depth to bounding box
-#define POW2(X) (1ull << (X))
 #define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
 #define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
 #define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
@@ -2263,12 +2265,12 @@ NodeVolume(i8 Level, i64 NodeIdx) {
   return S;
 }
 
-INLINE double
+INLINE float
 NodeVolume(int Height) {
   vec3f V3 = Params.BBox.Max - Params.BBox.Min;
   float V = V3.x * V3.y * V3.z;
   double S = ldexp(V, -Height);
-  return S;
+  return (float)S;
 }
 
 /* Read the next most important block and add its two children (if existed) to the heap
@@ -2334,7 +2336,7 @@ RefineByError() {
       .BlockId = TopBlock.BlockId * 2 + 1
     };
     int H = TopBlock.BlockId == 0 ? TopBlock.Height + Params.BlockBits - 1 : TopBlock.Height;
-    double Vol = NodeVolume(H);
+    float Vol = NodeVolume(H);
     //int C = 0;
     FOR(int, NodeIdx, 0, (int)Nodes.size()) {
       if (Nodes[NodeIdx] == 0) continue;
@@ -2513,20 +2515,22 @@ static i64 NCount2 = 0;
 static void
 GenerateParticlesPerNode(i64 N, const grid& Grid) {
   if (N == 0) return;
+  if (N <= Params.MaxParticleSubSampling)
+    N = 1;
   //printf("generating %lld particles\n", N);
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
   //GridPoints.reserve(N);
   //GridPoints.clear();
   GridPoints.resize(N);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-  vec3i Dims3 = vec3i(Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
+  vec3f Dims3 = Grid.Dims3;
 
   i64 NElems = N;
   i64 I = 0;
-  f32 M = Dims3.z * Dims3.y * Dims3.x;
-  FOR(int, Z, 0, Dims3.z) {
-  FOR(int, Y, 0, Dims3.y) {
-  FOR(int, X, 0, Dims3.x) {
+  f32 M = f32(Dims3.z) * f32(Dims3.y) * f32(Dims3.x);
+  FOR(float, Z, 0, Dims3.z) {
+  FOR(float, Y, 0, Dims3.y) {
+  FOR(float, X, 0, Dims3.x) {
     if (I < N) {
       GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
     } else {
@@ -2575,7 +2579,7 @@ GetRefNode(const tree_node& Node, u8* Bit) {
   if (Blocks.size() <= Node.Level || Blocks[Node.Level].size() <= BlockId || Size(Blocks[Node.Level][BlockId].Bs.Stream) == 0)
     return false;
   block& Block = Blocks[Node.Level][BlockId];
-  *Bit = Read(&Block.Bs);
+  *Bit = (u8)Read(&Block.Bs);
   return true;
 }
 
@@ -2589,6 +2593,10 @@ GenerateParticles(const tree_node& Node) {
   if (Node.Height < Params.BaseHeight) { // regular node, 2 children
     if (GetNode(Node, &N) && N > 0) {
       REQUIRE(N <= Params.NParticles);
+      if (N <= Params.MaxParticleSubSampling) { // return 1 particle for all N particles
+        GenerateParticlesPerNode(1, Node.Grid);
+        return N;
+      }
       i64 LeftN = GenerateParticles(
         tree_node{
           .Level = Node.Level,
@@ -2620,36 +2628,39 @@ GenerateParticles(const tree_node& Node) {
         REQUIRE(LeftN + RightN <= N);
         NCount += N - RightN;
       } else {
-        REQUIRE(LeftN + RightN == N);
+        if (Params.MaxParticleSubSampling <= 1)
+          REQUIRE(LeftN + RightN == N);
       }
     } 
   } else if (Node.Height == Params.BaseHeight) { // refinement node, 1 children
-    if (GetNode(Node, &N) && N > 0) {
-      REQUIRE(N == 1);
-      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
-      tree_node ChildNode = Node;
-      ChildNode.Height = Node.Height + 1;
-      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
-      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
-      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
-      bbox BBox{
-        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
-        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
-      };
-      u8 Left = 0;
-      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
-        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
-//        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
-        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
-        ChildNode.NodeId += NNodesAtLeaf;
-        ++ChildNode.Height;
-        D = i8((D + 1) % Params.NDims);
-      }
-      GenerateOneParticle(BBox);
-      ++NCount;
-    }
+//    if (GetNode(Node, &N) && N > 0) {
+//      REQUIRE(N == 1);
+//      i64 NNodesAtLeaf = NUM_NODES_AT_LEAF(Node.Level);
+//      tree_node ChildNode = Node;
+//      ChildNode.Height = Node.Height + 1;
+//      ChildNode.NodeId = Node.NodeId + NNodesAtLeaf;
+//      i8 D = Node.D; // NOTE: we won't be using ChildNode.D
+//      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+//      assert(Node.Grid.Dims3.x == 1 && Node.Grid.Dims3.y == 1 && Node.Grid.Dims3.z == 1);
+//      bbox BBox{
+//        .Min = Params.BBox.Min + Node.Grid.From3 * W3,
+//        .Max = Params.BBox.Min + (Node.Grid.From3 + 1) * W3
+//      };
+//      u8 Left = 0;
+//      while (ChildNode.Height <= Params.MaxHeight && GetRefNode(ChildNode, &Left)) {
+//        float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5f;
+////        printf("   level %d node %llu bit %d\n", Node.Level, Node.NodeId, Left);
+//        if (Left) BBox.Max[D] = Half; else BBox.Min[D] = Half;
+//        ChildNode.NodeId += NNodesAtLeaf;
+//        ++ChildNode.Height;
+//        D = i8((D + 1) % Params.NDims);
+//      }
+//      GenerateOneParticle(BBox);
+//      ++NCount;
+//    }
   }
+  if (N == 0)
+    int Stop = 0;
   return N;
 }
 
@@ -2667,7 +2678,7 @@ WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
 
     // book-keeping
     BlockBytes[Level].push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
-    MaxBlockSize = MAX(MaxBlockSize, Size(*Bs));
+    MaxBlockSize = MAX(MaxBlockSize, (int)Size(*Bs));
     Rewind(Bs);
     ++NBlocksWritten;
   }
@@ -2729,7 +2740,7 @@ EncodeNode(i8 Level, i64 NodeIdx, i64 M, i64 N) {
   bitstream* Bs = &BlockStreams[Level];
   GrowToAccomodate(Bs, 8);
 //  WriteVarByte(Bs, N);
-  EncodeCenteredMinimal(N, M + 1, Bs);
+  EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
 }
 
 INLINE static void
@@ -2744,7 +2755,7 @@ EncodeResNode(i64 M, i64 N) {
   // TODO: use binomial coding
   GrowToAccomodate(&BlockStreams[Params.NLevels], 8);
 //  WriteVarByte(&BlockStreams[Params.NLevels], N);
-  EncodeCenteredMinimal(N, M + 1, &BlockStreams[Params.NLevels]);
+  EncodeCenteredMinimal((u32)N, (u32)M + 1, &BlockStreams[Params.NLevels]);
 }
 
 /* Encode particle refinement bits */
@@ -2773,7 +2784,7 @@ EncodeParticle(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
     }
     bitstream* Bs = &RefBlockStreams[K];
     GrowToAccomodate(Bs, 1);
-    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5;
+    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5f;
     bool Left = P3[D] < Half;
     Write(Bs, Left);
 //    printf("  level %d node %llu base block %llu ref block %llu bit %d\n", Level, NodeIdx, BaseBlockIdx, BaseBlockIdx + (K + 1) * NUM_BLOCKS_AT_LEAF(Level), Left);
@@ -3062,6 +3073,8 @@ main(int Argc, cstr* Argv) {
     Params.NParticles = Particles.size();
     printf("number of particles = %zu\n", Particles.size());
     Params.BBox = ComputeBoundingBox(Particles);
+    if (Params.BBox.Max.z == Params.BBox.Min.z)
+      Params.BBox.Max.z = Params.BBox.Min.z + 1;
     Params.LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0);
     Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
     Params.Dims3 = vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
@@ -3111,6 +3124,7 @@ main(int Argc, cstr* Argv) {
     }
     OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
+    OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
 
     ReadMetaFile(Params.InFile);
     if (Accuracy != 0) {
@@ -3192,6 +3206,6 @@ main(int Argc, cstr* Argv) {
     printf("error = %f\n", Err);
   }
 
-  //RandomLevels(&Particles);
+  RandomLevels(&Particles);
 }
 

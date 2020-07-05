@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments> --action encode --ndims 2 --nlevels 6 --accuracy 0.001 --block 9 --name teapot --in D:/Datasets/Particles/teapot.xyz</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action decode --accuracy 0.001 --in teapot.idx --out teapot.xyz --max_num_blocks 1000000 --max_subsampling 10  </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
