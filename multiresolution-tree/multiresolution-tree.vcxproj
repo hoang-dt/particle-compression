@@ -150,6 +150,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="decode.cpp" />
+    <ClCompile Include="encode.cpp" />
     <ClCompile Include="multiresolution-tree.cpp" />
   </ItemGroup>
   <ItemGroup>

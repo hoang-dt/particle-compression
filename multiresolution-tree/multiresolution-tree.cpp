@@ -6,27 +6,6 @@
 
 #include "common.h"
 
-struct empty_struct { };
-
-struct bbox { vec3f Min, Max; };
-
-enum node_type { Root, Inner };
-
-struct particle {
-  vec3f Pos; // position
-  //u64 Code = 0; //
-};
-
-struct grid {
-  vec3f From3, Dims3, Stride3;
-};
-
-struct tree {
-  tree* Left   = nullptr;
-  tree* Right  = nullptr;
-  i64 Begin = 0, End = 0;
-};
-
 /* Read all particles from a XYZ file */
 static std::vector<particle>
 ReadXYZ(cstr FileName) {
@@ -77,27 +56,6 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
-enum class action : int { Encode, Decode, Error };
-struct params {
-  char Name[64];
-  vec2i Version = vec2i(1, 0);
-  int NDims = 3;
-  cstr InFile;
-  cstr OutFile;
-  int BlockBits = 18; // every 2^15 voxels become one block
-  i8 NLevels = 3;
-  u8 MaxHeight = 255; // height of the full tree
-  action Action = action::Encode;
-  i64 NParticles;
-  float Accuracy = 0;
-  bbox BBox;
-  vec3i LogDims3;
-  u8 BaseHeight;
-  vec3i Dims3;
-  int MaxNBlocks = INT_MAX;
-  i8 MaxLevel = 127;
-  int MaxParticleSubSampling = 0;
-};
 
 /* Bit set stuffs */
 using word = u64;
@@ -408,108 +366,8 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
 const static int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
 const static int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
-const static double sqrt2 = sqrt(2.0);
 const static long all_nbins = 1 << 30;
 const static double epsilon = 1.0 / double(all_nbins);
-
-#define erfinv_a3 -0.140543331
-#define erfinv_a2 0.914624893
-#define erfinv_a1 -1.645349621
-#define erfinv_a0 0.886226899
-
-#define erfinv_b4 0.012229801
-#define erfinv_b3 -0.329097515
-#define erfinv_b2 1.442710462
-#define erfinv_b1 -2.118377725
-#define erfinv_b0 1
-
-#define erfinv_c3 1.641345311
-#define erfinv_c2 3.429567803
-#define erfinv_c1 -1.62490649
-#define erfinv_c0 -1.970840454
-
-#define erfinv_d2 1.637067800
-#define erfinv_d1 3.543889200
-#define erfinv_d0 1
-#define M_PI 3.141592653589793238462643383279502884197169399375105820974944
-
-double erfinv (double x)
-{
-  double x2, r, y;
-  int  sign_x;
-
-  if (x < -1 || x > 1)
-    return NAN;
-
-  if (x == 0)
-    return 0;
-
-  if (x > 0)
-    sign_x = 1;
-  else {
-    sign_x = -1;
-    x = -x;
-  }
-
-  if (x <= 0.7) {
-
-    x2 = x * x;
-    r =
-      x * (((erfinv_a3 * x2 + erfinv_a2) * x2 + erfinv_a1) * x2 + erfinv_a0);
-    r /= (((erfinv_b4 * x2 + erfinv_b3) * x2 + erfinv_b2) * x2 +
-      erfinv_b1) * x2 + erfinv_b0;
-  }
-  else {
-    y = sqrt (-log ((1 - x) / 2));
-    r = (((erfinv_c3 * y + erfinv_c2) * y + erfinv_c1) * y + erfinv_c0);
-    r /= ((erfinv_d2 * y + erfinv_d1) * y + erfinv_d0);
-  }
-
-  r = r * sign_x;
-  x = x * sign_x;
-
-  r -= (erf (r) - x) / (2 / sqrt (M_PI) * exp (-r * r));
-  r -= (erf (r) - x) / (2 / sqrt (M_PI) * exp (-r * r));
-
-  return r;
-}
-
-#undef erfinv_a3
-#undef erfinv_a2
-#undef erfinv_a1
-#undef erfinv_a0
-
-#undef erfinv_b4
-#undef erfinv_b3
-#undef erfinv_b2
-#undef erfinv_b1
-#undef erfinv_b0
-
-#undef erfinv_c3
-#undef erfinv_c2
-#undef erfinv_c1
-#undef erfinv_c0
-
-#undef erfinv_d2
-#undef erfinv_d1
-#undef erfinv_d0
-
-// TODO: count the number of bits per level
-
-/* The Gaussian CDF. m = mean, s = standard deviation */
-INLINE double
-F(double m, double s, double x) {
-  return 0.5 * std::erfc((m - x) / (s * sqrt2));
-}
-
-/* The inverse Gaussian CDF. m = mean, s = standard deviation */
-INLINE double
-Finv(double m, double s, double y) {
-  return m + s * (erfinv(2 * y - 1) * sqrt2);
-}
-
-using cdf = std::vector<u32>;
-using cdf_table = std::vector<cdf>;
 
 static void
 EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
@@ -526,74 +384,6 @@ DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) 
   size_t v = Coder->Decode(CdfTable);
   assert(v <= n);
   return (int)v;
-}
-
-/* Reverse the bits in the input */
-static uint
-BitReverse(uint a) {
-  uint t;
-  a = (a << 15) | (a >> 17);
-  t = (a ^ (a >> 10)) & 0x003f801f;
-  a = (t + (t << 10)) ^ a;
-  t = (a ^ (a >>  4)) & 0x0e038421;
-  a = (t + (t <<  4)) ^ a;
-  t = (a ^ (a >>  2)) & 0x22488842;
-  a = (t + (t <<  2)) ^ a;
-  return a;
-}
-
-/* v is from 0 to n-1 */
-static void
-EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
-  assert(n > 0);
-  assert(v < n);
-  if (n == 2) {
-    Write(Bs, v == 1);
-    return;
-  }
-  u32 l1 = Msb(n);
-  u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
-  u32 d = (1 << l2) - n;
-  u32 m = (n - d) / 2;
-  if (v < m) {
-    v = BitReverse(v);
-    v >>= sizeof(v) * 8 - l2;
-    Write(Bs, v, l2);
-  } else if (v >= m + d) {
-    v = BitReverse(v - d);
-    v >>= sizeof(v) * 8 - l2;
-    Write(Bs, v, l2);
-  } else { // middle
-    v = BitReverse(v);
-    v >>= sizeof(v) * 8 - l1;
-    Write(Bs, v, l1);
-  }
-}
-
-static u32
-DecodeCenteredMinimal(u32 n, bitstream* Bs) {
-  assert(n > 0);
-  if (n == 2) {
-    return (u32)Read(Bs);
-  }
-  u32 l1 = Msb(n);
-  u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
-  u32 d = (1 << l2) - n;
-  u32 m = (n - d) / 2;
-  Refill(Bs); // TODO: minimize the number of refill
-  u32 v = (u32)Peek(Bs, l2);
-  v <<= sizeof(v) * 8 - l2;
-  v = BitReverse(v);
-  if (v < m) {
-    Consume(Bs, l2);
-    return v;
-  } else if (v < 2 * m) {
-    Consume(Bs, l2);
-    return v + d;
-  } else {
-    Consume(Bs, l1);
-    return v >> 1;
-  }
 }
 
 /* The inverse of encode */
@@ -632,47 +422,6 @@ DecodeRange(
 
     first = false;
   }
-}
-
-/* Generate the Pascal triangle */
-cdf_table pascal_triangle
-  (int n)
-{
-  cdf_table triangle(n + 1);
-
-  for
-    (int i = 0; i <= n; ++i)
-    triangle[i] = std::vector<u32>(i + 1);
-
-  for
-    (int i = 0; i <= n; ++i) {
-    triangle[i][0] = 1;
-    for
-      (int j = 1; j < i; ++j) {
-      triangle[i][j] = triangle[i-1][j-1] + triangle[i-1][j];
-    }
-    triangle[i][i] = 1;
-  }
-
-  return triangle;
-}
-
-/* Create a probability table for small N */
-static cdf_table
-CreateBinomialTable
-  (int N)
-{
-  auto table = pascal_triangle(N);
-
-  for
-    (int n = 0; n <= N; ++n) {
-    for
-      (int k = 1; k <= n; ++k) {
-      table[n][k] += table[n][k-1];
-    }
-  }
-
-  return table;
 }
 
 /* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
@@ -1176,22 +925,6 @@ RefineByLevel() {
   return true;
 }
 
-enum split_type { ResolutionSplit, SpatialSplit };
-enum side { Left, Right };
-static grid
-SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
-  grid Out = Grid;
-  if (SplitType == ResolutionSplit) {
-    Out.From3[D] += (Side == Right) * Out.Stride3[D];
-    Out.Dims3[D] *= 0.5;
-    Out.Stride3[D] *= 2;
-  } else { // spatial split
-    Out.Dims3[D] *= 0.5;
-    Out.From3[D] += (Side == Right) * Out.Stride3[D] * Out.Dims3[D];
-  }
-  return Out;
-}
-
 INLINE static void
 GenerateOneParticle(const bbox& BBox) {
   f32 Rx = f32(rand()) / f32(RAND_MAX);
@@ -1492,20 +1225,6 @@ Print(i8 Level, u64 TreeIdx, i64 ResIdx, i64 LvlIdx, i64 ParIdx, i64 N) {
   printf("level = %d tree_idx = %llu res_idx = %lld lvl_idx = %lld par_idx = %lld N = %lld \n", Level, TreeIdx, ResIdx, LvlIdx, ParIdx, N);
   return;
 }
-
-struct q_item {
-  i64 Begin, End;
-  u64 TreeIdx; // the index in the tree
-  i64 ResIdx; // index in the resolution tree
-  i64 NodeIdx; // index within its own level (either this is used or the ResIdx is used, not both)
-  i64 ParIdx; // particle idx (i.e., number of particles to the left of it)
-  grid Grid;
-  vec3f Error;
-  i8 D;
-  i8 Level;
-  u8 Height;
-  split_type SplitType;
-};
 
 struct Range {
   u64 From, To;

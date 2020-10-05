@@ -21,6 +21,9 @@
     <ClCompile Include="decode.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="encode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="doctest.h">
