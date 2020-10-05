@@ -6,11 +6,8 @@
 #undef near
 #undef far
 
-#define DOCTEST_CONFIG_IMPLEMENT
-#define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #include "doctest.h"
 #include "heap.h"
-#define SEXPR_IMPLEMENTATION
 #include "sexpr.h"
 #include "yocto_math.h"
 #include <algorithm>
@@ -885,7 +882,7 @@ Dealloc(buffer * Buf) {
 }
 
 // NOTE: the client may want to call Parent->DeallocateAll() as well
-void free_list_allocator::
+inline void free_list_allocator::
 DeallocAll() {
   assert(Parent);
   while (Head) {
@@ -896,34 +893,34 @@ DeallocAll() {
   }
 }
 
-fallback_allocator::
+inline fallback_allocator::
 fallback_allocator() = default;
 
-fallback_allocator::
+inline fallback_allocator::
 fallback_allocator(owning_allocator * PrimaryIn, allocator * SecondaryIn)
   : Primary(PrimaryIn)
   , Secondary(SecondaryIn) {}
 
-bool fallback_allocator::
+inline bool fallback_allocator::
 Alloc(buffer * Buf, i64 Size) {
   bool Success = Primary->Alloc(Buf, Size);
   return Success ? Success : Secondary->Alloc(Buf, Size);
 }
 
-void fallback_allocator::
+inline void fallback_allocator::
 Dealloc(buffer * Buf) {
   if (Primary->Own(*Buf))
     return Primary->Dealloc(Buf);
   Secondary->Dealloc(Buf);
 }
 
-void fallback_allocator::
+inline void fallback_allocator::
 DeallocAll() {
   Primary->DeallocAll();
   Secondary->DeallocAll();
 }
 
-void
+inline void
 Clone(const buffer & Src, buffer * Dst, allocator * Alloc) {
   if (Dst->Data && Dst->Bytes != Src.Bytes)
     DeallocBuf(Dst);
@@ -1059,7 +1056,7 @@ Init(tokenizer* Tk, const stref& Input, const stref& Delims) {
 
 constexpr int power_10[] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000 };
 
-bool
+inline bool
 ToInt(const stref& Str, int* Result) {
   stref& StrR = const_cast<stref&>(Str);
   if (!StrR || StrR.Size <= 0)
@@ -1081,7 +1078,7 @@ ToInt(const stref& Str, int* Result) {
   return true;
 }
 
-bool
+inline bool
 ToDouble(const stref& Str, f64* Result) {
   if (!Str || Str.Size <= 0)
     return false;
@@ -1093,7 +1090,7 @@ ToDouble(const stref& Str, f64* Result) {
 }
 
 /* Argument parsing code */
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, cstr* Val) {
   for (int I = 0; I + 1 < NArgs; ++I) {
     if (strncmp(Args[I], Opt, 32) == 0) {
@@ -1104,7 +1101,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, cstr* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, int* Val) {
   for (int I = 0; I + 1 < NArgs; ++I) {
     if (strncmp(Args[I], Opt, 32) == 0)
@@ -1113,7 +1110,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, int* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, i8* Val) {
   int V = *Val;
   for (int I = 0; I + 1 < NArgs; ++I) {
@@ -1127,7 +1124,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, i8* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, u8* Val) {
   int IntVal;
   for (int I = 0; I + 1 < NArgs; ++I) {
@@ -1140,7 +1137,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, u8* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, vec3i* Val) {
   for (int I = 0; I + 3 < NArgs; ++I) {
     if (strncmp(Args[I], Opt, 32) == 0) {
@@ -1152,7 +1149,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, vec3i* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, std::vector<int>* Vals) {
   Vals->clear();
   for (int I = 0; I < NArgs; ++I) {
@@ -1170,7 +1167,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, std::vector<int>* Vals) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, vec2i* Val) {
   for (int I = 0; I + 2 < NArgs; ++I) {
     if (strncmp(Args[I], Opt, 32) == 0) {
@@ -1181,7 +1178,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, vec2i* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, f32* Val) {
   f64 DVal = 0;
   for (int I = 0; I + 1 < NArgs; ++I) {
@@ -1195,7 +1192,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, f32* Val) {
   return false;
 }
 
-bool
+inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, f64* Val) {
   for (int I = 0; I + 1 < NArgs; ++I) {
     if (strncmp(Args[I], Opt, 32) == 0)
@@ -1204,7 +1201,7 @@ OptVal(int NArgs, cstr* Args, cstr Opt, f64* Val) {
   return false;
 }
 
-bool
+inline bool
 OptExists(int NArgs, cstr* Args, cstr Opt) {
   for (int I = 0; I < NArgs; ++I) {
     if (strcmp(Args[I], Opt) == 0)
@@ -1246,7 +1243,7 @@ struct scope_guard {
 #endif
 
 
-bool
+inline bool
 ReadFile(cstr FileName, buffer* Buf) {
   assert((Buf->Data && Buf->Bytes) || (!Buf->Data && !Buf->Bytes));
 
@@ -1422,8 +1419,7 @@ struct arithmetic_coder {
 #define erfinv_d0 1
 #define M_PI 3.141592653589793238462643383279502884197169399375105820974944
 
-double erfinv (double x)
-{
+inline double erfinv (double x) {
   double x2, r, y;
   int  sign_x;
 
@@ -1441,7 +1437,6 @@ double erfinv (double x)
   }
 
   if (x <= 0.7) {
-
     x2 = x * x;
     r =
       x * (((erfinv_a3 * x2 + erfinv_a2) * x2 + erfinv_a1) * x2 + erfinv_a0);
@@ -1499,7 +1494,7 @@ Finv(double m, double s, double y) {
 }
 
 /* Reverse the bits in the input */
-static uint
+inline uint
 BitReverse(uint a) {
   uint t;
   a = (a << 15) | (a >> 17);
@@ -1513,7 +1508,7 @@ BitReverse(uint a) {
 }
 
 /* v is from 0 to n-1 */
-static void
+inline void
 EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   assert(n > 0);
   assert(v < n);
@@ -1540,7 +1535,7 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   }
 }
 
-static u32
+inline u32
 DecodeCenteredMinimal(u32 n, bitstream* Bs) {
   assert(n > 0);
   if (n == 2) {
@@ -1570,22 +1565,15 @@ using cdf = std::vector<u32>;
 using cdf_table = std::vector<cdf>;
 
 /* Generate the Pascal triangle */
-cdf_table pascal_triangle
-  (int n)
-{
+inline cdf_table pascal_triangle(int n) {
   cdf_table triangle(n + 1);
-
-  for
-    (int i = 0; i <= n; ++i)
+  for (int i = 0; i <= n; ++i)
     triangle[i] = std::vector<u32>(i + 1);
 
-  for
-    (int i = 0; i <= n; ++i) {
+  for (int i = 0; i <= n; ++i) {
     triangle[i][0] = 1;
-    for
-      (int j = 1; j < i; ++j) {
+    for (int j = 1; j < i; ++j)
       triangle[i][j] = triangle[i-1][j-1] + triangle[i-1][j];
-    }
     triangle[i][i] = 1;
   }
 
@@ -1593,20 +1581,12 @@ cdf_table pascal_triangle
 }
 
 /* Create a probability table for small N */
-static cdf_table
-CreateBinomialTable
-  (int N)
-{
+inline cdf_table
+CreateBinomialTable(int N) {
   auto table = pascal_triangle(N);
-
-  for
-    (int n = 0; n <= N; ++n) {
-    for
-      (int k = 1; k <= n; ++k) {
+  for (int n = 0; n <= N; ++n)
+    for (int k = 1; k <= n; ++k)
       table[n][k] += table[n][k-1];
-    }
-  }
-
   return table;
 }
 
@@ -1670,7 +1650,7 @@ struct params {
   int MaxParticleSubSampling = 0;
 };
 
-static grid
+inline grid
 SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
   grid Out = Grid;
   if (SplitType == ResolutionSplit) {

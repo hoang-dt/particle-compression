@@ -4,6 +4,9 @@
 // TODO: better memory allocation (to put the leaves on the same memory block)
 // TODO: memory deallocation?
 
+#define DOCTEST_CONFIG_IMPLEMENT
+#define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
+#define SEXPR_IMPLEMENTATION
 #include "common.h"
 
 /* Read all particles from a XYZ file */
