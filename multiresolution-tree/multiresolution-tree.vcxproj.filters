@@ -18,6 +18,9 @@
     <ClCompile Include="multiresolution-tree.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="decode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="doctest.h">
@@ -31,6 +34,9 @@
     </ClInclude>
     <ClInclude Include="heap.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="common.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
