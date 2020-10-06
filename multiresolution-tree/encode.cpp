@@ -1,31 +1,74 @@
 #include "common.h"
 
-INLINE static void /* encode a resolution node */
-EncodeResNodeNew(i64 M, i64 N) {
-//  // TODO: use binomial coding
-//  GrowToAccomodate(&BlockStreams[Params.NLevels], 8);
-////  WriteVarByte(&BlockStreams[Params.NLevels], N);
-//  EncodeCenteredMinimal((u32)N, (u32)M + 1, &BlockStreams[Params.NLevels]);
+static bitstream BlockStream; // compressed stream for the current block
+static std::vector<block_meta> BlockBytesNew; // [block id] -> block size
+static u64 CurrBlock = 0; // [level] -> current block id
+
+void
+EncodeRootNew(i64 N) {
+  InitWrite(&BlockStream, 1024);
+  GrowToAccomodate(&BlockStream, 8);
+  WriteVarByte(&BlockStream, N);
 }
 
-//bitstream* Bs = Height <= Params.BaseHeight ? &BlockStreams[Level] : &RefBlockStreams[Height - Params.BaseHeight - 1].Bs;
+static void
+WriteBlockNew(bitstream* Bs, u64 BlockIdx) {
+  if (Size(*Bs) > 0) {
+    Flush(Bs);
+    FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "ab");
+    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
+    fclose(Fp);
+
+    // book-keeping
+    BlockBytesNew.push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
+    MaxBlockSize = MAX(MaxBlockSize, (int)Size(*Bs));
+    Rewind(Bs);
+    ++NBlocksWritten;
+  }
+}
+
+void
+FlushBlocksToFilesNew() {
+  /* write the regular blocks */
+  WriteBlockNew(&BlockStream, CurrBlock);
+  if (Params.MaxHeight > Params.BaseHeight) { // flush refinement blocks
+    u64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(0); // TODO: check this
+    FOR(u8, H, 0, Params.MaxHeight - Params.BaseHeight) {
+      WriteBlockNew(&RefBlockStreams[H], CurrRefBlocks[H].BlockId + (H + 1) * NBlocksAtLeaf);
+    }
+  }
+  // write an index consisting of all blocks in the file
+  // TODO: compress the index?
+  // TODO: if too many blocks have 0 bytes, maybe we can write a sparse index
+  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "ab");
+  Padding.resize(MaxBlockSize);
+  fwrite(Padding.data(), Padding.size(), 1, Fp);
+  u64 NBlocks = BlockBytes.size();
+  fwrite(BlockBytes.data(), sizeof(block_meta) * NBlocks, 1, Fp);
+  fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
+  fwrite(&MaxBlockSize, sizeof(MaxBlockSize), 1, Fp);
+  printf("max block size = %d\n", MaxBlockSize);
+  fclose(Fp);
+  /* write the meta-data file */
+  WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
+}
+
 INLINE static void
-EncodeNodeNew(i8 Level, i64 NodeIdx, i64 M, i64 N) {
-//  u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-////  printf("+++++++ encoding level = %d block = %llu\n", Level, BlockIdx);
-//  if (BlockIdx != CurrBlocks[Level]) { // we have moved to the next block, dump the current block to disk
-//    WriteBlock(&BlockStreams[Level], Level, CurrBlocks[Level]);
-//    CurrBlocks[Level] = BlockIdx;
-//  }
-//  bitstream* Bs = &BlockStreams[Level];
-//  GrowToAccomodate(Bs, 8);
-////  WriteVarByte(Bs, N);
-//  EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
+EncodeNodeNew(i64 NodeIdx, i64 M, i64 N) {
+  u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
+  if (BlockIdx != CurrBlock) { // we have moved to the next block, dump the current block to disk
+    WriteBlockNew(&BlockStream, CurrBlock);
+    CurrBlock = BlockIdx;
+  }
+  bitstream* Bs = &BlockStream;
+  GrowToAccomodate(Bs, 8);
+  WriteVarByte(Bs, N);
+  EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
 }
 
 /* Encode particle refinement bits */
 static void
-EncodeParticleNew(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
+EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
   //vec3f P3 = Pos;
   //u8 H = Params.BaseHeight + 1;
   //i8 D = Params.BaseHeight % Params.NDims;
@@ -56,11 +99,10 @@ EncodeParticleNew(i8 Level, u64 NodeIdx, const vec3f& Pos, bbox BBox) {
   //  ++H;
   //}
 }
-
-
-static void
-BuildTreeNew(const params& Params, std::vector<particle>& Particles, q_item Q, float Accuracy) {
-  std::queue<q_item> Queue;
+/* Here we always use the "resolution" splits */
+void
+BuildTreeNew(q_item_new Q, float Accuracy) {
+  std::queue<q_item_new> Queue;
   Queue.push(Q);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   while (!Queue.empty()) {
@@ -71,61 +113,39 @@ BuildTreeNew(const params& Params, std::vector<particle>& Particles, q_item Q, f
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
     i64 Mid = Q.Begin;
     vec3f Error3 = (W3 * Q.Grid.Dims3) / f64(N);
-    bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
-    if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
+    bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy && (Params.NDims > 2 ? Error3.z <= Accuracy : true);
     if (Stop) continue;
     //if (N <= 1) continue; // enable this to stop the tree construction after the base height
-    if (Q.SplitType == ResolutionSplit) { // resolution split
-      auto Pred = [Params, W3, &Q](const particle& P) {
-        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
-        assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
-        REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
-        Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
-        return IS_EVEN(Bin);
-      };
-      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
-    } else { // spatial split
-      float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
-      float M = Params.BBox.Min[Q.D] + W3[Q.D] * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
-      auto Pred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
-      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
-    }
+    auto Pred = [W3, &Q](const particle& P) {
+      int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
+      assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
+      REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
+      Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
+      return IS_EVEN(Bin);
+    };
+    Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
     if (Q.Height < Params.BaseHeight) {
       /* encoding the children (left child in particular) */
-      if (Q.SplitType == ResolutionSplit) {
-        EncodeResNodeNew(Q.End - Q.Begin, Mid - Q.Begin);
-      } else {
-        EncodeNodeNew(Q.Level - (Q.SplitType == ResolutionSplit), Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
-      }
+      EncodeNodeNew(Q.Idx, Q.End - Q.Begin, Mid - Q.Begin);
       /* enqueue children */
-      if (Q.Begin < Mid) {
-        Queue.push(q_item{
+      if (Q.Begin < Mid) { // left child
+        Queue.push(q_item_new {
           .Begin = Q.Begin,
           .End = Mid,
-          .TreeIdx = Q.TreeIdx * 2,
-          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 2 : Q.ResIdx,
-          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2,
-          .ParIdx = Q.ParIdx,
-          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Left),
+          .Idx = Q.Idx * 2,
+          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Left),
           .D = i8((Q.D + 1) % Params.NDims),
-          .Level = i8(Q.Level - (Q.SplitType == ResolutionSplit)),
           .Height = u8(Q.Height + 1),
-          .SplitType = (N > 1 && (Q.SplitType == ResolutionSplit) && Q.Level > 1) ? ResolutionSplit : SpatialSplit
         });
       }
-      if (Mid < Q.End) {
-        Queue.push(q_item{
+      if (Mid < Q.End) { // right child
+        Queue.push(q_item_new {
           .Begin = Mid,
           .End = Q.End,
-          .TreeIdx = Q.TreeIdx * 2 + 1,
-          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 1 : Q.ResIdx,
-          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
-          .ParIdx = Q.ParIdx + Mid - Q.Begin,
-          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, Right),
+          .Idx = Q.Idx * 2 + 1,
+          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Right),
           .D = i8((Q.D + 1) % Params.NDims),
-          .Level = Q.Level,
           .Height = u8(Q.Height + 1),
-          .SplitType = SpatialSplit
         });
       }
     } else { // Q.Height == Params.BaseHeight
@@ -137,7 +157,7 @@ BuildTreeNew(const params& Params, std::vector<particle>& Particles, q_item Q, f
         .Min = Params.BBox.Min + Q.Grid.From3 * W3,
         .Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3
       };
-      EncodeParticleNew(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
+      EncodeParticleNew(Q.Idx, Particles[Q.Begin].Pos, BBox);
     }
   }
 }

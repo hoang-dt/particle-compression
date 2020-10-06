@@ -92,44 +92,6 @@ INLINE static i64 BOffset(i64 B) { return B & WORD_MASK; }
 //}
 
 static std::vector<vec3f> GridPoints; // stores the grid points that contain the (to be generated) particles
-static std::vector<particle> Particles;
-static params Params;
-static std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
-struct ref_block {
-  i8 Level = 0;
-  u64 BlockId = 0;
-};
-struct block_meta {
-  i64 Size = 0;
-  u64 BlockId = 0;
-};
-INLINE static bool operator<(const block_meta& Lhs, const block_meta& Rhs) {
-  return Lhs.BlockId < Rhs.BlockId;
-}
-
-static std::vector<bitstream> RefBlockStreams; // [height] -> bitstream (of the current block)
-static std::vector<u64> CurrBlocks; // [level] -> current block id
-static std::vector<ref_block> CurrRefBlocks; // [height] -> current refinement block
-static std::vector<std::vector<block_meta>> BlockBytes; // [level] -> [block id] -> block size
-static std::vector<std::vector<block_meta>> BlockOffsets; // [level] -> [block id] -> block offset
-static int MaxBlockSize = 0; // max block size
-static std::vector<byte> Padding;
-struct block {
-  std::vector<i64> Nodes; // used when level <= BaseHeight
-//  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
-  bitstream Bs;
-  int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
-  block() { Nodes.resize(POW2(Params.BlockBits)); }
-  block(bitstream* Bs) { 
-    Nodes.resize(Size(Bs->Stream) / sizeof(Nodes[0]) + 1);
-    memcpy(Nodes.data(), Bs->Stream.Data, Size(Bs->Stream));
-    this->Bs.Stream.Data = (byte*)Nodes.data();
-    this->Bs.Stream.Bytes = Bs->Stream.Bytes;
-    InitRead(&this->Bs, this->Bs.Stream); 
-  }
-};
-using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
-static block_table Blocks;
 
 
 static bool
@@ -250,57 +212,6 @@ ReadMetaFile(cstr FileName) {
   return true;
 }
 
-static void
-WriteMetaFile(const params& Params, cstr FileName) {
-  FILE* Fp = fopen(FileName, "w");
-  fprintf(Fp, "(\n"); // begin (
-  fprintf(Fp, "  (common\n");
-  fprintf(Fp, "    (name \"%s\")\n", Params.Name);
-  fprintf(Fp, "    (particles %lld)\n", Params.NParticles);
-  fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
-  fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
-  fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
-  fprintf(Fp, "  )\n"); // end common)
-  fprintf(Fp, "  (format\n");
-  fprintf(Fp, "    (version %d %d)\n", Params.Version[0], Params.Version[1]);
-  fprintf(Fp, "    (resolutions %d)\n", Params.NLevels);
-  fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
-  fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
-  fprintf(Fp, "    (height %d)\n", Params.MaxHeight);
-  fprintf(Fp, "  )\n"); // end format)
-  fprintf(Fp, ")\n"); // end )
-  fclose(Fp);
-}
-
-template <typename t> INLINE void WritePOD(FILE* Fp, const t Var) { fwrite(&Var, sizeof(Var), 1, Fp); }
-template <typename t> INLINE void WriteBuffer(FILE* Fp, const buffer& Buf) { fwrite(Buf.Data, Size(Buf), 1, Fp); }
-template <typename t> INLINE void WriteBuffer(FILE* Fp, const buffer& Buf, i64 Sz) { fwrite(Buf.Data, Sz, 1, Fp); }
-template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer* Buf) { fread(Buf->Data, Size(*Buf), 1, Fp); }
-template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer* Buf, i64 Sz) { fread(Buf->Data, Sz, 1, Fp); }
-template <typename t> INLINE void ReadBuffer(FILE* Fp, buffer_t<t>* Buf) { fread(Buf->Data, Bytes(*Buf), 1, Fp); }
-template <typename t> INLINE void ReadPOD(FILE* Fp, t* Val) { fread(Val, sizeof(t), 1, Fp); }
-template <typename t> INLINE void
-ReadBackwardPOD(FILE* Fp, t* Val) {
-  auto Where = FTELL(Fp);
-  FSEEK(Fp, Where -= sizeof(t), SEEK_SET);
-  fread(Val, sizeof(t), 1, Fp);
-  FSEEK(Fp, Where, SEEK_SET);
-}
-INLINE void
-ReadBackwardBuffer(FILE* Fp, buffer* Buf) {
-  auto Where = FTELL(Fp);
-  FSEEK(Fp, Where -= Size(*Buf), SEEK_SET);
-  fread(Buf->Data, Size(*Buf), 1, Fp);
-  FSEEK(Fp, Where, SEEK_SET);
-}
-INLINE void
-ReadBackwardBuffer(FILE* Fp, buffer* Buf, i64 Sz) {
-  assert(Sz <= Size(*Buf));
-  auto Where = FTELL(Fp);
-  FSEEK(Fp, Where -= Sz, SEEK_SET);
-  fread(Buf->Data, Sz, 1, Fp);
-  FSEEK(Fp, Where, SEEK_SET);
-}
 
 static bool
 ReadResBlock() {
@@ -512,12 +423,6 @@ DecodeResBlock(bitstream* Bs, block* Block) {
 }
 
 // TODO: and from tree depth to bounding box
-#define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
-#define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
-#define LEVEL_TO_HEIGHT(Level) ((Params.NLevels - (Level)) - ((Level) == 0))
-#define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
-#define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
-#define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 static void
 DecodeRefBlock(bitstream* Bs, i8 Level, u64 BlockIdx, block_table* AllBlocks) {
   //InitRead(Bs, Bs->Stream);
@@ -1092,26 +997,6 @@ GenerateParticles(const tree_node& Node) {
   return N;
 }
 
-static i64 NBlocksWritten = 0;
-
-/* tree block (including refinement block) */
-static void
-WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
-//  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
-  if (Size(*Bs) > 0) {
-    Flush(Bs);
-    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
-    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
-    fclose(Fp);
-
-    // book-keeping
-    BlockBytes[Level].push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
-    MaxBlockSize = MAX(MaxBlockSize, (int)Size(*Bs));
-    Rewind(Bs);
-    ++NBlocksWritten;
-  }
-}
-
 // TODO: CONTINUE from here: fix the code so that we really refine by levels
 // TODO: CONTINUE from here: re-implement the refine by error
 // TODO: CONTINUE from here: output an .xyz
@@ -1453,6 +1338,11 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
   return Err;
 }
 
+void WriteBlockNew(bitstream* Bs, u64 BlockIdx);
+void FlushBlocksToFilesNew();
+void BuildTreeNew(q_item_new Q, float Accuracy);
+void EncodeRootNew(i64 N);
+
 // TODO: add the number of blocks to the .idx file
 // TODO: 
 int
@@ -1505,7 +1395,8 @@ main(int Argc, cstr* Argv) {
       CurrRefBlocks[H].BlockId = u64(-1);
     }
     BlockBytes.resize(Params.NLevels);
-    EncodeRoot(Particles.size());
+    //EncodeRoot(Particles.size()); // NOTE: old method
+    EncodeRootNew(Particles.size());
     /* compute the maximum height based on the accuracy */
     if (Params.MaxHeight == 255) {
       Params.MaxHeight = 0;
@@ -1515,6 +1406,7 @@ main(int Argc, cstr* Argv) {
       while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
     }
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
+    /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
                            .TreeIdx = 1,
@@ -1525,7 +1417,13 @@ main(int Argc, cstr* Argv) {
                            .Level = i8(Params.NLevels - 1),
                            .Height = 0,
                            .SplitType = Params.NLevels > 1 ? ResolutionSplit : SpatialSplit }, Params.Accuracy);
-    FlushBlocksToFiles();
+    FlushBlocksToFiles();*/
+    BuildTreeNew(q_item_new { .Begin = 0,
+                              .End = (i64)Particles.size(),
+                              .Idx = 1,
+                              .Grid = Grid,
+                              .Height = 0 }, Params.Accuracy);
+    FlushBlocksToFilesNew();
     printf("nblocks written = %lld\n", NBlocksWritten);
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -1620,6 +1518,6 @@ main(int Argc, cstr* Argv) {
     printf("error = %f\n", Err);
   }
 
-  RandomLevels(&Particles);
+  //RandomLevels(&Particles);
 }
 
