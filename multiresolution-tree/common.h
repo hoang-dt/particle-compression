@@ -703,8 +703,9 @@ GrowToAccomodate(bitstream* Bs, i64 AddedCapacity) {
   i64 NewCapacity = OriginalCapacity;
   while (Size(*Bs) + AddedCapacity + (i64)sizeof(Bs->BitBuf) >= NewCapacity)
     NewCapacity = (NewCapacity * 3) / 2 + 8;
-  if (NewCapacity > OriginalCapacity)
+  if (NewCapacity > OriginalCapacity) {
     IncreaseCapacity(Bs, NewCapacity);
+  }
 }
 
 INLINE void
@@ -1648,6 +1649,7 @@ struct params {
   int MaxNBlocks = INT_MAX;
   i8 MaxLevel = 127;
   int MaxParticleSubSampling = 0;
+  bool NoRefinement = false;
 };
 
 inline grid
@@ -1789,4 +1791,61 @@ struct q_item_new {
   i8 D; // splitting plane
   u8 Height;
 };
+
+struct cosmo_header {
+  int np_local; // number of particles
+  float a, t, tau;
+  int nts;
+  float dt_f_acc, dt_pp_acc, dt_c_acc;
+  int cur_checkpoint, cur_projection, cur_halofind;
+  float massp;
+};
+
+inline std::vector<particle>
+ReadCosmo(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  cosmo_header Header;
+  ReadPOD(Fp, &Header);
+  printf("number of particles = %d\n", Header.np_local);
+  std::vector<particle> Particles(Header.np_local);
+  vec3f Vel; // velocity
+  FOR_EACH(P, Particles) {
+    ReadPOD(Fp, &P->Pos);
+    ReadPOD(Fp, &Vel); // dummy
+  }
+  fclose(Fp);
+  return Particles;
+}
+
+/* Read all particles from a XYZ file */
+inline std::vector<particle>
+ReadXYZ(cstr FileName) {
+  FILE* Fp = fopen(FileName, "r");
+  std::vector<particle> Particles;
+
+  char Line[256];
+  fgets(Line, sizeof(Line), Fp);
+  u32 NParticles; sscanf(Line, "%" PRIu32, &NParticles);
+  Particles.resize(NParticles);
+  fgets(Line, sizeof(Line), Fp); // dummy second line
+  FOR(int, I, 0, NParticles) {
+    fgets(Line, sizeof(Line), Fp);
+    vec3f P3; char C;
+    sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
+    Particles[I].Pos = P3;
+  }
+  return Particles;
+}
+
+template <typename t> inline void
+WriteXYZ(cstr FileName, t Begin, t End) {
+  FILE* Fp = fopen(FileName, "w");
+  auto NParticles = End - Begin;
+  fprintf(Fp, "%zu\n", NParticles);
+  fprintf(Fp, "dummy\n");
+  FOR_EACH (P3, Begin, End) {
+    fprintf(Fp, "C %f %f %f\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
+  }
+  fclose(Fp);
+}
 

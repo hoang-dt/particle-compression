@@ -9,38 +9,6 @@
 #define SEXPR_IMPLEMENTATION
 #include "common.h"
 
-/* Read all particles from a XYZ file */
-static std::vector<particle>
-ReadXYZ(cstr FileName) {
-  FILE* Fp = fopen(FileName, "r");
-  std::vector<particle> Particles;
-
-  char Line[256];
-  fgets(Line, sizeof(Line), Fp);
-  u32 NParticles; sscanf(Line, "%" PRIu32, &NParticles);
-  Particles.resize(NParticles);
-  fgets(Line, sizeof(Line), Fp); // dummy second line
-  FOR(int, I, 0, NParticles) {
-    fgets(Line, sizeof(Line), Fp);
-    vec3f P3; char C;
-    sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
-    Particles[I].Pos = P3;
-  }
-  return Particles;
-}
-
-template <typename t> static void
-WriteXYZ(cstr FileName, t Begin, t End) {
-  FILE* Fp = fopen(FileName, "w");
-  auto NParticles = End - Begin;
-  fprintf(Fp, "%zu\n", NParticles);
-  fprintf(Fp, "dummy\n");
-  FOR_EACH (P3, Begin, End) {
-    fprintf(Fp, "C %f %f %f\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
-  }
-  fclose(Fp);
-}
-
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
   REQUIRE(!Particles.empty());
@@ -1235,7 +1203,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
           .SplitType = SpatialSplit
         });
       }
-    } else { // Q.Height == Params.BaseHeight
+    } else if (!Params.NoRefinement) { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
@@ -1370,10 +1338,16 @@ main(int Argc, cstr* Argv) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
+    Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
-    Particles = ReadXYZ(Params.InFile);
+    if (strstr(Params.InFile, ".xyz"))
+      Particles = ReadXYZ(Params.InFile);
+    else if (strstr(Params.InFile, ".dat"))
+      Particles = ReadCosmo(Params.InFile);
+    else
+      EXIT_ERROR("Unsupported file format");
     Params.NParticles = Particles.size();
     printf("number of particles = %zu\n", Particles.size());
     Params.BBox = ComputeBoundingBox(Particles);

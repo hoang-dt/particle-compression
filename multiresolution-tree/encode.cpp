@@ -29,9 +29,11 @@ WriteBlockNew(bitstream* Bs, u64 BlockIdx) {
 
 void
 FlushBlocksToFilesNew() {
+  printf("block stream size = %lld\n", Size(BlockStream));
   /* write the regular blocks */
   WriteBlockNew(&BlockStream, CurrBlock);
   if (Params.MaxHeight > Params.BaseHeight) { // flush refinement blocks
+    printf("flushing refinement blocks\n");
     u64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(0); // TODO: check this
     FOR(u8, H, 0, Params.MaxHeight - Params.BaseHeight) {
       WriteBlockNew(&RefBlockStreams[H], CurrRefBlocks[H].BlockId + (H + 1) * NBlocksAtLeaf);
@@ -42,7 +44,7 @@ FlushBlocksToFilesNew() {
   // TODO: if too many blocks have 0 bytes, maybe we can write a sparse index
   FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "ab");
   Padding.resize(MaxBlockSize);
-  fwrite(Padding.data(), Padding.size(), 1, Fp);
+  fwrite(Padding.data(), Padding.size(), 1, Fp); // we write a padding the size of one block at the end of the file (why?)
   u64 NBlocks = BlockBytes.size();
   fwrite(BlockBytes.data(), sizeof(block_meta) * NBlocks, 1, Fp);
   fwrite(&NBlocks, sizeof(NBlocks), 1, Fp);
@@ -55,14 +57,15 @@ FlushBlocksToFilesNew() {
 
 INLINE static void
 EncodeNodeNew(i64 NodeIdx, i64 M, i64 N) {
+  /* NOTE: uncomment to write to blocks
   u64 BlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
   if (BlockIdx != CurrBlock) { // we have moved to the next block, dump the current block to disk
     WriteBlockNew(&BlockStream, CurrBlock);
     CurrBlock = BlockIdx;
-  }
+  } */
   bitstream* Bs = &BlockStream;
   GrowToAccomodate(Bs, 8);
-  WriteVarByte(Bs, N);
+  //WriteVarByte(Bs, N);
   EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
 }
 
@@ -102,12 +105,12 @@ EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
 /* Here we always use the "resolution" splits */
 void
 BuildTreeNew(q_item_new Q, float Accuracy) {
-  std::queue<q_item_new> Queue;
-  Queue.push(Q);
+  std::deque<q_item_new> Queue;
+  Queue.push_back(Q);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   while (!Queue.empty()) {
     Q = Queue.front();
-    Queue.pop();
+    Queue.pop_front();
     REQUIRE(Q.Height <= Params.MaxHeight);
     i64 N = Q.End - Q.Begin;
     assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
@@ -129,7 +132,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
       EncodeNodeNew(Q.Idx, Q.End - Q.Begin, Mid - Q.Begin);
       /* enqueue children */
       if (Q.Begin < Mid) { // left child
-        Queue.push(q_item_new {
+        Queue.push_back(q_item_new {
           .Begin = Q.Begin,
           .End = Mid,
           .Idx = Q.Idx * 2,
@@ -139,7 +142,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
         });
       }
       if (Mid < Q.End) { // right child
-        Queue.push(q_item_new {
+        Queue.push_back(q_item_new {
           .Begin = Mid,
           .End = Q.End,
           .Idx = Q.Idx * 2 + 1,
@@ -148,7 +151,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .Height = u8(Q.Height + 1),
         });
       }
-    } else { // Q.Height == Params.BaseHeight
+    } else if (!Params.NoRefinement) { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
