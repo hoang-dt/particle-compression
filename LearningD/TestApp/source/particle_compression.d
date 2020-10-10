@@ -45,6 +45,8 @@ int decode_binomial_small_range(int n, in uint[] cdf_table, ref Coder coder) {
   return cast(int)v;
 }
 
+int encoded_nodes_count = 0;
+
 /++ Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability +/
 void encode_range(double m, double s, double a, double b, double c, in uint[][] cdf_table, ref BitStream bs, ref Coder coder) {
@@ -53,14 +55,15 @@ void encode_range(double m, double s, double a, double b, double c, in uint[][] 
   bool first = true;
 
   /* comment out the below to use uniform encoding instead of gaussian distribution */
-  //int beg = cast(int)ceil(a);
-  //int end = cast(int)floor(b);
-  //int v = cast(int)c-beg;
-  //int n = end - beg + 1; // v can be from 0 to n-1
-  //if (end-beg+1 <= cutoff)
+  // int beg = cast(int)ceil(a);
+  // int end = cast(int)floor(b);
+  // int v = cast(int)c-beg;
+  // int n = end - beg + 1; // v can be from 0 to n-1
+  // if (end-beg+1 <= cutoff)
   //  return encode_binomial_small_range(n-1, v, cdf_table[n-1], coder);
-  //else
+  // else
   //  return encode_centered_minimal(v, n, bs);
+  ++encoded_nodes_count;
 
   while (true) {
     int beg = cast(int)ceil(a);
@@ -212,7 +215,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
       float m = float(N) / 2; // mean
       float s = sqrt(float(N)) / 2; // standard deviation
       encode_range(m, s, 0, N, n, table, bs, coder);
-      //encode_centered_minimal(n, N+1, bs); // uniform
+      // encode_centered_minimal(n, N+1, bs); // uniform
       //enc_file.writeln(n);
       if (node.left_)
         traverse_encode(node.left_, bs);
@@ -231,6 +234,7 @@ void encode(T)(KdTree!(T, Root) tree, ref BitStream bs, ref Coder coder) {
   traverse_encode(tree, bs);
   bs.flush();
   coder.encode_finalize();
+  writeln("encoded nodes count = ", encoded_nodes_count);
   writeln("--------------");
 }
 

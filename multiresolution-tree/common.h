@@ -1293,7 +1293,7 @@ struct arithmetic_coder {
   InitWrite(int Bytes) {
     CodeLow = CodeVal = PendingBits = 0;
     CodeHigh = CodeMax;
-    InitWrite(&BitStream, Bytes);
+    ::InitWrite(&BitStream, Bytes);
   }
 
   /* Init for decoding */
@@ -1566,7 +1566,8 @@ using cdf = std::vector<u32>;
 using cdf_table = std::vector<cdf>;
 
 /* Generate the Pascal triangle */
-inline cdf_table pascal_triangle(int n) {
+inline cdf_table 
+pascal_triangle(int n) {
   cdf_table triangle(n + 1);
   for (int i = 0; i <= n; ++i)
     triangle[i] = std::vector<u32>(i + 1);
@@ -1589,6 +1590,118 @@ CreateBinomialTable(int N) {
     for (int k = 1; k <= n; ++k)
       table[n][k] += table[n][k-1];
   return table;
+}
+
+inline void
+EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
+  assert(v >= 0 && v <= n);
+  u32 lo = v == 0 ? 0 : CdfTable[v - 1];
+  u32 hi = CdfTable[v];
+  u32 scale = 1 << n;
+  prob<u32> prob{lo, hi, scale};
+  Coder->Encode(prob);
+}
+
+inline int
+DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) {
+  size_t v = Coder->Decode(CdfTable);
+  assert(v <= n);
+  return (int)v;
+}
+
+constexpr inline int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
+constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
+
+/* The inverse of encode */
+// TODO: refactor to put part the logic of this function to the decode function
+inline int
+DecodeRange(
+  double m, double s, double a, double b,
+  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) 
+{
+  assert(a <= b);
+  bool first = true;
+  while (true) {
+    int beg = (int)std::ceil(a);
+    int end = (int)std::floor(b);
+    if (beg == end)
+      return beg; // no need to write any bit
+    int n = end - beg + 1;
+    if (first && n <= cutoff1)
+      return DecodeBinomialSmallRange(n - 1, CdfTable[n - 1], Coder);
+    if (!first && n <= cutoff2)
+      return beg + DecodeCenteredMinimal(n, Bs);
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    // TODO: what if fa==fb
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa + fb) * 0.5);
+    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a == mid || b == mid)
+      return beg + DecodeCenteredMinimal(n, Bs);
+    assert(a <= mid && mid <= b);
+
+    auto bit = Read(Bs);
+    if (bit == 0) b = std::floor(mid);
+    else          a = std::ceil(mid);
+
+    first = false;
+  }
+}
+
+/* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
+into two bins of equal probability */
+inline void
+EncodeRange(double m, double s,
+  double a, double b, double c,
+  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder)
+{
+  assert(a <= b);
+  bool first = true;
+
+  /* comment out the below to use uniform encoding instead of gaussian distribution */
+  //int beg = cast(int)ceil(a);
+  //int end = cast(int)floor(b);
+  //int v = cast(int)c-beg;
+  //int n = end - beg + 1; // v can be from 0 to n-1
+  //if (end-beg+1 <= cutoff)
+  //  return encode_binomial_small_range(n-1, v, CdfTable[n-1], coder);
+  //else
+  //  return encode_centered_minimal(v, n, bs);
+
+  while (true) {
+    int beg = (int)std::ceil(a);
+    int end = (int)std::floor(b);
+    if (beg == end)
+      return; // no need to write any bit
+    int n = end - beg + 1; // v can be from 0 to n-1
+    int v = int(c - beg);
+    if (first && n <= cutoff1)
+      return EncodeBinomialSmallRange(n - 1, v, CdfTable[n - 1], Coder);
+    if (!first && n <= cutoff2)
+      return EncodeCenteredMinimal(v, n, Bs);
+    /* compute F(a) and F(b) */
+    double fa = F(m, s, a);
+    double fb = F(m, s, b);
+    /* compute F^-1((fa+fb)/2) */
+    double mid = Finv(m, s, (fa + fb) * 0.5);
+    //assert(mid == mid);
+    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a == mid || b == mid || mid != mid)
+      return EncodeCenteredMinimal(v, n, Bs);
+    assert(a <= mid && mid <= b);
+    if (c < mid) {
+      Write(Bs, 0);
+      b = floor(mid);
+    } else { // c >= mid
+      Write(Bs, 1);
+      a = ceil(mid);
+    }
+    first = false;
+  }
 }
 
 struct empty_struct { };
@@ -1817,6 +1930,37 @@ ReadCosmo(cstr FileName) {
   return Particles;
 }
 
+struct vtu_header {
+  u32 pad3;
+  u32 size;
+  u32 pad1;
+  u32 step;
+  u32 pad2;
+  f32 time;
+};
+
+inline std::vector<particle>
+ReadVtu(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  std::vector<particle> Particles;
+  vtu_header Header;
+  int MagicOffset = 4072;
+  fseek(Fp, MagicOffset, SEEK_SET);
+  ReadPOD(Fp, &Header);
+  //auto size = header[0].size;
+  //writeln(header[0].size);
+  Particles.resize(Header.size);
+  fseek(Fp, 4, SEEK_CUR);
+  FOR_EACH(P, Particles) {
+    fread(&P->Pos, sizeof(*P), 1, Fp);
+  }
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.velocity[0]);
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.concentration[0]);
+  return Particles;
+}
+
 /* Read all particles from a XYZ file */
 inline std::vector<particle>
 ReadXYZ(cstr FileName) {
@@ -1830,8 +1974,9 @@ ReadXYZ(cstr FileName) {
   fgets(Line, sizeof(Line), Fp); // dummy second line
   FOR(int, I, 0, NParticles) {
     fgets(Line, sizeof(Line), Fp);
-    vec3f P3; char C;
-    sscanf(Line, "%c %f %f %f", &C, &P3.x, &P3.y, &P3.z);
+    vec3f P3; 
+    char C[8];
+    sscanf(Line, "%s %f %f %f", C, &P3.x, &P3.y, &P3.z);
     Particles[I].Pos = P3;
   }
   return Particles;

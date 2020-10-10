@@ -148,27 +148,27 @@ public:
   }
 
   void build_helper_no_leaf(string order, A...)(KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {
-    assert(begin < end); // this cannot be a leaf node
-    begin_ = begin;
-    end_ = end;
-    left_ = right_ = null;
-    int d = order[dim%3] - 'x';
-    double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
-    int left_size = end-begin - cast(int)right.length;
-    if (left_size > 0) {
-      left_ = new KdTree!(T, Inner)();
-      auto bbox_left = bbox;
-      bbox_left.max[d] = middle;
-      if (left_size != 1)
-        left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a);
-    }
-    if (begin+left_size < end) {
-      right_ = new KdTree!(T, Inner)();
-      auto bbox_right = bbox;
-      bbox_right.min[d] = middle;
-      if (begin+left_size+1 != end)
-        right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a);
-    }
+    //assert(begin < end); // this cannot be a leaf node
+    //begin_ = begin;
+    //end_ = end;
+    //left_ = right_ = null;
+    //int d = order[dim%3] - 'x';
+    //double middle = (bbox.min[d]+bbox.max[d]) / 2.0;
+    //int left_size = end-begin - cast(int)right_.length;
+    //if (left_size > 0) {
+    //  left_ = new KdTree!(T, Inner)();
+    //  auto bbox_left = bbox;
+    //  bbox_left.max[d] = middle;
+    //  if (left_size != 1)
+    //    left_.build_helper!order(root, bbox_left, begin, begin+left_size, dim+1, a);
+    //}
+    //if (begin+left_size < end) {
+    //  right_ = new KdTree!(T, Inner)();
+    //  auto bbox_right = bbox;
+    //  bbox_right.min[d] = middle;
+    //  if (begin+left_size+1 != end)
+    //    right_.build_helper!order(root, bbox_right, begin+left_size, end, dim+1, a);
+    //}
   }
 
   void build_helper_leaf(string order)(const KdTree!(T, Root) root, BoundingBox!T bbox, int begin, int end, int dim) {

@@ -3,6 +3,9 @@
 static bitstream BlockStream; // compressed stream for the current block
 static std::vector<block_meta> BlockBytesNew; // [block id] -> block size
 static u64 CurrBlock = 0; // [level] -> current block id
+static cdf_table CdfTable;
+static arithmetic_coder<> Coder;
+static int EncodedNodesCount = 0;
 
 void
 EncodeRootNew(i64 N) {
@@ -30,6 +33,8 @@ WriteBlockNew(bitstream* Bs, u64 BlockIdx) {
 void
 FlushBlocksToFilesNew() {
   printf("block stream size = %lld\n", Size(BlockStream));
+  printf("arithmetic stream size = %lld\n", Size(Coder.BitStream));
+  printf("number of encoded nodes = %d\n", EncodedNodesCount);
   /* write the regular blocks */
   WriteBlockNew(&BlockStream, CurrBlock);
   if (Params.MaxHeight > Params.BaseHeight) { // flush refinement blocks
@@ -55,6 +60,7 @@ FlushBlocksToFilesNew() {
   WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
 }
 
+
 INLINE static void
 EncodeNodeNew(i64 NodeIdx, i64 M, i64 N) {
   /* NOTE: uncomment to write to blocks
@@ -65,10 +71,14 @@ EncodeNodeNew(i64 NodeIdx, i64 M, i64 N) {
   } */
   bitstream* Bs = &BlockStream;
   GrowToAccomodate(Bs, 8);
-  //WriteVarByte(Bs, N);
   EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
+  ++EncodedNodesCount;
+  /* NOTE: comment out the following to disable the binomial coding */
+  //f64 Mean = f64(M) / 2; // mean
+  //f64 StdDev = sqrt(f64(M)) / 2; // standard deviation
+  //EncodeRange(Mean, StdDev, f64(0), f64(M), f64(N), CdfTable, &BlockStream, &Coder);
 }
-
+    
 /* Encode particle refinement bits */
 static void
 EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
@@ -105,6 +115,11 @@ EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
 /* Here we always use the "resolution" splits */
 void
 BuildTreeNew(q_item_new Q, float Accuracy) {
+  /* NOTE: comment to disable the binomial coding */
+  CdfTable = CreateBinomialTable(cutoff1);
+  GrowToAccomodate(&BlockStream, 100000000); // 100 MB
+  Coder.InitWrite(100000000);
+
   std::deque<q_item_new> Queue;
   Queue.push_back(Q);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
@@ -119,15 +134,19 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
     bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy && (Params.NDims > 2 ? Error3.z <= Accuracy : true);
     if (Stop) continue;
     //if (N <= 1) continue; // enable this to stop the tree construction after the base height
-    auto Pred = [W3, &Q](const particle& P) {
-      int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
-      assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
-      REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
-      Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
-      return IS_EVEN(Bin);
-    };
-    Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
-    if (Q.Height < Params.BaseHeight) {
+    if (Q.Height < Params.BaseHeight && Q.End - Q.Begin > 1) { // NOTE: here we enqueue only nodes that have more than 1 particles
+      auto Pred = [W3, &Q](const particle& P) {
+        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
+        assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
+        REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
+        Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
+        return IS_EVEN(Bin);
+      };
+      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
+      //float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
+      //float M = Params.BBox.Min[Q.D] + W3[Q.D] * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
+      //auto Pred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
+      //Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
       /* encoding the children (left child in particular) */
       EncodeNodeNew(Q.Idx, Q.End - Q.Begin, Mid - Q.Begin);
       /* enqueue children */
@@ -136,6 +155,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .Begin = Q.Begin,
           .End = Mid,
           .Idx = Q.Idx * 2,
+          //.Grid = SplitGrid(Q.Grid, Q.D, SpatialSplit, Left),
           .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Left),
           .D = i8((Q.D + 1) % Params.NDims),
           .Height = u8(Q.Height + 1),
@@ -146,6 +166,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .Begin = Mid,
           .End = Q.End,
           .Idx = Q.Idx * 2 + 1,
+          //.Grid = SplitGrid(Q.Grid, Q.D, SpatialSplit, Right),
           .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Right),
           .D = i8((Q.D + 1) % Params.NDims),
           .Height = u8(Q.Height + 1),
@@ -163,4 +184,5 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
       EncodeParticleNew(Q.Idx, Particles[Q.Begin].Pos, BBox);
     }
   }
+  Coder.EncodeFinalize();
 }

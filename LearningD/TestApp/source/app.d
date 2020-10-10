@@ -1273,8 +1273,8 @@ void test_21(const string[] argv) {
   encode(tree, bs, coder);
   writeln("done encoding");
   //decode(bs, coder);
-  writeln(coder.m_bit_stream.size());
-  writeln(bs.size() + coder.m_bit_stream.size());
+  writeln("arithmetic stream size ", coder.m_bit_stream.size());
+  writeln("total stream size ", bs.size() + coder.m_bit_stream.size());
   //decode(bs, coder);
 }
 
@@ -1455,40 +1455,40 @@ void print_tree_statistics(T)(KdTree!(T, kdtree.Root) tree) {
 
 /* Build multi-resolution tree */
 void build_multi_resolution_tree(const string[] argv) {
-  auto particles = load_particles(argv);
-  auto tree = new KdTree!float();
-  tree.build_no_leaf!"xyz"(particles.position[0]); // build a tree
-  auto histogram_n = compute_histogram_n!float(tree, Nmax);
-  auto histogram_N = compute_histogram_N!float(tree, Nmax);
-  writeln(histogram_N);
-  double code_length1 = 0;
-  //assert(table[table.length-1][Nmax] == (1<<Nmax));
-  Coder coder;
-  coder.init_write(100000000); // 100 MB
-  BitStream bs;
-  bs.init_write(100000000); // 100 MB
-  double theoretical_code_length = 0;
+  //auto particles = load_particles(argv);
+  //auto tree = new KdTree!float();
+  //tree.build_no_leaf!"xyz"(particles.position[0]); // build a tree
+  //auto histogram_n = compute_histogram_n!float(tree, Nmax);
+  //auto histogram_N = compute_histogram_N!float(tree, Nmax);
+  //writeln(histogram_N);
+  //double code_length1 = 0;
+  ////assert(table[table.length-1][Nmax] == (1<<Nmax));
+  //Coder coder;
+  //coder.init_write(100000000); // 100 MB
+  //BitStream bs;
+  //bs.init_write(100000000); // 100 MB
+  //double theoretical_code_length = 0;
 
-  for (int i = 0; i < 10000; ++i) {
-    int a = uniform(0, histogram_N[histogram_N.length-1], rnd);
-    int N = 0;
-    for (; N<Nmax && histogram_N[N]<=a; ++N) {}
-    //int N = uniform(2, Nmax+1);
-    //int N = Nmax;
-    auto max = histogram_n[N][histogram_n[N].length-1];
-    a = uniform(0, max, rnd);
-    int n = 0;
-    for (; n<histogram_n[N].length && histogram_n[N][n]<=a; ++n) {}
-    //if ()
-    encode_centered_minimal(n, N+1, bs);
-    encode_binomial_small_range(N, n, table[N], coder);
-    theoretical_code_length += N - log2_C_n_m(N, n);
-  }
-  bs.flush();
-  coder.encode_finalize();
-  writeln("uniform ", bs.size());
-  writeln("arithmetic ", coder.m_bit_stream.size());
-  writeln("theoretical ", cast(int)floor(theoretical_code_length/8));
+  //for (int i = 0; i < 10000; ++i) {
+  //  int a = uniform(0, histogram_N[histogram_N.length-1], rnd);
+  //  int N = 0;
+  //  for (; N<Nmax && histogram_N[N]<=a; ++N) {}
+  //  //int N = uniform(2, Nmax+1);
+  //  //int N = Nmax;
+  //  auto max = histogram_n[N][histogram_n[N].length-1];
+  //  a = uniform(0, max, rnd);
+  //  int n = 0;
+  //  for (; n<histogram_n[N].length && histogram_n[N][n]<=a; ++n) {}
+  //  //if ()
+  //  encode_centered_minimal(n, N+1, bs);
+  //  encode_binomial_small_range(N, n, table[N], coder);
+  //  theoretical_code_length += N - log2_C_n_m(N, n);
+  //}
+  //bs.flush();
+  //coder.encode_finalize();
+  //writeln("uniform ", bs.size());
+  //writeln("arithmetic ", coder.m_bit_stream.size());
+  //writeln("theoretical ", cast(int)floor(theoretical_code_length/8));
 }
 
 import math;
@@ -1500,28 +1500,28 @@ int main(const string[] argv) {
   //writeln(log2_C_n_m(32, 16));
   alias test_func = void function(const string[]);
   test_func[string] func_map;
-  func_map["test_1"] = &test_1;
-  func_map["test_2"] = &test_2;
-  func_map["test_3"] = &test_3;
-  func_map["test_4"] = &test_4;
-  func_map["test_5"] = &test_5;
-  func_map["test_6"] = &test_6;
-  func_map["test_7"] = &test_7;
-  func_map["test_8"] = &test_8;
-  func_map["test_9"] = &test_9;
-  func_map["test_9a"] = &test_9a;
-  func_map["test_10"] = &test_10;
-  func_map["test_11"] = &test_11;
-  func_map["test_12"] = &test_12;
-  func_map["test_13"] = &test_13;
-  func_map["test_14"] = &test_14;
-  func_map["test_15"] = &test_15;
-  func_map["test_16"] = &test_16;
-  func_map["test_17"] = &test_17;
-  func_map["test_18"] = &test_18;
-  func_map["test_19"] = &test_19;
+  func_map["test_1"] = &test_1; // lorenzo compress residuals
+  func_map["test_2"] = &test_2; // compute code length of one level of the tree of residuals
+  func_map["test_3"] = &test_3; // generate a binomial distribution and compute the code length of the sum
+  func_map["test_4"] = &test_4; // print distributions of values under the same parent value on each level
+  func_map["test_5"] = &test_5; // print unconditioned distributions of lef-right children on each level
+  func_map["test_6"] = &test_6; // estimate the exponential parameter and compare the code length on the last level
+  func_map["test_7"] = &test_7; // given the max, encode the difference between D(left, max) and D(right, max), where D computes how many bits its arguments agree
+  func_map["test_8"] = &test_8; // estimate the gamma parameters and exponential parameter
+  func_map["test_9"] = &test_9; // collect statisitcs on the kd-tree
+  func_map["test_9a"] = &test_9a; // simpler version of test9
+  func_map["test_10"] = &test_10; // test the kdtree to make sure it is working
+  func_map["test_11"] = &test_11; // collect and print tree statistics
+  func_map["test_12"] = &test_12; // construct one histogram per tree, of the ratio between left/parent
+  func_map["test_13"] = &test_13; // write the x-component of the velocity/concentration field in depth-first order
+  func_map["test_14"] = &test_14; // rendering test
+  func_map["test_15"] = &test_15; // build two kdtrees and output the differences between them
+  func_map["test_16"] = &test_16; // convert every format to xyz
+  func_map["test_17"] = &test_17; // build the haar-based kdtree
+  func_map["test_18"] = &test_18; // compare the distance among particles spatially and temporally
+  func_map["test_19"] = &test_19; // output x trajectory
   func_map["test_20"] = &test_20;
-  func_map["test_21"] = &test_21;
+  func_map["test_21"] = &test_21; // compress particles with binomial coding
   try {
     func_map[argv[1]](argv);
     int stop = 0;

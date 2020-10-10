@@ -245,124 +245,8 @@ ReadBlock(i8 Level, u64 BlockId, u8 Height) {
   return true;
 }
 
-const static int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
-const static int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
-
 const static long all_nbins = 1 << 30;
 const static double epsilon = 1.0 / double(all_nbins);
-
-static void
-EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
-  assert(v >= 0 && v <= n);
-  u32 lo = v == 0 ? 0 : CdfTable[v - 1];
-  u32 hi = CdfTable[v];
-  u32 scale = 1 << n;
-  prob<u32> prob{lo, hi, scale};
-  Coder->Encode(prob);
-}
-
-static int
-DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) {
-  size_t v = Coder->Decode(CdfTable);
-  assert(v <= n);
-  return (int)v;
-}
-
-/* The inverse of encode */
-// TODO: refactor to put part the logic of this function to the decode function
-static int
-DecodeRange(
-  double m, double s, double a, double b,
-  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) {
-  assert(a <= b);
-  bool first = true;
-  while (true) {
-    int beg = (int)std::ceil(a);
-    int end = (int)std::floor(b);
-    if (beg == end)
-      return beg; // no need to write any bit
-    int n = end - beg + 1;
-    if (first && n <= cutoff1)
-      return DecodeBinomialSmallRange(n - 1, CdfTable[n - 1], Coder);
-    if (!first && n <= cutoff2)
-      return beg + DecodeCenteredMinimal(n, Bs);
-    /* compute F(a) and F(b) */
-    double fa = F(m, s, a);
-    double fb = F(m, s, b);
-    // TODO: what if fa==fb
-    /* compute F^-1((fa+fb)/2) */
-    double mid = Finv(m, s, (fa + fb) * 0.5);
-    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
-      mid = a;
-    if (a == mid || b == mid)
-      return beg + DecodeCenteredMinimal(n, Bs);
-    assert(a <= mid && mid <= b);
-
-    auto bit = Read(Bs);
-    if (bit == 0) b = std::floor(mid);
-    else          a = std::ceil(mid);
-
-    first = false;
-  }
-}
-
-/* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
-into two bins of equal probability */
-static void
-EncodeRange(
-  double m,
-  double s,
-  double a,
-  double b,
-  double c,
-  const cdf_table& CdfTable,
-  bitstream* Bs,
-  arithmetic_coder<>* Coder
-){
-  assert(a <= b);
-  bool first = true;
-
-  /* comment out the below to use uniform encoding instead of gaussian distribution */
-  //int beg = cast(int)ceil(a);
-  //int end = cast(int)floor(b);
-  //int v = cast(int)c-beg;
-  //int n = end - beg + 1; // v can be from 0 to n-1
-  //if (end-beg+1 <= cutoff)
-  //  return encode_binomial_small_range(n-1, v, CdfTable[n-1], coder);
-  //else
-  //  return encode_centered_minimal(v, n, bs);
-
-  while (true) {
-    int beg = (int)std::ceil(a);
-    int end = (int)std::floor(b);
-    if (beg == end)
-      return; // no need to write any bit
-    int n = end - beg + 1; // v can be from 0 to n-1
-    int v = int(c - beg);
-    if (first && n <= cutoff1)
-      return EncodeBinomialSmallRange(n - 1, v, CdfTable[n - 1], Coder);
-    if (!first && n <= cutoff2)
-      return EncodeCenteredMinimal(v, n, Bs);
-    /* compute F(a) and F(b) */
-    double fa = F(m, s, a);
-    double fb = F(m, s, b);
-    /* compute F^-1((fa+fb)/2) */
-    double mid = Finv(m, s, (fa + fb) * 0.5);
-    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
-      mid = a;
-    if (a == mid || b == mid)
-      return EncodeCenteredMinimal(v, n, Bs);
-    assert(a <= mid && mid <= b);
-    if (c < mid) {
-      Write(Bs, 0);
-      b = floor(mid);
-    } else { // c >= mid
-      Write(Bs, 1);
-      a = ceil(mid);
-    }
-    first = false;
-  }
-}
 
 INLINE static i64
 DecodeNode(bitstream* Bs, i64 M) {
@@ -1221,7 +1105,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
 static vec3i
 ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 End, i8 D) {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  float Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
+  double Middle = (double(BBox.Min[D]) + double(BBox.Max[D])) * 0.5;
   auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left = MCOPY(vec3i(0), [D] = 1), LogDims3Right = MCOPY(vec3i(0), [D] = 1);
@@ -1346,6 +1230,8 @@ main(int Argc, cstr* Argv) {
       Particles = ReadXYZ(Params.InFile);
     else if (strstr(Params.InFile, ".dat"))
       Particles = ReadCosmo(Params.InFile);
+    else if (strstr(Params.InFile, ".vtu"))
+      Particles = ReadVtu(Params.InFile);
     else
       EXIT_ERROR("Unsupported file format");
     Params.NParticles = Particles.size();
