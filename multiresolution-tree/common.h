@@ -1720,12 +1720,6 @@ struct grid {
   vec3f From3, Dims3, Stride3;
 };
 
-struct tree {
-  tree* Left   = nullptr;
-  tree* Right  = nullptr;
-  i64 Begin = 0, End = 0;
-};
-
 enum split_type { ResolutionSplit, SpatialSplit };
 enum side { Left, Right };
 enum class action : int { Encode, Decode, Error };
@@ -1996,3 +1990,12 @@ WriteXYZ(cstr FileName, t Begin, t End) {
 }
 
 inline char DimsStr[128] = {};
+
+template <node_type R>
+struct tree {
+  tree<Inner>* Left = nullptr;
+  tree<Inner>* Right = nullptr;
+  i64 Begin = 0, End = 0;
+  using bbox_t = std::conditional_t<R == Root, bbox, empty_struct>;
+  [[no_unique_address]] bbox_t BBox = bbox_t();
+};
