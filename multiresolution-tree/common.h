@@ -1707,6 +1707,7 @@ EncodeRange(double m, double s,
 struct empty_struct { };
 
 struct bbox { vec3f Min, Max; };
+INLINE vec3f Extent(const bbox& BBox) { return BBox.Max - BBox.Min; }
 
 enum node_type { Root, Inner };
 
@@ -1994,3 +1995,4 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   fclose(Fp);
 }
 
+inline char DimsStr[128] = {};

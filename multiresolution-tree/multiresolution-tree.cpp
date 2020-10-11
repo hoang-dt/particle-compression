@@ -1103,18 +1103,33 @@ BuildTreeInner(q_item Q, float Accuracy) {
 
 /* Return the dimensions of the underlying grid (in terms of power of two) */
 static vec3i
-ComputeGrid(std::vector<particle>* Particles, const bbox& BBox, i64 Begin, i64 End, i8 D) {
+ComputeGrid(
+  std::vector<particle>* Particles, const bbox& BBox, 
+  i64 Begin, i64 End, i8 Depth, str DimsStr)
+{
   REQUIRE(Begin < End); // this cannot be a leaf node
-  double Middle = (double(BBox.Min[D]) + double(BBox.Max[D])) * 0.5;
+  vec3f BBoxExt3 = Extent(BBox);
+  i8 D;
+  if (BBoxExt3.x > BBoxExt3.y && BBoxExt3.x > BBoxExt3.z)
+    D = 0;
+  else if (BBoxExt3.y > BBoxExt3.z && BBoxExt3.y > BBoxExt3.x)
+    D = 1;
+  else if (BBoxExt3.z > BBoxExt3.y && BBoxExt3.z > BBoxExt3.x)
+    D = 2;
+  DimsStr[Depth] = 'x' + D; 
+  f32 Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
   auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
-  vec3i LogDims3Left = MCOPY(vec3i(0), [D] = 1), LogDims3Right = MCOPY(vec3i(0), [D] = 1);
+  vec3i LogDims3Left  = MCOPY(vec3i(0), [D] = 1);
+  vec3i LogDims3Right = MCOPY(vec3i(0), [D] = 1);
   if (Begin + 1 < Mid) {
-    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, (D + 1) % Params.NDims);
+    LogDims3Left = 
+      ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Depth + 1, DimsStr);
     ++LogDims3Left[D];
   }
   if (Mid + 1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, (D + 1) % Params.NDims);
+    LogDims3Right = 
+      ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, Depth + 1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -1239,7 +1254,8 @@ main(int Argc, cstr* Argv) {
     Params.BBox = ComputeBoundingBox(Particles);
     if (Params.BBox.Max.z == Params.BBox.Min.z)
       Params.BBox.Max.z = Params.BBox.Min.z + 1;
-    Params.LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0);
+    Params.LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0, DimsStr);
+    printf("%s\n", DimsStr);
     Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
     Params.Dims3 = vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
     grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
@@ -1256,7 +1272,7 @@ main(int Argc, cstr* Argv) {
     }
     BlockBytes.resize(Params.NLevels);
     //EncodeRoot(Particles.size()); // NOTE: old method
-    EncodeRootNew(Particles.size());
+    //EncodeRootNew(Particles.size());
     /* compute the maximum height based on the accuracy */
     if (Params.MaxHeight == 255) {
       Params.MaxHeight = 0;
@@ -1278,12 +1294,12 @@ main(int Argc, cstr* Argv) {
                            .Height = 0,
                            .SplitType = Params.NLevels > 1 ? ResolutionSplit : SpatialSplit }, Params.Accuracy);
     FlushBlocksToFiles();*/
-    BuildTreeNew(q_item_new { .Begin = 0,
-                              .End = (i64)Particles.size(),
-                              .Idx = 1,
-                              .Grid = Grid,
-                              .Height = 0 }, Params.Accuracy);
-    FlushBlocksToFilesNew();
+    //BuildTreeNew(q_item_new { .Begin = 0,
+                              //.End = (i64)Particles.size(),
+                              //.Idx = 1,
+                              //.Grid = Grid,
+                              //.Height = 0 }, Params.Accuracy);
+    //FlushBlocksToFilesNew();
     printf("nblocks written = %lld\n", NBlocksWritten);
   } else if (Params.Action == action::Decode) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
