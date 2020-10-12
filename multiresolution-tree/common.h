@@ -1999,3 +1999,12 @@ struct tree {
   using bbox_t = std::conditional_t<R == Root, bbox, empty_struct>;
   [[no_unique_address]] bbox_t BBox = bbox_t();
 };
+
+struct particle_cell {
+  i64 ParticleId = 0;
+  i8 Count = 0;
+};
+
+#define ROW3_64(x, y, z) ((z) * 64 * 64 + (y) * 64 + (x))
+#define ROW2_64(x, y) ((y) * 64 + (x))
+

@@ -1210,6 +1210,151 @@ void FlushBlocksToFilesNew();
 void BuildTreeNew(q_item_new Q, float Accuracy);
 void EncodeRootNew(i64 N);
 
+static std::vector<particle_cell> ParticleCells;
+
+template <node_type R> static void
+BuildTreeDFS(
+  tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, 
+  i8 Level, split_type Split, i8 Depth) 
+{
+  i8 D = DimsStr[Depth] - 'x';
+  //REQUIRE((Grid.Dims3[D] & 1) == 0);
+  Node->Begin = Begin;
+  Node->End = End;
+  i64 Mid = Begin;
+  f32 W = (Params.BBox.Max[D] - Params.BBox.Min[D]) / Params.Dims3[D];
+  if (Split == ResolutionSplit) { // resolution split
+    auto RPred = [W, D, &Grid](const particle& P) {
+      i32 Bin = MIN(Params.Dims3[D] - 1, i32((P.Pos[D] - Params.BBox.Min[D]) / W));
+      REQUIRE((Bin - i32(Grid.From3[D])) % i32(Grid.Stride3[D]) == 0);
+      Bin = (Bin - i32(Grid.From3[D])) / i32(Grid.Stride3[D]);
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else { // spatial split
+    f32 S = (Grid.Dims3[D] > 1.5f) * (Grid.Stride3[D] - 1) + 1;
+    f32 M = Params.BBox.Min[D] + W * (Grid.From3[D] + Grid.Dims3[D] * 0.5f * S);
+    auto SPred = [M, D, &Grid](const particle& P) {
+      return P.Pos[D] < M;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+  //Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
+  if (Begin < Mid) {
+    Node->Left = new tree<Inner>();
+    if (Begin + 1 == Mid) { // left leaf
+      // TODO
+      vec3i From3(i32(Grid.From3.x), i32(Grid.From3.y), i32(Grid.From3.z));
+      vec3i Block3 = From3 / 64;
+      vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
+      if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
+        auto* PCell = &ParticleCells[ROW3_64(Cell3.x, Cell3.y, Cell3.z)];
+        PCell->ParticleId = Begin;
+        PCell->Count = Params.NDims;
+      }
+    } else { // recurse on the left
+      bool RSplit = Split == ResolutionSplit;
+      split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
+      BuildTreeDFS(Node->Left, Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
+        Level - RSplit, NextSplit, Depth + 1);
+    }
+  }
+  if (Mid < End) {
+    Node->Right = new tree<Inner>();
+    if (Mid + 1 == End) { // right leaf
+      vec3i From3(i32(Grid.From3.x), i32(Grid.From3.y), i32(Grid.From3.z));
+      vec3i Block3 = From3 / 64;
+      vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
+      if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
+        auto* PCell = &ParticleCells[ROW3_64(Cell3.x, Cell3.y, Cell3.z)];
+        PCell->ParticleId = Begin;
+        PCell->Count = Params.NDims;
+      }
+    } else { // recurse on the right
+      BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
+        Level, SpatialSplit, Depth + 1);
+    }
+  }
+}
+
+/* Compress one 64^3 block with zfp */
+static void
+CompressBlock() {
+  if (Params.NDims == 3) {
+    /* handle the Z dimension */
+    printf("processing Z -------------\n");
+    i32 N = 1; // number of particles processed in this "layer"
+    while (N) {
+      N = 0;
+      particle_cell ProjCells[64] = {};
+      /* project along z */
+      FOR (int, z, 0, 64) {
+        FOR (int, y, 0, 64) FOR (int, x, 0, 64) {
+          auto& C = ParticleCells[ROW3_64(x, y, z)];
+          if (C.Count == 3) {
+            ProjCells[z] = C;
+            --C.Count;
+            ++N;
+            goto OUT_Z;
+          }
+        }
+      OUT_Z:
+        continue;
+      }
+      printf("    N = %d\n", N);
+      // TODO: compress along Z
+    }
+  }
+  if (Params.NDims >= 2) {
+    printf("processing Y -------------\n");
+    i32 N = 1; // number of particles processed in this "layer"
+    while (N) {
+      particle_cell ProjCells[64] = {};
+      N = 0; // number of particles processed in this "layer"
+      /* project along y */
+      FOR (int, y, 0, 64) {
+        FOR (int, z, 0, 64) FOR (int, x, 0, 64) {
+          auto& C = ParticleCells[ROW3_64(x, y, z)];
+          if (C.Count == 2) {
+            ProjCells[y] = C;
+            --C.Count;
+            ++N;
+            goto OUT_Y;
+          }
+        }
+      OUT_Y:
+        continue;
+      }
+      printf("    N = %d\n", N);
+      // TODO: compress along Y
+    }
+  }
+  if (Params.NDims >= 1) {
+    printf("processing X -------------\n");
+    i32 N = 1;
+    while (N) {
+      N = 0; // number of particles processed in this "layer"
+      particle_cell ProjCells[64] = {};
+      /* project along y */
+      FOR (int, x, 0, 64) {
+        FOR (int, z, 0, 64) FOR (int, y, 0, 64) {
+          auto& C = ParticleCells[ROW3_64(x, y, z)];
+          if (C.Count == 1) {
+            ProjCells[x] = C;
+            --C.Count;
+            ++N;
+            goto OUT_X;
+          }
+        }
+      OUT_X:
+        continue;
+      }
+      printf("    N = %d\n", N);
+      // TODO: compress along X
+    }
+  }
+}
+
 // TODO: add the number of blocks to the .idx file
 // TODO: 
 int
@@ -1282,6 +1427,11 @@ main(int Argc, cstr* Argv) {
       while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
     }
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
+    ParticleCells.resize(64 * 64 * 64);
+    tree<Root> Tree;
+    BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
+      Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
+    CompressBlock();
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
