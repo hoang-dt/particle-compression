@@ -1752,6 +1752,7 @@ struct params {
   float Accuracy = 0;
   bbox BBox;
   vec3i LogDims3;
+  vec3i BlockDims3; // TODO: compute this
   u8 BaseHeight;
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
@@ -1999,3 +2000,16 @@ struct tree {
   using bbox_t = std::conditional_t<R == Root, bbox, empty_struct>;
   [[no_unique_address]] bbox_t BBox = bbox_t();
 };
+
+struct particle_cell {
+  i64 ParticleId = 0;
+  i8 Count = 0;
+};
+
+#define ROW3_64(X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
+#define ROW3(Nx, Ny, Nz, X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
+#define ROW2_64(X, Y) ((Y) * 64 + (X))
+
+#define LH_IDX(Level, Depth) ((Level) * Params.BaseHeight + (Depth))
+
+
