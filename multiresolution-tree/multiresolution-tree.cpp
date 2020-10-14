@@ -1309,44 +1309,40 @@ BuildTreeDFS(
 static void
 CompressBlock() {
   vec3i B3 = Params.BlockDims3;
-  if (Params.NDims == 3) {
+  if (Params.NDims >= 3) {
     /* handle the Z dimension */
     printf("processing Z -------------\n");
+    std::vector<std::vector<particle_cell>> ProjectedCells(B3.z);
+    FOR(i32, Z, 0, B3.z) {
+      ProjectedCells[Z].reserve(128);
+      FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
+        const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count > 0)
+          ProjectedCells[Z].push_back(C);
+      }
+    }
     i32 Count[65] = {};
     i32 N = 1; // number of particles processed in this "layer"
-    std::vector<i8> Columns(B3.z, 0);
-    i32 LastColumn = 64;
     i32 Avg = 0;
-    FOR(i32, Z, 0, LastColumn) Columns[Z] = 1;
     i32 C = 0;
+    i32 LastColumn = 64;
     while (N) { // while there are still particles unprocessed
       ++C;
       N = 0;
       particle_cell ProjCells[64] = {};
-      /* project along z */
       i32 z = 0;
       FOR(i32, Z, 0, LastColumn) {
         if (Z >= B3.z) break;
-        if (Columns[Z] == 0) goto OUT_Z;
-        FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
-          auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-          if (C.Count < 3) continue;
-          assert(z < 64);
-          ProjCells[z++] = C;
-          --C.Count;
-          ++N;
-          goto OUT_Z;
-        }
-        // no particle found in this column
-        Columns[Z] = 0;
+        if (ProjectedCells[Z].empty()) goto OUT_Z;
+        ProjCells[z++] = ProjectedCells[Z].back();
+        ProjectedCells[Z].pop_back();
+        ++N;
       OUT_Z:
-        if (Z + 1 == LastColumn && LastColumn + 1 < B3.z && z < 64) 
-          Columns[LastColumn++] = 1;
-        continue;
+        if (Z + 1 == LastColumn && LastColumn + 1 < B3.z && z < 64)
+          ++LastColumn;
       }
-      //++Count[N];
+      ++Count[N];
       Avg += N;
-      // TODO: compress along Z
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1355,79 +1351,72 @@ CompressBlock() {
   /* process Y */
   if (Params.NDims >= 2) {
     printf("processing Y -------------\n");
-    i32 Count[65] = {};
+    std::vector<std::vector<particle_cell>> ProjectedCells(B3.y);
+    FOR(i32, Y, 0, B3.y) {
+      ProjectedCells[Y].reserve(128);
+      FOR(i32, Z, 0, B3.z) FOR(i32, X, 0, B3.x) {
+        const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count > 0)
+          ProjectedCells[Y].push_back(C);
+      }
+    }
     i32 N = 1; // number of particles processed in this "layer"
-    std::vector<i8> Columns(B3.y, 0);
+    i32 Avg = 0;
+    i32 C = 0;
     i32 LastColumn = 64;
-    FOR(i32, Y, 0, LastColumn) Columns[Y] = 1;
-    while (N) {
-      N = 0; // number of particles processed in this "layer"
+    while (N) { // while there are still particles unprocessed
+      ++C;
+      N = 0;
       particle_cell ProjCells[64] = {};
-      /* project along y */
       i32 y = 0;
       FOR(i32, Y, 0, LastColumn) {
         if (Y >= B3.y) break;
-        if (Columns[Y] == 0) goto OUT_Y;
-        FOR(i32, Z, 0, B3.z) FOR (i32, X, 0, B3.x) {
-          auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-          if (C.Count < 2) continue;
-          assert(y < 64);
-          ProjCells[y++] = C;
-          --C.Count;
-          ++N;
-          goto OUT_Y;
-        }
-        Columns[Y] = 0;
+        if (ProjectedCells[Y].empty()) goto OUT_Y;
+        ProjCells[y++] = ProjectedCells[Y].back();
+        ProjectedCells[Y].pop_back();
+        ++N;
       OUT_Y:
         if (Y + 1 == LastColumn && LastColumn + 1 < B3.y && y < 64)
-          Columns[LastColumn++] = 1;
-        continue;
+          ++LastColumn;
       }
-      ++Count[N];
-      //printf("    N = %d\n", N);
-      // TODO: compress along Y
+      Avg += N;
     }
-    FOR(i32, I, 0, 65)
-      printf("%d: %d\n", I, Count[I]);
+    Avg /= C;
+    printf("   Avg N = %d\n", Avg);
   }
 
   /* process X */
   if (Params.NDims >= 1) {
     printf("processing X -------------\n");
-    i32 Count[65] = {};
-    i32 N = 1;
+    std::vector<std::vector<particle_cell>> ProjectedCells(B3.x);
+    FOR(i32, X, 0, B3.x) {
+      ProjectedCells[X].reserve(128);
+      FOR(i32, Z, 0, B3.z) FOR(i32, Y, 0, B3.y) {
+        const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count > 0)
+          ProjectedCells[X].push_back(C);
+      }
+    }
+    i32 N = 1; // number of particles processed in this "layer"
     i32 Avg = 0;
-    std::vector<i8> Columns(B3.x, 0);
-    i32 LastColumn = 64;
-    FOR(i32, X, 0, LastColumn) Columns[X] = 1;
     i32 C = 0;
-    while (N) {
+    i32 LastColumn = 64;
+    while (N) { // while there are still particles unprocessed
       ++C;
-      N = 0; // number of particles processed in this "layer"
+      N = 0;
       particle_cell ProjCells[64] = {};
       i32 x = 0;
-      /* project along y */
       FOR(i32, X, 0, LastColumn) {
         if (X >= B3.x) break;
-        if (Columns[X] == 0) goto OUT_X;
-        FOR(i32, Z, 0, B3.z) FOR(i32, Y, 0, B3.y) {
-          auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-          if (C.Count < 1) continue;
-          ProjCells[x++] = C;
-          --C.Count;
-          ++N;
-          goto OUT_X;
-        }
-        Columns[X] = 0;
+        if (ProjectedCells[X].empty()) goto OUT_X;
+        ProjCells[x++] = ProjectedCells[X].back();
+        ProjectedCells[X].pop_back();
+        ++N;
       OUT_X:
         if (X + 1 == LastColumn && LastColumn + 1 < B3.x && x < 64)
-          Columns[LastColumn++] = 1;
-        continue;
+          ++LastColumn;
       }
-      //++Count[N];
       Avg += N;
-      //printf("    N = %d\n", N);
-      // TODO: compress along X
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
