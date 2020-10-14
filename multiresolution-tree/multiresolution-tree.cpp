@@ -1220,8 +1220,6 @@ struct bookkeeping_grid {
 static std::vector<bookkeeping_grid> BkGrids; // [level, depth] -> a grid of particle cells
 //static std::vector<particle_cell> ParticleCells[128]; // [depth] -> vector of particle_cells
 
-
-
 template <node_type R> static void
 BuildTreeDFS(
   tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, 
@@ -1242,7 +1240,7 @@ BuildTreeDFS(
     };
     Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
   } else { // spatial split
-    f32 S = (Grid.Dims3[D] > 1.5f) * (Grid.Stride3[D] - 1) + 1;
+    f32 S = (Grid.Dims3[D] > 1.5f) * (Grid.Stride3[D] - 1) + 1; // either Stride or 1
     f32 M = Params.BBox.Min[D] + W * (Grid.From3[D] + Grid.Dims3[D] * 0.5f * S);
     auto SPred = [M, D, &Grid](const particle& P) {
       return P.Pos[D] < M;
@@ -1257,7 +1255,7 @@ BuildTreeDFS(
       vec3i From3(i32(Grid.From3.x), i32(Grid.From3.y), i32(Grid.From3.z));
       vec3i Block3 = From3 / 64;
       vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
-      if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
+      //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
         //int LhIdx =  LH_IDX(Level, Depth);
         //grid LhGrid = LhGrid(Level, Depth);
         //auto& BkGrid = BkGrids[LhIdx];
@@ -1266,7 +1264,13 @@ BuildTreeDFS(
         //  BkGrid.Cells.resize(Prod(Dims(Grid)));
         //}
         // TODO: find out which cell this particle belongs to in the LhGrid
-      }
+        vec3i B3 = Params.Dims3;
+        auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+        PCell->ParticleId = Begin;
+        PCell->Count = Params.NDims;
+        if (!IS_EVEN(From3.y))
+          int Stop = 0;
+      //}
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
@@ -1280,11 +1284,15 @@ BuildTreeDFS(
       vec3i From3(i32(Grid.From3.x), i32(Grid.From3.y), i32(Grid.From3.z));
       vec3i Block3 = From3 / 64;
       vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
-      if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
-        auto* PCell = &ParticleCells[ROW3_64(Cell3.x, Cell3.y, Cell3.z)];
+      //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
+        //auto* PCell = &ParticleCells[ROW3_64(Cell3.x, Cell3.y, Cell3.z)];
+        vec3i B3 = Params.Dims3;
+        auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
         PCell->ParticleId = Begin;
         PCell->Count = Params.NDims;
-      }
+        if (!IS_EVEN(From3.y))
+          int Stop = 0;
+      //}
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
@@ -1304,18 +1312,22 @@ CompressBlock() {
   if (Params.NDims == 3) {
     /* handle the Z dimension */
     printf("processing Z -------------\n");
+    i32 Count[65] = {};
     i32 N = 1; // number of particles processed in this "layer"
     std::vector<i8> Columns(B3.z, 0);
     i32 LastColumn = 64;
+    i32 Avg = 0;
     FOR(i32, Z, 0, LastColumn) Columns[Z] = 1;
+    i32 C = 0;
     while (N) { // while there are still particles unprocessed
+      ++C;
       N = 0;
       particle_cell ProjCells[64] = {};
       /* project along z */
       i32 z = 0;
       FOR(i32, Z, 0, LastColumn) {
         if (Z >= B3.z) break;
-        if (Columns[Z] == 0) continue;
+        if (Columns[Z] == 0) goto OUT_Z;
         FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
           auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
           if (C.Count < 3) continue;
@@ -1326,19 +1338,24 @@ CompressBlock() {
           goto OUT_Z;
         }
         // no particle found in this column
-        Columns[z] = 0;
-        Columns[++LastColumn] = 1;
+        Columns[Z] = 0;
       OUT_Z:
+        if (Z + 1 == LastColumn && LastColumn + 1 < B3.z && z < 64) 
+          Columns[LastColumn++] = 1;
         continue;
       }
-      printf("    N = %d\n", N);
+      //++Count[N];
+      Avg += N;
       // TODO: compress along Z
     }
+    Avg /= C;
+    printf("   Avg N = %d\n", Avg);
   }
 
   /* process Y */
   if (Params.NDims >= 2) {
     printf("processing Y -------------\n");
+    i32 Count[65] = {};
     i32 N = 1; // number of particles processed in this "layer"
     std::vector<i8> Columns(B3.y, 0);
     i32 LastColumn = 64;
@@ -1350,7 +1367,7 @@ CompressBlock() {
       i32 y = 0;
       FOR(i32, Y, 0, LastColumn) {
         if (Y >= B3.y) break;
-        if (Columns[Y] == 0) continue;
+        if (Columns[Y] == 0) goto OUT_Y;
         FOR(i32, Z, 0, B3.z) FOR (i32, X, 0, B3.x) {
           auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
           if (C.Count < 2) continue;
@@ -1360,31 +1377,39 @@ CompressBlock() {
           ++N;
           goto OUT_Y;
         }
-        Columns[y] = 0;
-        Columns[++LastColumn] = 1;
+        Columns[Y] = 0;
       OUT_Y:
+        if (Y + 1 == LastColumn && LastColumn + 1 < B3.y && y < 64)
+          Columns[LastColumn++] = 1;
         continue;
       }
-      printf("    N = %d\n", N);
+      ++Count[N];
+      //printf("    N = %d\n", N);
       // TODO: compress along Y
     }
+    FOR(i32, I, 0, 65)
+      printf("%d: %d\n", I, Count[I]);
   }
 
   /* process X */
   if (Params.NDims >= 1) {
     printf("processing X -------------\n");
+    i32 Count[65] = {};
     i32 N = 1;
+    i32 Avg = 0;
     std::vector<i8> Columns(B3.x, 0);
     i32 LastColumn = 64;
     FOR(i32, X, 0, LastColumn) Columns[X] = 1;
+    i32 C = 0;
     while (N) {
+      ++C;
       N = 0; // number of particles processed in this "layer"
       particle_cell ProjCells[64] = {};
       i32 x = 0;
       /* project along y */
       FOR(i32, X, 0, LastColumn) {
-        if (X > B3.x) break;
-        if (Columns[X]) continue;
+        if (X >= B3.x) break;
+        if (Columns[X] == 0) goto OUT_X;
         FOR(i32, Z, 0, B3.z) FOR(i32, Y, 0, B3.y) {
           auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
           if (C.Count < 1) continue;
@@ -1393,14 +1418,93 @@ CompressBlock() {
           ++N;
           goto OUT_X;
         }
-        Columns[x] = 0;
-        Columns[++LastColumn] = 1;
+        Columns[X] = 0;
       OUT_X:
+        if (X + 1 == LastColumn && LastColumn + 1 < B3.x && x < 64)
+          Columns[LastColumn++] = 1;
         continue;
       }
-      printf("    N = %d\n", N);
+      //++Count[N];
+      Avg += N;
+      //printf("    N = %d\n", N);
       // TODO: compress along X
     }
+    Avg /= C;
+    printf("   Avg N = %d\n", Avg);
+  }
+}
+
+static void
+CompressBlockFast() {
+  vec3i B3 = Params.BlockDims3;
+  if (Params.NDims == 3) {
+    /* handle the Z dimension */
+    printf("processing Z -------------\n");
+    i32 Count[65] = {};
+    i32 Avg = 0;
+    i32 N = 1; // number of particles processed in this "layer"
+    particle_cell ProjCells[64] = {};
+    /* project along z */
+    FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
+      N = 0;
+      i32 z = 0;
+      FOR(i32, Z, 0, B3.z) {
+        auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count < 3) continue;
+        ProjCells[z++] = C;
+        ++N;
+      }
+      Avg += N;
+    }
+    Avg /= (B3.x * B3.y);
+    printf("   Avg N = %d\n", Avg);
+  }
+
+  /* process Y */
+  if (Params.NDims >= 2) {
+    printf("processing Y -------------\n");
+    i32 Count[65] = {};
+    i32 N = 1; // number of particles processed in this "layer"
+    i32 Avg = 0;
+    particle_cell ProjCells[64] = {};
+    /* project along y */
+    FOR(i32, Z, 0, B3.z) FOR (i32, X, 0, B3.x) {
+      N = 0;
+      i32 y = 0;
+      FOR(i32, Y, 0, B3.y) {
+        auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count < 2) continue;
+        ProjCells[y++] = C;
+        ++N;
+      }
+      Avg += N;
+    }
+    Avg /= (B3.z * B3.x);
+    printf("   Avg N = %d\n", Avg);
+  }
+
+  /* process X */
+  if (Params.NDims >= 1) {
+    printf("processing X -------------\n");
+    i32 Count[65] = {};
+    i32 Avg = 0;
+    i32 N = 1; // number of particles processed in this "layer"
+    particle_cell ProjCells[64] = {};
+    /* project along y */
+    FOR(i32, Z, 0, B3.z) FOR (i32, Y, 0, B3.y) {
+      N = 0;
+      i32 x = 0;
+      FOR(i32, X, 0, B3.x) {
+        auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
+        if (C.Count < 1) continue;
+        ProjCells[x++] = C;
+        ++N;
+      }
+      Avg += N;
+    }
+    Avg /= (B3.z * B3.y);
+    printf("   Avg N = %d\n", Avg);
+      // TODO: compress along Y
   }
 }
 
@@ -1476,7 +1580,8 @@ main(int Argc, cstr* Argv) {
       while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
     }
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
-    ParticleCells.resize(64 * 64 * 64);
+    Params.BlockDims3 = Params.Dims3;
+    ParticleCells.resize(PROD(Params.BlockDims3));
     tree<Root> Tree;
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);

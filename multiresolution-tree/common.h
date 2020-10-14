@@ -2007,9 +2007,9 @@ struct particle_cell {
 };
 
 #define ROW3_64(X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
-#define ROW3(Nx, Ny, Nz, X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
+#define ROW3(Nx, Ny, Nz, X, Y, Z) ((Z) * i64(Nx) * (Ny) + (Y) * i64(Nx) + (X))
 #define ROW2_64(X, Y) ((Y) * 64 + (X))
 
 #define LH_IDX(Level, Depth) ((Level) * Params.BaseHeight + (Depth))
 
-
+#define PROD(P3) ((P3).x * i64((P3).y) * (P3).z)
