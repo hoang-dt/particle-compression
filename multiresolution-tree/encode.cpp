@@ -1,6 +1,5 @@
 #include "common.h"
 
-static bitstream BlockStream; // compressed stream for the current block
 static std::vector<block_meta> BlockBytesNew; // [block id] -> block size
 static u64 CurrBlock = 0; // [level] -> current block id
 static cdf_table CdfTable;

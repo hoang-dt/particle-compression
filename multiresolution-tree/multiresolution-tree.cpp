@@ -8,6 +8,7 @@
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #define SEXPR_IMPLEMENTATION
 #include "common.h"
+#include "zfp.h"
 
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
@@ -1301,6 +1302,34 @@ BuildTreeDFS(
 // first x, second x, third x
 // 
 
+static void
+CompressBlockZfp(i32 N, f64* BlockFloats) {
+  // extrapolate to the closest block
+  vec3i F3 = Factors[N];
+  if (N > 1) {
+    for (int I = N; I < F3.x * F3.y * F3.z; ++I) {
+      BlockFloats[I] = 2 * BlockFloats[I - 1] - BlockFloats[I - 2];
+    }
+  }
+  // extrapolate the rest
+  PadBlock3D(BlockFloats, F3);
+  /* compress */
+  buffer_t BufFloats(BlockFloats, 64);
+  buffer_t BufInts((i64*)BlockFloats, 64);
+  u64 BlockUInts[4 * 4 * 4];
+  buffer_t BufUInts (BlockUInts, 64);
+  const i8 NBitPlanes = BIT_SIZE_OF(u64);
+  const i8 Prec = NBitPlanes - 1 - 3; // 3 is the number of dimensions
+  const i16 EMax = (i16)QuantizeF32(Prec, BufFloats, &BufInts);
+  ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
+  ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
+  GrowIfTooFull(&BlockStream);
+  i8 M = 0;
+  for (int Bp = 0; Bp < 64; ++Bp) {
+    Encode(BlockUInts, 64, Bp, M, &BlockStream);
+  }
+}
+
 /* Compress one block with zfp */
 static void
 CompressBlock() {
@@ -1339,6 +1368,14 @@ CompressBlock() {
       }
       ++Count[N];
       Avg += N;
+      /* compress */
+      f64 BlockFloats[4 * 4 * 4] = {};
+      // TODO: adjust the positions (offset the position of the "left-most" particle)
+      // and also account for the stride in the grid
+      FOR (int, I, 0, N) { // copy the data over
+        BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.z;
+      }
+      CompressBlockZfp(N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1376,6 +1413,13 @@ CompressBlock() {
           ++LastColumn;
       }
       Avg += N;
+      // TODO: adjust the positions (offset the position of the "left-most" particle)
+      // and also account for the stride in the grid
+      f64 BlockFloats[4 * 4 * 4] = {};
+      FOR (int, I, 0, N) { // copy the data over
+        BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.y;
+      }
+      CompressBlockZfp(N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1413,6 +1457,13 @@ CompressBlock() {
           ++LastColumn;
       }
       Avg += N;
+      // TODO: adjust the positions (offset the position of the "left-most" particle)
+      // and also account for the stride in the grid
+      f64 BlockFloats[4 * 4 * 4] = {};
+      FOR (int, I, 0, N) { // copy the data over
+        BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.x;
+      }
+      CompressBlockZfp(N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);

@@ -1,10 +1,6 @@
 #pragma once
 
 #define _CRT_SECURE_NO_WARNINGS
-#undef min
-#undef max
-#undef near
-#undef far
 
 #include "doctest.h"
 #include "heap.h"
@@ -23,6 +19,10 @@
 #include <unordered_map>
 #include <vector>
 #include <optional>
+#undef min
+#undef max
+#undef near
+#undef far
 
 #define POW2(X) (1ull << (X))
 
@@ -2015,3 +2015,215 @@ struct particle_cell {
 #define LH_IDX(Level, Depth) ((Level) * Params.BaseHeight + (Depth))
 
 #define PROD(P3) ((P3).x * i64((P3).y) * (P3).z)
+
+#define BIT_SIZE_OF(V) (sizeof(V) * 8)
+
+template <typename t>
+struct traits {
+  // using signed_t =
+  // using unsigned_t =
+  // using integral_t =
+  // static constexpr uint NBinaryMask =
+  // static constexpr int ExpBits
+  // static constexpr int ExpBias
+};
+template <>
+struct traits<i8> {
+  using signed_t = i8;
+  using unsigned_t = u8;
+  static constexpr u8 NBinaryMask = 0xaa;
+  static constexpr i8 Min = -(1 << 7);
+  static constexpr i8 Max = (1 << 7) - 1;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<u8> {
+  using signed_t = i8;
+  using unsigned_t = u8;
+  static constexpr u8 NBinaryMask = 0xaa;
+  static constexpr u8 Min = 0;
+  static constexpr u8 Max = (1 << 8) - 1;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<i16> {
+  using signed_t = i16;
+  using unsigned_t = u16;
+  static constexpr u16 NBinaryMask = 0xaaaa;
+  static constexpr i16 Min = -(1 << 15);
+  static constexpr i16 Max = (1 << 15) - 1;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<u16> {
+  using signed_t = i16;
+  using unsigned_t = u16;
+  static constexpr u16 NBinaryMask = 0xaaaa;
+  static constexpr u16 Min = 0;
+  static constexpr u16 Max = (1 << 16) - 1;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<i32> {
+  using signed_t = i32;
+  using unsigned_t = u32;
+  using floating_t = f32;
+  static constexpr u32 NBinaryMask = 0xaaaaaaaa;
+  static constexpr i32 Min = i32(0x80000000);
+  static constexpr i32 Max = 0x7fffffff;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<u32> {
+  using signed_t = i32;
+  using unsigned_t = u32;
+  static constexpr u32 NBinaryMask = 0xaaaaaaaa;
+  static constexpr u32 Min = 0;
+  static constexpr u32 Max = 0xffffffff;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<i64> {
+  using signed_t = i64;
+  using unsigned_t = u64;
+  using floating_t = f64;
+  static constexpr u64 NBinaryMask = 0xaaaaaaaaaaaaaaaaULL;
+  static constexpr i64 Min = 0x8000000000000000ll;
+  static constexpr i64 Max = 0x7fffffffffffffffull;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<u64> {
+  using signed_t = i64;
+  using unsigned_t = u64;
+  static constexpr u64 NBinaryMask = 0xaaaaaaaaaaaaaaaaULL;
+  static constexpr u64 Min = 0;
+  static constexpr u64 Max = 0xffffffffffffffffull;
+  static constexpr int ExpBias = 0;
+};
+
+template <>
+struct traits<f32> {
+  using integral_t = i32;
+  static constexpr int ExpBits = 8;
+  static constexpr int ExpBias = (1 << (ExpBits - 1)) - 1;
+  static constexpr f32 Min = -FLT_MAX;
+  static constexpr f32 Max = FLT_MAX;
+};
+
+template <>
+struct traits<f64> {
+  using integral_t = i64;
+  static constexpr int ExpBits = 11;
+  static constexpr int ExpBias = (1 << (ExpBits - 1)) - 1;
+  static constexpr f64 Min = -DBL_MAX;
+  static constexpr f64 Max = DBL_MAX;
+};
+
+template <typename t> FORCEINLINE t Max(const t& a, const t& b) { return a < b ? b : a; }
+
+/*
+For double-precision, the returned exponent is between [-1023, 1024] (-1023 if 0, -1022 if denormal, the bias is 1023)
+For single-precision, the returned exponent is between [-127, 128] (-127 if 0, -126 if denormal, the bias is 127) */
+template <typename t> int
+Exponent(t Val) {
+  if (Val != 0) {
+    int E;
+    frexp(Val, &E);
+    /* clamp exponent in case Val is denormal */
+    return Max(E, 1 - traits<t>::ExpBias);
+  }
+  return -traits<t>::ExpBias;
+}
+
+template <typename t, typename u> int
+QuantizeF32(int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
+  //idx2_Assert(is_floating_point<t>::Value);
+  //idx2_Assert(is_integral<u>::Value);
+  assert(BIT_SIZE_OF(t) >= Bits);
+  assert(BIT_SIZE_OF(u) >= Bits);
+  assert(SBuf.Size == DBuf->Size);
+  t MaxAbs = 0;
+  FOR(int, I, 0, Size(SBuf)) MaxAbs = MAX(MaxAbs, (t)fabs(SBuf[I]));
+  int EMax = Exponent<f32>((f32)MaxAbs);
+  f64 Scale = ldexp(1, Bits - 1 - EMax);
+  FOR(int, I, 0, Size(SBuf)) (*DBuf)[I] = u(Scale * SBuf[I]);
+  return EMax;
+}
+inline bitstream BlockStream; // compressed stream for the current block
+
+inline vec3i Factors[] = {
+  vec3i{0, 0, 0}, // 0
+  vec3i{1, 1, 1}, // 1
+  vec3i{2, 1, 1}, // 2
+  vec3i{3, 1, 1}, // 3
+  vec3i{2, 2, 1}, // 4
+  vec3i{3, 2, 1}, // 5 -> 6
+  vec3i{3, 2, 1}, // 6
+  vec3i{2, 2, 2}, // 7 -> 8
+  vec3i{2, 2, 2}, // 8
+  vec3i{3, 3, 1}, // 9
+  vec3i{3, 2, 2}, // 10 -> 12
+  vec3i{3, 2, 2}, // 11 -> 12
+  vec3i{3, 2, 2}, // 12
+  vec3i{4, 2, 2}, // 13 -> 16
+  vec3i{4, 2, 2}, // 14 -> 16
+  vec3i{4, 2, 2}, // 15 -> 16
+  vec3i{4, 2, 2}, // 16
+  vec3i{3, 3, 2}, // 17 -> 18
+  vec3i{3, 3, 2}, // 18
+  vec3i{4, 3, 2}, // 19 -> 24
+  vec3i{4, 3, 2}, // 20 -> 24
+  vec3i{4, 3, 2}, // 21 -> 24
+  vec3i{4, 3, 2}, // 22 -> 24
+  vec3i{4, 3, 2}, // 23 -> 24
+  vec3i{4, 3, 2}, // 24
+  vec3i{3, 3, 3}, // 25 -> 27
+  vec3i{3, 3, 3}, // 26 -> 27
+  vec3i{3, 3, 3}, // 27
+  vec3i{4, 4, 2}, // 28 -> 32
+  vec3i{4, 4, 2}, // 29 -> 32
+  vec3i{4, 4, 2}, // 30 -> 32
+  vec3i{4, 4, 2}, // 31 -> 32
+  vec3i{4, 4, 2}, // 32
+  vec3i{4, 3, 3}, // 33 -> 36
+  vec3i{4, 3, 3}, // 34 -> 36
+  vec3i{4, 3, 3}, // 35 -> 36
+  vec3i{4, 3, 3}, // 36
+  vec3i{4, 4, 3}, // 37 -> 48
+  vec3i{4, 4, 3}, // 38 -> 48
+  vec3i{4, 4, 3}, // 39 -> 48
+  vec3i{4, 4, 3}, // 40 -> 48
+  vec3i{4, 4, 3}, // 41 -> 48
+  vec3i{4, 4, 3}, // 42 -> 48
+  vec3i{4, 4, 3}, // 43 -> 48
+  vec3i{4, 4, 3}, // 44 -> 48
+  vec3i{4, 4, 3}, // 45 -> 48
+  vec3i{4, 4, 3}, // 46 -> 48
+  vec3i{4, 4, 3}, // 47 -> 48
+  vec3i{4, 4, 3}, // 48
+  vec3i{4, 4, 4}, // 49 -> 64
+  vec3i{4, 4, 4}, // 50 -> 64
+  vec3i{4, 4, 4}, // 51 -> 64 
+  vec3i{4, 4, 4}, // 52 -> 64
+  vec3i{4, 4, 4}, // 53 -> 64
+  vec3i{4, 4, 4}, // 54 -> 64
+  vec3i{4, 4, 4}, // 55 -> 64
+  vec3i{4, 4, 4}, // 56 -> 64
+  vec3i{4, 4, 4}, // 57 -> 64
+  vec3i{4, 4, 4}, // 58 -> 64
+  vec3i{4, 4, 4}, // 59 -> 64
+  vec3i{4, 4, 4}, // 60 -> 64
+  vec3i{4, 4, 4}, // 61 -> 64
+  vec3i{4, 4, 4}, // 62 -> 64
+  vec3i{4, 4, 4}, // 63 -> 64
+  vec3i{4, 4, 4}, // 64
+};
+

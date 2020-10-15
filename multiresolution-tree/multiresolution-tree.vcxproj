@@ -159,6 +159,7 @@
     <ClInclude Include="heap.h" />
     <ClInclude Include="sexpr.h" />
     <ClInclude Include="yocto_math.h" />
+    <ClInclude Include="zfp.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
