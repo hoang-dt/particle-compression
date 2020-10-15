@@ -1268,8 +1268,6 @@ BuildTreeDFS(
         auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
         PCell->ParticleId = Begin;
         PCell->Count = Params.NDims;
-        if (!IS_EVEN(From3.y))
-          int Stop = 0;
       //}
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
@@ -1290,8 +1288,6 @@ BuildTreeDFS(
         auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
         PCell->ParticleId = Begin;
         PCell->Count = Params.NDims;
-        if (!IS_EVEN(From3.y))
-          int Stop = 0;
       //}
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
