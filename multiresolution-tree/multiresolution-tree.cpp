@@ -1270,6 +1270,24 @@ BuildTreeDFS(
         auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
         PCell->ParticleId = Begin;
         PCell->Count = Params.NDims;
+        vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+        vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
+        bbox BBox{
+          .Min = Params.BBox.Min + Grid.From3 * W3,
+          .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
+        };
+        vec3f P3 = Particles[Begin].Pos;
+        FOR(int, I, 0, 3) {
+          while (BBox.Max[I] - BBox.Min[I] >= Params.Accuracy) {
+            GrowToAccomodate(&BlockStream, 1);
+            float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+            bool Left = P3[I] < Half;
+            Write(&BlockStream, Left);
+            if (Left) BBox.Max[I] = Half;
+            else BBox.Min[I] = Half;
+            //D = (D + 1) % Params.NDims;
+          }
+        }
       //}
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
@@ -1290,6 +1308,24 @@ BuildTreeDFS(
         auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
         PCell->ParticleId = Begin;
         PCell->Count = Params.NDims;
+        vec3f P3 = Particles[Begin].Pos;
+        vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+        vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
+        bbox BBox{
+          .Min = Params.BBox.Min + Grid.From3 * W3,
+          .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
+        };
+        FOR(int, I, 0, 3) {
+          while (BBox.Max[I] - BBox.Min[I] >= Params.Accuracy) {
+            GrowToAccomodate(&BlockStream, 1);
+            float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+            bool Left = P3[I] < Half;
+            Write(&BlockStream, Left);
+            if (Left) BBox.Max[I] = Half;
+            else BBox.Min[I] = Half;
+            //D = (D + 1) % Params.NDims;
+          }
+        }
       //}
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
@@ -1322,7 +1358,7 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
   const i8 NBitPlanes = BIT_SIZE_OF(u64);
   const i8 Prec = NBitPlanes - 1 - 3; // 3 is the number of dimensions
   const i16 EMax = (i16)QuantizeF32(Prec, BufFloats, &BufInts);
-  Write(&BlockStream, EMax, traits<f32>::ExpBits + 1);
+  Write(&BlockStream, EMax + traits<f32>::ExpBias, traits<f32>::ExpBits);
   ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
   ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
   GrowIfTooFull(&BlockStream);
@@ -1628,7 +1664,7 @@ main(int Argc, cstr* Argv) {
     //Coder.InitWrite(100000000);
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    CompressBlock();
+    //CompressBlock();
     printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
