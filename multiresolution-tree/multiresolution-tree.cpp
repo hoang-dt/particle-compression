@@ -1255,7 +1255,10 @@ BuildTreeDFS(
     if (Begin + 1 == Mid) { // left leaf
       // TODO
       auto G = SplitGrid(Grid, D, Split, Left);
-      vec3i From3(i32(G.From3.x), i32(G.From3.y), i32(G.From3.z));
+      vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
+      vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
+      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
       vec3i Block3 = From3 / 64;
       vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
       //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
@@ -1303,7 +1306,10 @@ BuildTreeDFS(
     Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // right leaf
       auto G = SplitGrid(Grid, D, Split, Right);
-      vec3i From3(i32(G.From3.x), i32(G.From3.y), i32(G.From3.z));
+      vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
+      vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
+      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
       vec3i Block3 = From3 / 64;
       vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
       //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
