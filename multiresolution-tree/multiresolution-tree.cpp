@@ -1249,6 +1249,7 @@ BuildTreeDFS(
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
   //Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
+  EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
   if (Begin < Mid) {
     Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // left leaf
@@ -1303,7 +1304,7 @@ BuildTreeDFS(
 // 
 
 static void
-CompressBlockZfp(i32 N, f64* BlockFloats) {
+CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
   // extrapolate to the closest block
   vec3i F3 = Factors[N];
   if (N > 1) {
@@ -1321,11 +1322,15 @@ CompressBlockZfp(i32 N, f64* BlockFloats) {
   const i8 NBitPlanes = BIT_SIZE_OF(u64);
   const i8 Prec = NBitPlanes - 1 - 3; // 3 is the number of dimensions
   const i16 EMax = (i16)QuantizeF32(Prec, BufFloats, &BufInts);
+  Write(&BlockStream, EMax, traits<f32>::ExpBits + 1);
   ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
   ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
   GrowIfTooFull(&BlockStream);
   i8 M = 0;
-  for (int Bp = 0; Bp < 64; ++Bp) {
+  for (int Bp = 64 - 1; Bp >= 0; --Bp) {
+    i16 RealBp = Bp + EMax;
+    bool TooHighPrecision = NBitPlanes > RealBp - Exponent(Accuracy) + 1;
+    if (TooHighPrecision) break;
     Encode(BlockUInts, 64, Bp, M, &BlockStream);
   }
 }
@@ -1372,10 +1377,10 @@ CompressBlock() {
       f64 BlockFloats[4 * 4 * 4] = {};
       // TODO: adjust the positions (offset the position of the "left-most" particle)
       // and also account for the stride in the grid
-      FOR (int, I, 0, N) { // copy the data over
+      FOR(int, I, 0, N) { // copy the data over
         BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.z;
       }
-      CompressBlockZfp(N, BlockFloats);
+      CompressBlockZfp(Params.Accuracy, N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1416,10 +1421,10 @@ CompressBlock() {
       // TODO: adjust the positions (offset the position of the "left-most" particle)
       // and also account for the stride in the grid
       f64 BlockFloats[4 * 4 * 4] = {};
-      FOR (int, I, 0, N) { // copy the data over
+      FOR(int, I, 0, N) { // copy the data over
         BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.y;
       }
-      CompressBlockZfp(N, BlockFloats);
+      CompressBlockZfp(Params.Accuracy, N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1460,10 +1465,10 @@ CompressBlock() {
       // TODO: adjust the positions (offset the position of the "left-most" particle)
       // and also account for the stride in the grid
       f64 BlockFloats[4 * 4 * 4] = {};
-      FOR (int, I, 0, N) { // copy the data over
+      FOR(int, I, 0, N) { // copy the data over
         BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.x;
       }
-      CompressBlockZfp(N, BlockFloats);
+      CompressBlockZfp(Params.Accuracy, N, BlockFloats);
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
@@ -1619,9 +1624,12 @@ main(int Argc, cstr* Argv) {
     Params.BlockDims3 = Params.Dims3;
     ParticleCells.resize(PROD(Params.BlockDims3));
     tree<Root> Tree;
+    InitWrite(&BlockStream, 100000000); // 100 MB
+    //Coder.InitWrite(100000000);
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     CompressBlock();
+    printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
