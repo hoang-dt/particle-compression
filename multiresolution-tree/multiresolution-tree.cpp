@@ -1273,8 +1273,6 @@ BuildTreeDFS(
         PCell->ParticleId = Begin;
         vec3f Pos3 = Particles[Begin].Pos;
         PCell->Grid = G;
-        if (PCell->ParticleId == 464604 || PCell->ParticleId == 100313)
-          int Stop = 0;
         //vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
         //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
         //bbox BBox{
@@ -1316,8 +1314,6 @@ BuildTreeDFS(
         PCell->ParticleId = Mid;
         vec3f Pos3 = Particles[Mid].Pos;
         PCell->Grid = G;
-        if (PCell->ParticleId == 464604 || PCell->ParticleId == 100313)
-          int Stop = 0;
         //vec3f P3 = Particles[Begin].Pos;
         //vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
         //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
@@ -1410,18 +1406,21 @@ CompressBlock() {
       N = 0;
       particle_cell ProjCells[64] = {};
       i32 z = 0;
+      if (LastColumn == 255)
+        int Stop = 0;
       FOR(i32, Z, 0, LastColumn) {
         if (Z >= B3.z) break;
         if (ProjectedCells[Z].empty()) goto OUT_Z;
         ProjCells[z++] = ProjectedCells[Z].back();
         ProjectedCells[Z].pop_back();
+        ++Avg;
         ++N;
       OUT_Z:
-        if (Z + 1 == LastColumn && LastColumn + 1 < B3.z && z < 64)
+        if (Z + 1 == LastColumn && LastColumn < B3.z && z < 64)
           ++LastColumn;
       }
       ++Count[N];
-      Avg += N;
+      //Avg += N;
       /* compress */
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
@@ -1472,7 +1471,7 @@ CompressBlock() {
         ProjectedCells[Y].pop_back();
         ++N;
       OUT_Y:
-        if (Y + 1 == LastColumn && LastColumn + 1 < B3.y && y < 64)
+        if (Y + 1 == LastColumn && LastColumn < B3.y && y < 64)
           ++LastColumn;
       }
       Avg += N;
@@ -1523,7 +1522,7 @@ CompressBlock() {
         ProjectedCells[X].pop_back();
         ++N;
       OUT_X:
-        if (X + 1 == LastColumn && LastColumn + 1 < B3.x && x < 64)
+        if (X + 1 == LastColumn && LastColumn < B3.x && x < 64)
           ++LastColumn;
       }
       Avg += N;
