@@ -2004,8 +2004,8 @@ struct tree {
 };
 
 struct particle_cell {
-  i64 ParticleId = 0;
-  i8 Count = 0;
+  grid Grid = {};
+  i64 ParticleId = -1;
 };
 
 #define ROW3_64(X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
