@@ -1253,48 +1253,37 @@ BuildTreeDFS(
   if (Begin < Mid) {
     Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // left leaf
-      // TODO
+      vec3f P3 = Particles[Begin].Pos;
+      vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
       auto G = SplitGrid(Grid, D, Split, Left);
+      bbox BBox{
+        .Min = Params.BBox.Min + G.From3 * W3,
+        .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
+      };
+      FOR(int, I, 0, 3) {
+        while (G.Dims3[I] > 1) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
       vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
       vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
       vec3i From3(G.From3.x, G.From3.y, G.From3.z);
       From3 = From3 + Dims3 * Stride3 / 2;
-      vec3i Block3 = From3 / 64;
-      vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
-      //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
-        //int LhIdx =  LH_IDX(Level, Depth);
-        //grid LhGrid = LhGrid(Level, Depth);
-        //auto& BkGrid = BkGrids[LhIdx];
-        //if (BkGrid.Cells.size() == 0) {
-        //  BkGrid.Grid = LhGrid;
-        //  BkGrid.Cells.resize(Prod(Dims(Grid)));
-        //}
-        // TODO: find out which cell this particle belongs to in the LhGrid
-        vec3i B3 = Params.Dims3;
-        auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-        assert(PCell->ParticleId == -1);
-        PCell->ParticleId = Begin;
-        vec3f Pos3 = Particles[Begin].Pos;
-        PCell->Grid = G;
-        //vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
-        //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
-        //bbox BBox{
-        //  .Min = Params.BBox.Min + Grid.From3 * W3,
-        //  .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
-        //};
-        //vec3f P3 = Particles[Begin].Pos;
-        //FOR(int, I, 0, 3) {
-        //  while (BBox.Max[I] - BBox.Min[I] >= Params.Accuracy) {
-        //    GrowToAccomodate(&BlockStream, 1);
-        //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-        //    bool Left = P3[I] < Half;
-        //    Write(&BlockStream, Left);
-        //    if (Left) BBox.Max[I] = Half;
-        //    else BBox.Min[I] = Half;
-        //    //D = (D + 1) % Params.NDims;
-        //  }
-        //}
-      //}
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      assert(PCell->ParticleId == -1);
+      PCell->ParticleId = Begin;
+      PCell->Grid = G;
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
@@ -1305,39 +1294,48 @@ BuildTreeDFS(
   if (Mid < End) {
     Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // right leaf
+      vec3f P3 = Particles[Mid].Pos;
+      vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
       auto G = SplitGrid(Grid, D, Split, Right);
+      bbox BBox{
+        .Min = Params.BBox.Min + G.From3 * W3,
+        .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
+      };
+      FOR(int, I, 0, 3) {
+        while (G.Dims3[I] > 1) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
+      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
       vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
       vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
-      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
       From3 = From3 + Dims3 * Stride3 / 2;
-      vec3i Block3 = From3 / 64;
-      vec3i Cell3(From3.x % 64, From3.y % 64, From3.z % 64);
-      //if (Block3.x == 0 && Block3.y == 0 && Block3.z == 0) { // TODO: encode not just the first block
-        //auto* PCell = &ParticleCells[ROW3_64(Cell3.x, Cell3.y, Cell3.z)];
-        vec3i B3 = Params.Dims3;
-        auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-        assert(PCell->ParticleId == -1);
-        PCell->ParticleId = Mid;
-        vec3f Pos3 = Particles[Mid].Pos;
-        PCell->Grid = G;
-        //vec3f P3 = Particles[Begin].Pos;
-        //vec3f Dims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
-        //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / Dims3;
-        //bbox BBox{
-        //  .Min = Params.BBox.Min + Grid.From3 * W3,
-        //  .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
-        //};
-        //FOR(int, I, 0, 3) {
-        //  while (BBox.Max[I] - BBox.Min[I] >= Params.Accuracy) {
-        //    GrowToAccomodate(&BlockStream, 1);
-        //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-        //    bool Left = P3[I] < Half;
-        //    Write(&BlockStream, Left);
-        //    if (Left) BBox.Max[I] = Half;
-        //    else BBox.Min[I] = Half;
-        //    //D = (D + 1) % Params.NDims;
-        //  }
-        //}
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      assert(PCell->ParticleId == -1);
+      PCell->ParticleId = Mid;
+      PCell->Grid = G;
+
+      //FOR(int, I, 0, 3) {
+      //  while (BBox.Max[I] - BBox.Min[I] > W3[I]) {
+      //    GrowToAccomodate(&BlockStream, 1);
+      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+      //    bool Left = P3[I] < Half;
+      //    Write(&BlockStream, Left);
+      //    if (Left) BBox.Max[I] = Half;
+      //    else BBox.Min[I] = Half;
+      //    //D = (D + 1) % Params.NDims;
+      //  }
       //}
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
@@ -1437,7 +1435,7 @@ CompressBlock() {
           if (I > 0) {
             auto Cz = Particles[ProjCells[I].ParticleId].Pos.z;
             auto Pz = Particles[ProjCells[I-1].ParticleId].Pos.z;
-            //assert(Cz > Pz);
+            assert(Cz > Pz);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.z - Offset;
         }
@@ -1488,7 +1486,7 @@ CompressBlock() {
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           if (I > 0) {
-            //assert(Particles[ProjCells[I].ParticleId].Pos.y > Particles[ProjCells[I-1].ParticleId].Pos.y);
+            assert(Particles[ProjCells[I].ParticleId].Pos.y > Particles[ProjCells[I-1].ParticleId].Pos.y);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.y - Offset;
         }
@@ -1539,7 +1537,7 @@ CompressBlock() {
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           if (I > 0) {
-           // assert(Particles[ProjCells[I].ParticleId].Pos.x > Particles[ProjCells[I-1].ParticleId].Pos.x);
+            assert(Particles[ProjCells[I].ParticleId].Pos.x > Particles[ProjCells[I-1].ParticleId].Pos.x);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.x - Offset;
         }
