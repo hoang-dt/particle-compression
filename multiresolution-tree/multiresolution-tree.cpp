@@ -1249,20 +1249,35 @@ BuildTreeDFS(
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
   //Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
-  EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
+  vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+  vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
+  bbox ParentBBox{
+    .Min = Params.BBox.Min + Grid.From3 * W3,
+    .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
+  };
+  bool Stop = true;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > Params.Accuracy) {
+      Stop = false;
+      break;
+    }
+  }
+  if (!Stop)
+    EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
+  else
+    return;
   if (Begin < Mid) {
     Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // left leaf
       vec3f P3 = Particles[Begin].Pos;
-      vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
-      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
       auto G = SplitGrid(Grid, D, Split, Left);
       bbox BBox{
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       FOR(int, I, 0, 3) {
-        while (G.Dims3[I] > 1) {
+        //while (G.Dims3[I] > 1) {
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1295,15 +1310,14 @@ BuildTreeDFS(
     Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // right leaf
       vec3f P3 = Particles[Mid].Pos;
-      vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
-      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
       auto G = SplitGrid(Grid, D, Split, Right);
       bbox BBox{
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       FOR(int, I, 0, 3) {
-        while (G.Dims3[I] > 1) {
+        //while (G.Dims3[I] > 1) {
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1325,18 +1339,6 @@ BuildTreeDFS(
       assert(PCell->ParticleId == -1);
       PCell->ParticleId = Mid;
       PCell->Grid = G;
-
-      //FOR(int, I, 0, 3) {
-      //  while (BBox.Max[I] - BBox.Min[I] > W3[I]) {
-      //    GrowToAccomodate(&BlockStream, 1);
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool Left = P3[I] < Half;
-      //    Write(&BlockStream, Left);
-      //    if (Left) BBox.Max[I] = Half;
-      //    else BBox.Min[I] = Half;
-      //    //D = (D + 1) % Params.NDims;
-      //  }
-      //}
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
@@ -1703,7 +1705,7 @@ main(int Argc, cstr* Argv) {
     //Coder.InitWrite(100000000);
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    CompressBlock();
+    //CompressBlock();
     printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
