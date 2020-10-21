@@ -1275,9 +1275,9 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      FOR(int, I, 0, 3) {
-        //while (G.Dims3[I] > 1) {
-        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+      FOR(int, I, 0, 3) { // write refinement bits
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1299,6 +1299,11 @@ BuildTreeDFS(
       assert(PCell->ParticleId == -1);
       PCell->ParticleId = Begin;
       PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
@@ -1316,8 +1321,8 @@ BuildTreeDFS(
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       FOR(int, I, 0, 3) {
-        //while (G.Dims3[I] > 1) {
-        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1339,6 +1344,11 @@ BuildTreeDFS(
       assert(PCell->ParticleId == -1);
       PCell->ParticleId = Mid;
       PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
     } else { // recurse on the right
       BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
@@ -1396,12 +1406,14 @@ CompressBlock() {
       ProjectedCells[Z].reserve(128);
       FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
         const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-        if (C.ParticleId >= 0)
+        if (C.ParticleId >= 0 && (C.DimsEncode & 4) != 0)
           ProjectedCells[Z].push_back(C);
       }
       T += ProjectedCells[Z].size();
     }
-    assert(T == Params.NParticles);
+    //if (T != Params.NParticles)
+    //  return; // the tree is not built to the end, no need to do zfp compression
+    //assert(T == Params.NParticles);
     i32 Count[65] = {};
     i32 N = 1; // number of particles processed in this "layer"
     i32 Avg = 0;
@@ -1435,16 +1447,16 @@ CompressBlock() {
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.z;
         FOR(int, I, 0, N) { // copy the data over
           if (I > 0) {
-            auto Cz = Particles[ProjCells[I].ParticleId].Pos.z;
-            auto Pz = Particles[ProjCells[I-1].ParticleId].Pos.z;
-            assert(Cz > Pz);
+            //auto Cz = Particles[ProjCells[I].ParticleId].Pos.z;
+            //auto Pz = Particles[ProjCells[I-1].ParticleId].Pos.z;
+            //assert(Cz > Pz);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.z - Offset;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats);
       }
     }
-    assert(Avg == Params.NParticles);
+    //assert(Avg == Params.NParticles);
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
   }
@@ -1457,7 +1469,7 @@ CompressBlock() {
       ProjectedCells[Y].reserve(128);
       FOR(i32, Z, 0, B3.z) FOR(i32, X, 0, B3.x) {
         const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-        if (C.ParticleId >= 0)
+        if (C.ParticleId >= 0 && (C.DimsEncode & 2) != 0)
           ProjectedCells[Y].push_back(C);
       }
     }
@@ -1488,14 +1500,14 @@ CompressBlock() {
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           if (I > 0) {
-            assert(Particles[ProjCells[I].ParticleId].Pos.y > Particles[ProjCells[I-1].ParticleId].Pos.y);
+            //assert(Particles[ProjCells[I].ParticleId].Pos.y > Particles[ProjCells[I-1].ParticleId].Pos.y);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.y - Offset;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats);
       }
     }
-    assert(Avg == Params.NParticles);
+    //assert(Avg == Params.NParticles);
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
   }
@@ -1508,7 +1520,7 @@ CompressBlock() {
       ProjectedCells[X].reserve(128);
       FOR(i32, Z, 0, B3.z) FOR(i32, Y, 0, B3.y) {
         const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-        if (C.ParticleId >= 0)
+        if (C.ParticleId >= 0 && (C.DimsEncode & 1) != 0)
           ProjectedCells[X].push_back(C);
       }
     }
@@ -1539,14 +1551,14 @@ CompressBlock() {
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           if (I > 0) {
-            assert(Particles[ProjCells[I].ParticleId].Pos.x > Particles[ProjCells[I-1].ParticleId].Pos.x);
+            //assert(Particles[ProjCells[I].ParticleId].Pos.x > Particles[ProjCells[I-1].ParticleId].Pos.x);
           }
           BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.x - Offset;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats);
       }
     }
-    assert(Avg == Params.NParticles);
+    //assert(Avg == Params.NParticles);
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
   }
@@ -1705,7 +1717,7 @@ main(int Argc, cstr* Argv) {
     //Coder.InitWrite(100000000);
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    //CompressBlock();
+    CompressBlock();
     printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,

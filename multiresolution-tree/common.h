@@ -2006,6 +2006,7 @@ struct tree {
 struct particle_cell {
   grid Grid = {};
   i64 ParticleId = -1;
+  u8 DimsEncode = 0; // 3-bit field indicating which dimensions to encode with zfp
 };
 
 #define ROW3_64(X, Y, Z) ((Z) * 64 * 64 + (Y) * 64 + (X))
