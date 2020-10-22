@@ -1351,21 +1351,21 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      //FOR(int, I, 0, 3) { // write refinement bits
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = P3[I] < Half;
-      //    Write(&BlockStream, LeftSide);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //}
+      FOR(int, I, 0, 3) { // write refinement bits
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
       vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
       vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
@@ -1396,21 +1396,21 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      //FOR(int, I, 0, 3) {
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = P3[I] < Half;
-      //    Write(&BlockStream, LeftSide);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //}
+      FOR(int, I, 0, 3) {
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
       vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
       vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
@@ -1437,8 +1437,10 @@ BuildTreeDFS(
 // first x, second x, third x
 // 
 
+static i64 BitsSkipped = 0;
+
 static void
-CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
+CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, f64* LoFloats, f64* HiFloats) {
   // extrapolate to the closest block
   vec3i F3 = Factors[N];
   if (N > 1) {
@@ -1456,6 +1458,20 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
   const i8 NBitPlanes = BIT_SIZE_OF(u64);
   const i8 Prec = NBitPlanes - 1 - 3; // 3 is the number of dimensions
   const i16 EMax = (i16)QuantizeF32(Prec, BufFloats, &BufInts);
+
+  /* compute the number of bit planes that can be skipped */
+  buffer_t BufLoFloats(LoFloats, 64);
+  buffer_t BufLoInts((i64*)LoFloats, 64);
+  QuantizeF32WithEMax(Prec, EMax, BufLoFloats, &BufLoInts);
+  buffer_t BufHiFloats(HiFloats, 64);
+  buffer_t BufHiInts((i64*)HiFloats, 64);
+  QuantizeF32WithEMax(Prec, EMax, BufHiFloats, &BufHiInts);
+  i32 NSkippedBitplanes = 64;
+  FOR(i32, I, 0, N) {
+    u64 X = BufLoInts[I] ^ BufHiInts[I];
+    NSkippedBitplanes = MIN(NSkippedBitplanes, Msb(X));
+  }
+
   Write(&BlockStream, EMax + traits<f32>::ExpBias, traits<f32>::ExpBits);
   ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
   ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
@@ -1465,7 +1481,11 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
     i16 RealBp = Bp + EMax;
     bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
     if (TooHighPrecision) break;
+    i64 Before = BitSize(BlockStream);
     Encode(BlockUInts, 64, Bp, M, &BlockStream);
+    i64 After = BitSize(BlockStream);
+    if (Bp > NSkippedBitplanes)
+      BitsSkipped += After - Before;
   }
 }
 
@@ -1473,6 +1493,8 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
 static void
 CompressBlock() {
   vec3i B3 = Params.BlockDims3;
+  vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
+  vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
   if (Params.NDims >= 3) {
     /* handle the Z dimension */
     printf("processing Z -------------\n");
@@ -1482,8 +1504,9 @@ CompressBlock() {
       ProjectedCells[Z].reserve(128);
       FOR(i32, Y, 0, B3.y) FOR(i32, X, 0, B3.x) {
         const auto& C = ParticleCells[ROW3(B3.x, B3.y, B3.z, X, Y, Z)];
-        if (C.ParticleId >= 0 && (C.DimsEncode & 4) != 0)
+        if (C.ParticleId >= 0 && (C.DimsEncode & 4) != 0) {
           ProjectedCells[Z].push_back(C);
+        }
       }
       T += (i32)ProjectedCells[Z].size();
     }
@@ -1518,18 +1541,18 @@ CompressBlock() {
       /* compress */
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 LoFloats[4 * 4 * 4] = {};
+        f64 HiFloats[4 * 4 * 4] = {};
         // TODO: adjust the positions (offset the position of the "left-most" particle)
         // and also account for the stride in the grid
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.z;
         FOR(int, I, 0, N) { // copy the data over
-          if (I > 0) {
-            //auto Cz = Particles[ProjCells[I].ParticleId].Pos.z;
-            //auto Pz = Particles[ProjCells[I-1].ParticleId].Pos.z;
-            //assert(Cz > Pz);
-          }
-          BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.z - Offset;
+          const auto& C = ProjCells[I];
+          LoFloats[I] = Params.BBox.Min.z + C.Grid.From3.z + C.Grid.From3.z * W3.z - Offset;
+          HiFloats[I] = Params.BBox.Min.z + (C.Grid.From3.z + C.Grid.Dims3.z) * W3.z - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.z - Offset;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1574,13 +1597,15 @@ CompressBlock() {
       if (N > 0) {
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.y;
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 LoFloats[4 * 4 * 4] = {};
+        f64 HiFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
-          if (I > 0) {
-            //assert(Particles[ProjCells[I].ParticleId].Pos.y > Particles[ProjCells[I-1].ParticleId].Pos.y);
-          }
-          BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.y - Offset;
+          const auto& C = ProjCells[I];
+          LoFloats[I] = Params.BBox.Min.y + C.Grid.From3.y + C.Grid.From3.y * W3.y - Offset;
+          HiFloats[I] = Params.BBox.Min.y + (C.Grid.From3.y + C.Grid.Dims3.y) * W3.y - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.y - Offset;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1625,13 +1650,15 @@ CompressBlock() {
       if (N > 0) {
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.x;
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 LoFloats[4 * 4 * 4] = {};
+        f64 HiFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
-          if (I > 0) {
-            //assert(Particles[ProjCells[I].ParticleId].Pos.x > Particles[ProjCells[I-1].ParticleId].Pos.x);
-          }
-          BlockFloats[I] = Particles[ProjCells[I].ParticleId].Pos.x - Offset;
+          const auto& C = ProjCells[I];
+          LoFloats[I] = Params.BBox.Min.x + C.Grid.From3.x + C.Grid.From3.x * W3.x - Offset;
+          HiFloats[I] = Params.BBox.Min.x + (C.Grid.From3.x + C.Grid.Dims3.x) * W3.x - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.x - Offset;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1806,7 +1833,7 @@ main(int Argc, cstr* Argv) {
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     CompressBlock();
-    printf("compressed size = %lld bytes\n", Size(BlockStream));
+    printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),

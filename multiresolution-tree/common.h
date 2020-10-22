@@ -2006,6 +2006,8 @@ struct tree {
 struct particle_cell {
   grid Grid = {};
   i64 ParticleId = -1;
+  f32 Lo = 0;
+  f32 Hi = 0;
   u8 DimsEncode = 0; // 3-bit field indicating which dimensions to encode with zfp
 };
 
@@ -2160,6 +2162,21 @@ QuantizeF32(int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
 }
 
 template <typename t, typename u> int
+QuantizeF32WithEMax(int Bits, int EMax, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
+  //idx2_Assert(is_floating_point<t>::Value);
+  //idx2_Assert(is_integral<u>::Value);
+  assert(BIT_SIZE_OF(t) >= Bits);
+  assert(BIT_SIZE_OF(u) >= Bits);
+  assert(SBuf.Size == DBuf->Size);
+  t MaxAbs = 0;
+  //FOR(int, I, 0, Size(SBuf)) MaxAbs = MAX(MaxAbs, (t)fabs(SBuf[I]));
+  //int EMax = Exponent<f32>((f32)MaxAbs);
+  f64 Scale = ldexp(1, Bits - 1 - EMax);
+  FOR(int, I, 0, Size(SBuf)) (*DBuf)[I] = u(Scale * SBuf[I]);
+  return EMax;
+}
+
+template <typename t, typename u> int
 QuantizeF64(int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
   //idx2_Assert(is_floating_point<t>::Value);
   //idx2_Assert(is_integral<u>::Value);
@@ -2273,3 +2290,52 @@ inline vec3i Factors[] = {
   vec3i{4, 4, 4}, // 64
 };
 
+//#if defined(__clang__) || defined(__GNUC__)
+//#include <x86intrin.h>
+//INLINE i8
+//Msb(u32 V, i8 Default) {
+//  return (V == 0) ? Default : i8(sizeof(u32) * 8 - 1 - __builtin_clz(V));
+//}
+//INLINE i8
+//Msb(u64 V, i8 Default) {
+//  return (V == 0) ? Default : i8(sizeof(u64) * 8 - 1 - __builtin_clzll(V));
+//}
+//INLINE i8
+//Lsb(u32 V, i8 Default) {
+//  return (V == 0) ? Default : i8(__builtin_ctz(V));
+//}
+//INLINE i8
+//Lsb(u64 V, i8 Default) {
+//  return (V == 0) ? Default : i8(__builtin_ctzll(V));
+//}
+//#elif defined(_MSC_VER)
+////#include <intrin.h>
+//#pragma intrinsic(_BitScanReverse)
+//#pragma intrinsic(_BitScanReverse64)
+//INLINE i8
+//Msb(u32 V, i8 Default) {
+//  unsigned long Index = 0;
+//  unsigned char Ret = _BitScanReverse(&Index, V);
+//  return Ret ? (i8)Index : Default;
+//}
+//INLINE i8
+//Msb(u64 V, i8 Default) {
+//  unsigned long Index = 0;
+//  unsigned char Ret = _BitScanReverse64(&Index, V);
+//  return Ret ? (i8)Index : Default;
+//}
+//#pragma intrinsic(_BitScanForward)
+//#pragma intrinsic(_BitScanForward64)
+//INLINE i8
+//Lsb(u32 V, i8 Default) {
+//  unsigned long Index = 0;
+//  unsigned char Ret = _BitScanForward(&Index, V);
+//  return Ret ? (i8)Index : Default;
+//}
+//INLINE i8
+//Lsb(u64 V, i8 Default) {
+//  unsigned long Index = 0;
+//  unsigned char Ret = _BitScanForward64(&Index, V);
+//  return Ret ? (i8)Index : Default;
+//}
+//#endif
