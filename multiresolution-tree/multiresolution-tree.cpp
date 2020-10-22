@@ -1221,6 +1221,82 @@ struct bookkeeping_grid {
 static std::vector<bookkeeping_grid> BkGrids; // [level, depth] -> a grid of particle cells
 //static std::vector<particle_cell> ParticleCells[128]; // [depth] -> vector of particle_cells
 
+static void
+TestCompressBlockZfp(f64 Accuracy, f64* BlockFloats, bitstream* Stream) {
+  buffer_t BufFloats(BlockFloats, 64);
+  buffer_t BufInts((i64*)BlockFloats, 64);
+  u64 BlockUInts[4 * 4 * 4];
+  buffer_t BufUInts (BlockUInts, 64);
+  const i8 NBitPlanes = BIT_SIZE_OF(u64);
+  const i8 Prec = NBitPlanes - 1 - 3; // 3 is the number of dimensions
+  const i16 EMax = (i16)QuantizeF64(Prec, BufFloats, &BufInts);
+  Write(Stream, EMax + traits<f64>::ExpBias, traits<f64>::ExpBits);
+  ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
+  ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
+  GrowIfTooFull(Stream);
+  i8 M = 0;
+  for (int Bp = 64 - 1; Bp >= 0; --Bp) {
+    i16 RealBp = Bp - EMax;
+    bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
+    if (TooHighPrecision) break;
+    printf("encoding bit plane %d\n", Bp);
+    Encode(BlockUInts, 64, Bp, M, Stream);
+  }
+}
+
+static void
+TestDecompressBlockZfp(f64 Accuracy, f64* BlockFloats, bitstream* Stream) {
+  buffer_t BufFloats(BlockFloats, 64);
+  buffer_t BufInts((i64*)BlockFloats, 64);
+  u64 BlockUInts[64] = {};
+  buffer_t BufUInts(BlockUInts, 64);
+  i16 EMax = (i16)Read(Stream, traits<f64>::ExpBits) - traits<f64>::ExpBias;
+  const i8 NBitPlanes = BIT_SIZE_OF(u64);
+  i8 N = 0;
+  for (int Bp = NBitPlanes - 1; Bp >= 0; --Bp) {
+    i16 RealBp = Bp - EMax;
+    bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
+    auto E = Exponent(Accuracy);
+    if (TooHighPrecision) break;
+    printf("decoding bit plane %d\n", Bp);
+    Decode(BlockUInts, 64, Bp, N, Stream);
+  }
+  InverseShuffle(BlockUInts, (i64*)BlockFloats, 3); // 3 = number of dimensions
+  InverseZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
+  const int Prec = NBitPlanes - 1 - 3; // 3 = number of dimensions
+  Dequantize(EMax, Prec, BufInts, &BufFloats);
+}
+
+static void
+TestCompressSeries(f64 Accuracy) {
+  /* generate a series of real values based on a grid */
+  i32 From = 0;
+  i32 Stride = 1;
+  i32 Dims = 6400; // 100 blocks of 64-values
+  std::vector<f64> Vals(Dims);
+  for (int I = 0; I < Dims; ++I) {
+    f64 Low = From + I * Stride;
+    f64 High = From + (I + 1) * Stride;
+    f64 X = Low + (High - Low) * rand() / f64(RAND_MAX);
+    Vals[I] = X;
+  }
+  bitstream Stream;
+  InitWrite(&Stream, 100000);
+  f64 BlockFloats[64];
+  f64 BlockFloatsCopy[64];
+  FOR(i32, I, 0, 64) BlockFloats[I] = BlockFloatsCopy[I] = Vals[I];
+  TestCompressBlockZfp(Accuracy, BlockFloats, &Stream);
+  Flush(&Stream);
+  printf("stream size = %lld\n", Size(Stream));
+  InitRead(&Stream, Stream.Stream);
+  TestDecompressBlockZfp(Accuracy, BlockFloats, &Stream);
+  auto Err = RMSError(buffer_t<f64>(BlockFloatsCopy, 64), buffer_t<f64>(BlockFloats, 64));
+  FOR(i32, I, 0, 64) {
+    printf("%f %f\n", BlockFloatsCopy[I], BlockFloats[I]);
+  }
+  printf("rmse = %f\n", Err);
+}
+
 template <node_type R> static void
 BuildTreeDFS(
   tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, 
@@ -1249,7 +1325,7 @@ BuildTreeDFS(
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
   //Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
-  vec3f GridDims3(Params.Dims3.x, Params.Dims3.y, Params.Dims3.z);
+  vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
   bbox ParentBBox{
     .Min = Params.BBox.Min + Grid.From3 * W3,
@@ -1275,24 +1351,24 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      FOR(int, I, 0, 3) { // write refinement bits
-        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-          bool LeftSide = P3[I] < Half;
-          Write(&BlockStream, LeftSide);
-          G.Dims3[I] *= 0.5f;
-          if (LeftSide) {
-            BBox.Max[I] = Half;
-          } else {
-            G.From3[I] += G.Dims3[I] * G.Stride3[I];
-            BBox.Min[I] = Half;
-          }
-        }
-      }
-      vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
-      vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
-      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
+      //FOR(int, I, 0, 3) { // write refinement bits
+      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+      //    bool LeftSide = P3[I] < Half;
+      //    Write(&BlockStream, LeftSide);
+      //    G.Dims3[I] *= 0.5f;
+      //    if (LeftSide) {
+      //      BBox.Max[I] = Half;
+      //    } else {
+      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
+      //      BBox.Min[I] = Half;
+      //    }
+      //  }
+      //}
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
       From3 = From3 + Dims3 * Stride3 / 2;
       vec3i B3 = Params.Dims3;
       auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
@@ -1320,24 +1396,24 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      FOR(int, I, 0, 3) {
-        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-          bool LeftSide = P3[I] < Half;
-          Write(&BlockStream, LeftSide);
-          G.Dims3[I] *= 0.5f;
-          if (LeftSide) {
-            BBox.Max[I] = Half;
-          } else {
-            G.From3[I] += G.Dims3[I] * G.Stride3[I];
-            BBox.Min[I] = Half;
-          }
-        }
-      }
-      vec3i From3(G.From3.x, G.From3.y, G.From3.z);
-      vec3i Dims3(G.Dims3.x, G.Dims3.y, G.Dims3.z);
-      vec3i Stride3(G.Stride3.x, G.Stride3.y, G.Stride3.z);
+      //FOR(int, I, 0, 3) {
+      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+      //    bool LeftSide = P3[I] < Half;
+      //    Write(&BlockStream, LeftSide);
+      //    G.Dims3[I] *= 0.5f;
+      //    if (LeftSide) {
+      //      BBox.Max[I] = Half;
+      //    } else {
+      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
+      //      BBox.Min[I] = Half;
+      //    }
+      //  }
+      //}
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
       From3 = From3 + Dims3 * Stride3 / 2;
       vec3i B3 = Params.Dims3;
       auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
@@ -1385,9 +1461,9 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats) {
   ForwardShuffle((i64*)BlockFloats, BlockUInts, 3); // 3 = number of dimensions
   GrowIfTooFull(&BlockStream);
   i8 M = 0;
-  for (int Bp = 64 - 1; Bp >= 0; --Bp) {
+  for (int Bp = NBitPlanes - 1; Bp >= 0; --Bp) {
     i16 RealBp = Bp + EMax;
-    bool TooHighPrecision = NBitPlanes > RealBp - Exponent(Accuracy) + 1;
+    bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
     if (TooHighPrecision) break;
     Encode(BlockUInts, 64, Bp, M, &BlockStream);
   }
@@ -1409,7 +1485,7 @@ CompressBlock() {
         if (C.ParticleId >= 0 && (C.DimsEncode & 4) != 0)
           ProjectedCells[Z].push_back(C);
       }
-      T += ProjectedCells[Z].size();
+      T += (i32)ProjectedCells[Z].size();
     }
     //if (T != Params.NParticles)
     //  return; // the tree is not built to the end, no need to do zfp compression
@@ -1640,6 +1716,18 @@ CompressBlockFast() {
 
 // TODO: add the number of blocks to the .idx file
 // TODO: 
+
+int 
+main2(int Argc, cstr* Argv) {
+  f64 Accuracy = 0;
+  bool Ok = ToDouble(Argv[1], &Accuracy);
+  if (Ok)
+    TestCompressSeries(Accuracy);
+  else
+    printf("ERROR: provide an accuracy");
+  return 0;
+}
+
 int
 main(int Argc, cstr* Argv) {
   srand(1234567);

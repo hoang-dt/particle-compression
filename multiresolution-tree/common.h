@@ -2158,6 +2158,51 @@ QuantizeF32(int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
   FOR(int, I, 0, Size(SBuf)) (*DBuf)[I] = u(Scale * SBuf[I]);
   return EMax;
 }
+
+template <typename t, typename u> int
+QuantizeF64(int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
+  //idx2_Assert(is_floating_point<t>::Value);
+  //idx2_Assert(is_integral<u>::Value);
+  assert(BIT_SIZE_OF(t) >= Bits);
+  assert(BIT_SIZE_OF(u) >= Bits);
+  assert(SBuf.Size == DBuf->Size);
+  t MaxAbs = 0;
+  FOR(int, I, 0, Size(SBuf)) MaxAbs = Max(MaxAbs, (t)fabs(SBuf[I]));
+  int EMax = Exponent<f64>((f64)MaxAbs);
+  f64 Scale = ldexp(1, Bits - 1 - EMax);
+  FOR(int, I, 0, Size(SBuf)) (*DBuf)[I] = u(Scale * SBuf[I]);
+  return EMax;
+}
+
+template <typename t, typename u> void
+Dequantize(int EMax, int Bits, const buffer_t<t>& SBuf, buffer_t<u>* DBuf) {
+  //idx2_Assert(is_integral<t>::Value);
+  //idx2_Assert(is_floating_point<u>::Value);
+  assert(BIT_SIZE_OF(t) >= Bits);
+  assert(BIT_SIZE_OF(u) >= Bits);
+  assert(SBuf.Size == DBuf->Size);
+  f64 Scale = 1.0 / ldexp(1, Bits - 1 - EMax);
+  FOR(int, I, 0, Size(SBuf)) (*DBuf)[I] = (Scale * SBuf[I]);
+}
+
+template <typename t> f64
+SqError(const buffer_t<t>& FBuf, const buffer_t<t>& GBuf) {
+  assert(FBuf.Size == GBuf.Size);
+  f64 Err = 0;
+  FOR (i64, I, 0, FBuf.Size) {
+    auto Diff = FBuf.Data[I] - GBuf.Data[I];
+    Err += Diff * Diff;
+  }
+  return Err;
+}
+
+template <typename t> f64
+RMSError(const buffer_t<t>& FBuf, const buffer_t<t>& GBuf) {
+  assert(FBuf.Size == GBuf.Size);
+  auto SqErr = SqError(FBuf, GBuf);
+  return sqrt(SqErr / FBuf.Size);
+}
+
 inline bitstream BlockStream; // compressed stream for the current block
 
 inline vec3i Factors[] = {
