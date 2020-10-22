@@ -1550,7 +1550,7 @@ CompressBlock() {
           const auto& C = ProjCells[I];
           LoFloats[I] = Params.BBox.Min.z + C.Grid.From3.z + C.Grid.From3.z * W3.z - Offset;
           HiFloats[I] = Params.BBox.Min.z + (C.Grid.From3.z + C.Grid.Dims3.z) * W3.z - Offset;
-          BlockFloats[I] = Particles[C.ParticleId].Pos.z - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.z - Offset - I * 1.f * W3.z;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
@@ -1603,7 +1603,7 @@ CompressBlock() {
           const auto& C = ProjCells[I];
           LoFloats[I] = Params.BBox.Min.y + C.Grid.From3.y + C.Grid.From3.y * W3.y - Offset;
           HiFloats[I] = Params.BBox.Min.y + (C.Grid.From3.y + C.Grid.Dims3.y) * W3.y - Offset;
-          BlockFloats[I] = Particles[C.ParticleId].Pos.y - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.y - Offset - I * 1.f * W3.y;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
@@ -1656,7 +1656,7 @@ CompressBlock() {
           const auto& C = ProjCells[I];
           LoFloats[I] = Params.BBox.Min.x + C.Grid.From3.x + C.Grid.From3.x * W3.x - Offset;
           HiFloats[I] = Params.BBox.Min.x + (C.Grid.From3.x + C.Grid.Dims3.x) * W3.x - Offset;
-          BlockFloats[I] = Particles[C.ParticleId].Pos.x - Offset;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.x - Offset - I * 1.f * W3.x;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
       }
@@ -1833,7 +1833,8 @@ main(int Argc, cstr* Argv) {
     BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     CompressBlock();
-    printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
+    //printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
+    printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
