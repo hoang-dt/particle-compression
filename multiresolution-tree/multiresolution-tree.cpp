@@ -9,6 +9,7 @@
 #define SEXPR_IMPLEMENTATION
 #include "common.h"
 #include "zfp.h"
+#include <algorithm>
 
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
@@ -1239,7 +1240,7 @@ TestCompressBlockZfp(f64 Accuracy, f64* BlockFloats, bitstream* Stream) {
     i16 RealBp = Bp - EMax;
     bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
     if (TooHighPrecision) break;
-    printf("encoding bit plane %d\n", Bp);
+    //printf("encoding bit plane %d\n", Bp);
     Encode(BlockUInts, 64, Bp, M, Stream);
   }
 }
@@ -1258,7 +1259,7 @@ TestDecompressBlockZfp(f64 Accuracy, f64* BlockFloats, bitstream* Stream) {
     bool TooHighPrecision = 5 - NBitPlanes + Bp < Exponent(Accuracy) - EMax;
     auto E = Exponent(Accuracy);
     if (TooHighPrecision) break;
-    printf("decoding bit plane %d\n", Bp);
+    //printf("decoding bit plane %d\n", Bp);
     Decode(BlockUInts, 64, Bp, N, Stream);
   }
   InverseShuffle(BlockUInts, (i64*)BlockFloats, 3); // 3 = number of dimensions
@@ -1271,8 +1272,8 @@ static void
 TestCompressSeries(f64 Accuracy) {
   /* generate a series of real values based on a grid */
   i32 From = 0;
-  i32 Stride = 1;
-  i32 Dims = 6400; // 100 blocks of 64-values
+  i32 Stride = 0.001;
+  i32 Dims = 64; // 100 blocks of 64-values
   std::vector<f64> Vals(Dims);
   for (int I = 0; I < Dims; ++I) {
     f64 Low = From + I * Stride;
@@ -1287,13 +1288,13 @@ TestCompressSeries(f64 Accuracy) {
   FOR(i32, I, 0, 64) BlockFloats[I] = BlockFloatsCopy[I] = Vals[I];
   TestCompressBlockZfp(Accuracy, BlockFloats, &Stream);
   Flush(&Stream);
-  printf("stream size = %lld\n", Size(Stream));
+  printf("stream size = %lld\n", BitSize(Stream));
   InitRead(&Stream, Stream.Stream);
   TestDecompressBlockZfp(Accuracy, BlockFloats, &Stream);
   auto Err = RMSError(buffer_t<f64>(BlockFloatsCopy, 64), buffer_t<f64>(BlockFloats, 64));
-  FOR(i32, I, 0, 64) {
-    printf("%f %f\n", BlockFloatsCopy[I], BlockFloats[I]);
-  }
+  //FOR(i32, I, 0, 64) {
+  //  printf("%f %f\n", BlockFloatsCopy[I], BlockFloats[I]);
+  //}
   printf("rmse = %f\n", Err);
 }
 
@@ -1440,7 +1441,7 @@ BuildTreeDFS(
 static i64 BitsSkipped = 0;
 
 static void
-CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, f64* LoFloats, f64* HiFloats) {
+CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats/*, f64* LoFloats, f64* HiFloats*/) {
   // extrapolate to the closest block
   vec3i F3 = Factors[N];
   if (N > 1) {
@@ -1460,17 +1461,17 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, f64* LoFloats, f64* HiFl
   const i16 EMax = (i16)QuantizeF32(Prec, BufFloats, &BufInts);
 
   /* compute the number of bit planes that can be skipped */
-  buffer_t BufLoFloats(LoFloats, 64);
-  buffer_t BufLoInts((i64*)LoFloats, 64);
-  QuantizeF32WithEMax(Prec, EMax, BufLoFloats, &BufLoInts);
-  buffer_t BufHiFloats(HiFloats, 64);
-  buffer_t BufHiInts((i64*)HiFloats, 64);
-  QuantizeF32WithEMax(Prec, EMax, BufHiFloats, &BufHiInts);
-  i32 NSkippedBitplanes = 64;
-  FOR(i32, I, 0, N) {
-    u64 X = BufLoInts[I] ^ BufHiInts[I];
-    NSkippedBitplanes = MIN(NSkippedBitplanes, Msb(X));
-  }
+  //buffer_t BufLoFloats(LoFloats, 64);
+  //buffer_t BufLoInts((i64*)LoFloats, 64);
+  //QuantizeF32WithEMax(Prec, EMax, BufLoFloats, &BufLoInts);
+  //buffer_t BufHiFloats(HiFloats, 64);
+  //buffer_t BufHiInts((i64*)HiFloats, 64);
+  //QuantizeF32WithEMax(Prec, EMax, BufHiFloats, &BufHiInts);
+  //i32 NSkippedBitplanes = 64;
+  //FOR(i32, I, 0, N) {
+  //  u64 X = BufLoInts[I] ^ BufHiInts[I];
+  //  NSkippedBitplanes = MIN(NSkippedBitplanes, Msb(X));
+  //}
 
   Write(&BlockStream, EMax + traits<f32>::ExpBias, traits<f32>::ExpBits);
   ForwardZfp((i64*)BlockFloats, 3); // 3 = number of dimensions
@@ -1484,8 +1485,27 @@ CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, f64* LoFloats, f64* HiFl
     i64 Before = BitSize(BlockStream);
     Encode(BlockUInts, 64, Bp, M, &BlockStream);
     i64 After = BitSize(BlockStream);
-    if (Bp > NSkippedBitplanes)
-      BitsSkipped += After - Before;
+    //if (Bp > NSkippedBitplanes)
+    //  BitsSkipped += After - Before;
+  }
+}
+
+static void
+NaiveCompressUsingZfp(f64 Accuracy) {
+  std::vector<f64> AllVals(Particles.size());
+  f64 BlockVals[64] = {};
+  FOR(i32, D, 0, 3) {
+    FOR(i64, I, 0, AllVals.size()) {
+      AllVals[I] = Particles[I].Pos[D];
+    }
+    std::sort(AllVals.begin(), AllVals.end());
+    for (i64 I = 0; I < AllVals.size(); I += 64) {
+      i32 J = I;
+      for (; J < I + 64 && J < AllVals.size(); ++J) {
+        BlockVals[J - I] = AllVals[J];
+      }
+      CompressBlockZfp(Accuracy, J - I, BlockVals);
+    }
   }
 }
 
@@ -1541,18 +1561,18 @@ CompressBlock() {
       /* compress */
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
-        f64 LoFloats[4 * 4 * 4] = {};
-        f64 HiFloats[4 * 4 * 4] = {};
+        //f64 LoFloats[4 * 4 * 4] = {};
+        //f64 HiFloats[4 * 4 * 4] = {};
         // TODO: adjust the positions (offset the position of the "left-most" particle)
         // and also account for the stride in the grid
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.z;
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          LoFloats[I] = Params.BBox.Min.z + C.Grid.From3.z + C.Grid.From3.z * W3.z - Offset;
-          HiFloats[I] = Params.BBox.Min.z + (C.Grid.From3.z + C.Grid.Dims3.z) * W3.z - Offset;
+          //LoFloats[I] = Params.BBox.Min.z + C.Grid.From3.z + C.Grid.From3.z * W3.z - Offset;
+          //HiFloats[I] = Params.BBox.Min.z + (C.Grid.From3.z + C.Grid.Dims3.z) * W3.z - Offset;
           BlockFloats[I] = Particles[C.ParticleId].Pos.z - Offset - I * 1.f * W3.z;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats/*, LoFloats, HiFloats*/);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1597,15 +1617,15 @@ CompressBlock() {
       if (N > 0) {
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.y;
         f64 BlockFloats[4 * 4 * 4] = {};
-        f64 LoFloats[4 * 4 * 4] = {};
-        f64 HiFloats[4 * 4 * 4] = {};
+        //f64 LoFloats[4 * 4 * 4] = {};
+        //f64 HiFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          LoFloats[I] = Params.BBox.Min.y + C.Grid.From3.y + C.Grid.From3.y * W3.y - Offset;
-          HiFloats[I] = Params.BBox.Min.y + (C.Grid.From3.y + C.Grid.Dims3.y) * W3.y - Offset;
+          //LoFloats[I] = Params.BBox.Min.y + C.Grid.From3.y + C.Grid.From3.y * W3.y - Offset;
+          //HiFloats[I] = Params.BBox.Min.y + (C.Grid.From3.y + C.Grid.Dims3.y) * W3.y - Offset;
           BlockFloats[I] = Particles[C.ParticleId].Pos.y - Offset - I * 1.f * W3.y;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats/*, LoFloats, HiFloats*/);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1650,15 +1670,15 @@ CompressBlock() {
       if (N > 0) {
         f32 Offset = Particles[ProjCells[0].ParticleId].Pos.x;
         f64 BlockFloats[4 * 4 * 4] = {};
-        f64 LoFloats[4 * 4 * 4] = {};
-        f64 HiFloats[4 * 4 * 4] = {};
+        //f64 LoFloats[4 * 4 * 4] = {};
+        //f64 HiFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          LoFloats[I] = Params.BBox.Min.x + C.Grid.From3.x + C.Grid.From3.x * W3.x - Offset;
-          HiFloats[I] = Params.BBox.Min.x + (C.Grid.From3.x + C.Grid.Dims3.x) * W3.x - Offset;
+          //LoFloats[I] = Params.BBox.Min.x + C.Grid.From3.x + C.Grid.From3.x * W3.x - Offset;
+          //HiFloats[I] = Params.BBox.Min.x + (C.Grid.From3.x + C.Grid.Dims3.x) * W3.x - Offset;
           BlockFloats[I] = Particles[C.ParticleId].Pos.x - Offset - I * 1.f * W3.x;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, LoFloats, HiFloats);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats/*, LoFloats, HiFloats*/);
       }
     }
     //assert(Avg == Params.NParticles);
@@ -1745,7 +1765,7 @@ CompressBlockFast() {
 // TODO: 
 
 int 
-main2(int Argc, cstr* Argv) {
+main(int Argc, cstr* Argv) {
   f64 Accuracy = 0;
   bool Ok = ToDouble(Argv[1], &Accuracy);
   if (Ok)
@@ -1756,7 +1776,7 @@ main2(int Argc, cstr* Argv) {
 }
 
 int
-main(int Argc, cstr* Argv) {
+main2(int Argc, cstr* Argv) {
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -1830,9 +1850,10 @@ main(int Argc, cstr* Argv) {
     tree<Root> Tree;
     InitWrite(&BlockStream, 100000000); // 100 MB
     //Coder.InitWrite(100000000);
-    BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
-      Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    CompressBlock();
+    //BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
+      //Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
+    //CompressBlock();
+    NaiveCompressUsingZfp(Params.Accuracy);
     //printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
     printf("compressed size = %lld bytes\n", Size(BlockStream));
     /* NOTE: old method
