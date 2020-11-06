@@ -3,7 +3,7 @@
 
 // TODO: better memory allocation (to put the leaves on the same memory block)
 // TODO: memory deallocation?
-
+#define ZFP
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #define SEXPR_IMPLEMENTATION
@@ -1298,14 +1298,9 @@ TestCompressSeries(f64 Accuracy) {
 
 f64 RMSE = 0;
 
-template <node_type R> static void
-DecodeTreeDFS(
-  tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, 
-  i8 Level, split_type Split, i8 Depth) 
-{
+static void
+DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = DimsStr[Depth] - 'x';
-  Node->Begin = Begin;
-  Node->End = End;
   f32 W = (Params.BBox.Max[D] - Params.BBox.Min[D]) / Params.Dims3[D];
   vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
@@ -1322,12 +1317,11 @@ DecodeTreeDFS(
   }
   i64 Mid = Begin;
   if (!Stop)
-    //Mid = DecodeCenteredMinimal(u32(End - Begin + 1), &BlockStream);
-    Mid = ReadVarByte(&BlockStream);
+    Mid = DecodeCenteredMinimal(u32(End - Begin + 1), &BlockStream) + Begin;
+    //Mid = ReadVarByte(&BlockStream) + Begin;
   else
     return;
   if (Begin < Mid) {
-    Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // left leaf
       vec3f P3 = Particles[Begin].Pos;
       auto G = SplitGrid(Grid, D, Split, Left);
@@ -1336,42 +1330,48 @@ DecodeTreeDFS(
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       /* decode the refinement bits (NOTE: either toggle this or the next block) */
-      //FOR(int, I, 0, 3) { // read refinement bits
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = Read(&BlockStream);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //  float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //  auto Diff = Half - Particles[Begin].Pos[I];
-      //  RMSE += Diff * Diff;
-      //}
+#if !defined(ZFP)
+      FOR(int, I, 0, 3) { // read refinement bits
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = Read(&BlockStream);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+        float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+        auto Diff = Half - Particles[Begin].Pos[I];
+        RMSE += Diff * Diff;
+      }
+#else
       /* put the particle into the grid */
-      //vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
-      //vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
-      //vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
-      //From3 = From3 + Dims3 * Stride3 / 2;
-      //vec3i B3 = Params.Dims3;
-      //auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-      //assert(PCell->ParticleId == -1);
-      //PCell->ParticleId = Begin;
-      //PCell->Grid = G;
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      PCell->ParticleId = Begin;
+      PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
+#endif
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
-      DecodeTreeDFS(Node->Left, Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
+      DecodeTreeDFS(Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
         Level - RSplit, NextSplit, Depth + 1);
     }
   }
   if (Mid < End) {
-    Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // right leaf
       vec3f P3 = Particles[Mid].Pos;
       auto G = SplitGrid(Grid, D, Split, Right);
@@ -1379,50 +1379,51 @@ DecodeTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
+#if !defined(ZFP)
       /* decode the refinement bits (NOTE: either enable this or the next block) */
-      //FOR(int, I, 0, 3) {
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = Read(&BlockStream);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //  float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //  auto Diff = Half - Particles[Mid].Pos[I];
-      //  RMSE += Diff * Diff;
-      //}
+      FOR(int, I, 0, 3) {
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = Read(&BlockStream);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+        float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+        auto Diff = Half - Particles[Mid].Pos[I];
+        RMSE += Diff * Diff;
+      }
+#else
       /* put the particle into the grid */
-      //vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
-      //vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
-      //vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
-      //From3 = From3 + Dims3 * Stride3 / 2;
-      //vec3i B3 = Params.Dims3;
-      //auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-      //assert(PCell->ParticleId == -1);
-      //PCell->ParticleId = Mid;
-      //PCell->Grid = G;
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      PCell->ParticleId = Mid;
+      PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
+#endif
     } else { // recurse on the right
-      DecodeTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
+      DecodeTreeDFS(Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
     }
   }
 }
 
-template <node_type R> static void
-BuildTreeDFS(
-  tree<R>* Node, i64 Begin, i64 End, u64 Code, const grid& Grid, 
-  i8 Level, split_type Split, i8 Depth) 
-{
+static void
+BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = DimsStr[Depth] - 'x';
-  //REQUIRE((Grid.Dims3[D] & 1) == 0);
-  Node->Begin = Begin;
-  Node->End = End;
   i64 Mid = Begin;
   f32 W = (Params.BBox.Max[D] - Params.BBox.Min[D]) / Params.Dims3[D];
   if (Split == ResolutionSplit) { // resolution split
@@ -1441,7 +1442,6 @@ BuildTreeDFS(
     };
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
-  //Encode(Level - RSplit, Code * 2 + 1, Mid - Begin); // encode only the left child
   vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
   bbox ParentBBox{
@@ -1456,12 +1456,11 @@ BuildTreeDFS(
     }
   }
   if (!Stop)
-    //EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
-    WriteVarByte(&BlockStream, u32(Mid - Begin));
+    EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
+    //WriteVarByte(&BlockStream, u32(Mid - Begin));
   else
     return;
   if (Begin < Mid) {
-    Node->Left = new tree<Inner>();
     if (Begin + 1 == Mid) { // left leaf
       vec3f P3 = Particles[Begin].Pos;
       auto G = SplitGrid(Grid, D, Split, Left);
@@ -1469,44 +1468,47 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      //FOR(int, I, 0, 3) { // write refinement bits
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = P3[I] < Half;
-      //    Write(&BlockStream, LeftSide);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //}
-      //vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
-      //vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
-      //vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
-      //From3 = From3 + Dims3 * Stride3 / 2;
-      //vec3i B3 = Params.Dims3;
-      //auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-      //assert(PCell->ParticleId == -1);
-      //PCell->ParticleId = Begin;
-      //PCell->Grid = G;
-      //FOR(i32, I, 0, 3) {
-      //  if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    PCell->DimsEncode |= (1 << I);
-      //  }
-      //}
+      /* Write the refinement bits (NOTE: keep either this or the next block, not both) */
+#if !defined(ZFP)
+      FOR(int, I, 0, 3) { // write refinement bits
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
+#else
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      assert(PCell->ParticleId == -1);
+      PCell->ParticleId = Begin;
+      PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
+#endif
     } else { // recurse on the left
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
-      BuildTreeDFS(Node->Left, Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
+      BuildTreeDFS(Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
         Level - RSplit, NextSplit, Depth + 1);
     }
   }
   if (Mid < End) {
-    Node->Right = new tree<Inner>();
     if (Mid + 1 == End) { // right leaf
       vec3f P3 = Particles[Mid].Pos;
       auto G = SplitGrid(Grid, D, Split, Right);
@@ -1514,37 +1516,41 @@ BuildTreeDFS(
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-      //FOR(int, I, 0, 3) {
-      //  while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-      //  //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
-      //    bool LeftSide = P3[I] < Half;
-      //    Write(&BlockStream, LeftSide);
-      //    G.Dims3[I] *= 0.5f;
-      //    if (LeftSide) {
-      //      BBox.Max[I] = Half;
-      //    } else {
-      //      G.From3[I] += G.Dims3[I] * G.Stride3[I];
-      //      BBox.Min[I] = Half;
-      //    }
-      //  }
-      //}
-      //vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
-      //vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
-      //vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
-      //From3 = From3 + Dims3 * Stride3 / 2;
-      //vec3i B3 = Params.Dims3;
-      //auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
-      //assert(PCell->ParticleId == -1);
-      //PCell->ParticleId = Mid;
-      //PCell->Grid = G;
-      //FOR(i32, I, 0, 3) {
-      //  if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
-      //    PCell->DimsEncode |= (1 << I);
-      //  }
-      //}
+      /* Write the refinement bits (NOTE: keep either this or the next block, not both) */
+#if !defined(ZFP)
+      FOR(int, I, 0, 3) {
+        while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          bool LeftSide = P3[I] < Half;
+          Write(&BlockStream, LeftSide);
+          G.Dims3[I] *= 0.5f;
+          if (LeftSide) {
+            BBox.Max[I] = Half;
+          } else {
+            G.From3[I] += G.Dims3[I] * G.Stride3[I];
+            BBox.Min[I] = Half;
+          }
+        }
+      }
+#else
+      vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
+      vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
+      vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
+      From3 = From3 + Dims3 * Stride3 / 2;
+      vec3i B3 = Params.Dims3;
+      auto* PCell = &ParticleCells[ROW3(B3.x, B3.y, B3.z, From3.x, From3.y, From3.z)];
+      assert(PCell->ParticleId == -1);
+      PCell->ParticleId = Mid;
+      PCell->Grid = G;
+      FOR(i32, I, 0, 3) {
+        if (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+          PCell->DimsEncode |= (1 << I);
+        }
+      }
+#endif
     } else { // recurse on the right
-      BuildTreeDFS(Node->Right, Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
+      BuildTreeDFS(Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
     }
   }
@@ -1563,7 +1569,7 @@ DecompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, bitstream* Stream) {
   buffer_t BufInts((i64*)BlockFloats, 64);
   u64 BlockUInts[4 * 4 * 4] = {};
   buffer_t BufUInts (BlockUInts, 64);
-  i16 EMax = (i16)Read(Stream, traits<f64>::ExpBits) - traits<f64>::ExpBias;
+  i16 EMax = (i16)Read(Stream, traits<f32>::ExpBits) - traits<f32>::ExpBias;
   const i8 NBitPlanes = BIT_SIZE_OF(u64);
   i8 M = 0;
   for (int Bp = NBitPlanes - 1; Bp >= 0; --Bp) {
@@ -1633,6 +1639,7 @@ DecompressBlock() {
   vec3i B3 = Params.BlockDims3;
   vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
+  auto ParticlesCopy = Particles;
   if (Params.NDims >= 3) {
     /* handle the Z dimension */
     printf("processing Z -------------\n");
@@ -1669,6 +1676,8 @@ DecompressBlock() {
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
           Particles[C.ParticleId].Pos.z = BlockFloats[I] + I * 1.f * W3.z;
+          auto Diff = ParticlesCopy[C.ParticleId].Pos.z - Particles[C.ParticleId].Pos.z;
+          RMSE += Diff * Diff;
         }
       }
     }
@@ -1709,6 +1718,8 @@ DecompressBlock() {
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
           Particles[C.ParticleId].Pos.y = BlockFloats[I] + I * 1.f * W3.y;
+          auto Diff = ParticlesCopy[C.ParticleId].Pos.y - Particles[C.ParticleId].Pos.y;
+          RMSE += Diff * Diff;
         }
       }
     }
@@ -1748,6 +1759,8 @@ DecompressBlock() {
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
           Particles[C.ParticleId].Pos.x = BlockFloats[I] + I * 1.f * W3.x;
+          auto Diff = ParticlesCopy[C.ParticleId].Pos.x - Particles[C.ParticleId].Pos.x;
+          RMSE += Diff * Diff;
         }
       }
     }
@@ -1804,10 +1817,9 @@ CompressBlock() {
       /* compress */
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
-        f32 Offset = Particles[ProjCells[0].ParticleId].Pos.z;
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.z - Offset - I * 1.f * W3.z;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.z - I * 1.f * W3.z;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
       }
@@ -1849,11 +1861,10 @@ CompressBlock() {
       }
       Avg += N;
       if (N > 0) {
-        f32 Offset = Particles[ProjCells[0].ParticleId].Pos.y;
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.y - Offset - I * 1.f * W3.y;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.y - I * 1.f * W3.y;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
       }
@@ -1895,11 +1906,10 @@ CompressBlock() {
       }
       Avg += N;
       if (N > 0) {
-        f32 Offset = Particles[ProjCells[0].ParticleId].Pos.x;
         f64 BlockFloats[4 * 4 * 4] = {};
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.x - Offset - I * 1.f * W3.x;
+          BlockFloats[I] = Particles[C.ParticleId].Pos.x - I * 1.f * W3.x;
         }
         CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
       }
@@ -2069,27 +2079,26 @@ main(int Argc, cstr* Argv) {
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
     Params.BlockDims3 = Params.Dims3;
     ParticleCells.resize(PROD(Params.BlockDims3));
-    tree<Root> Tree;
     InitWrite(&BlockStream, 100000000); // 100 MB
     //Coder.InitWrite(100000000);
     WriteVarByte(&BlockStream, Particles.size());
-    BuildTreeDFS(&Tree, 0, Particles.size(), 0, Grid, Params.NLevels - 1, 
+    BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    //CompressBlock();
+    CompressBlock();
     Flush(&BlockStream);
     printf("done compression\n");
     /* immediately decode the stream (for testing) */
     InitRead(&BlockStream, BlockStream.Stream);
     i64 N = ReadVarByte(&BlockStream);
     printf("N = %lld\n", N);
-    tree<Root> DecodedTree;
-    DecodeTreeDFS(&DecodedTree, 0, N, 0, Grid, Params.NLevels - 1,
+    DecodeTreeDFS(0, N, 0, Grid, Params.NLevels - 1,
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
+    DecompressBlock();
     //NaiveCompressUsingZfp(Params.Accuracy);
     //printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
     printf("compressed size = %lld bytes\n", Size(BlockStream));
-    RMSE /= (N * Params.NDims);
-    printf("RMSE = %.f\n", RMSE);
+    RMSE = sqrt(RMSE / (N * Params.NDims));
+    printf("RMSE = %f\n", RMSE);
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
