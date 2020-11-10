@@ -1297,6 +1297,7 @@ TestCompressSeries(f64 Accuracy) {
 }
 
 f64 RMSE = 0;
+i64 StreamSize = 0;
 
 static void
 DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
@@ -1585,14 +1586,15 @@ DecompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, bitstream* Stream) {
 
 static void
 CompressBlockZfp(f64 Accuracy, i32 N, f64* BlockFloats, bitstream* Stream) {
-  // extrapolate to the closest block
-  vec3i F3 = Factors[N];
-  if (N > 1) {
-    for (int I = N; I < F3.x * F3.y * F3.z; ++I) {
-      BlockFloats[I] = 2 * BlockFloats[I - 1] - BlockFloats[I - 2];
-    }
-  }
-  PadBlock3D(BlockFloats, F3); // extrapolate the rest
+  /* extrapolate to 4x4x4 block */
+  i32 S = N % (4 * 4), Z = N / (4 * 4); // z slice
+  i32 X = S % 4, Y = S / 4;
+  if (X > 0) 
+    PadBlock1D(BlockFloats + Z * (4 * 4) + Y * 4, X, 1); // pad line
+  if (S > 0 && Y < 3)
+    PadBlock2D(BlockFloats + Z * (4 * 4), vec2i(4, Y + 1)); // pad slice
+  if (Z < 3)
+    PadBlock3D(BlockFloats, vec3i(4, 4, Z + 1));
   /* compress */
   buffer_t BufFloats(BlockFloats, 64);
   buffer_t BufInts((i64*)BlockFloats, 64);
@@ -1636,6 +1638,7 @@ NaiveCompressUsingZfp(f64 Accuracy) {
 /* Compress one block with zfp */
 static void
 DecompressBlock() {
+  printf("decompressing blocks\n");
   vec3i B3 = Params.BlockDims3;
   vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
@@ -1772,6 +1775,8 @@ CompressBlock() {
   vec3i B3 = Params.BlockDims3;
   vec3f GridDims3((f32)Params.Dims3.x, (f32)Params.Dims3.y, (f32)Params.Dims3.z);
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
+  bitstream Bs;
+  InitWrite(&Bs, 10000000);
   if (Params.NDims >= 3) {
     /* handle the Z dimension */
     printf("processing Z -------------\n");
@@ -1817,11 +1822,25 @@ CompressBlock() {
       /* compress */
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 BlockFloatsCopy[4 * 4 * 4];
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.z - I * 1.f * W3.z;
+          BlockFloats[I] = BlockFloatsCopy[I] = Particles[C.ParticleId].Pos.z - I * 1.f * W3.z;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        //CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        InitWrite(&Bs, Bs.Stream);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        Flush(&Bs);
+        StreamSize += BitSize(Bs);
+        InitRead(&Bs, Bs.Stream);
+        FOR(i32, I, 0, 64) {
+          BlockFloats[I] = 0;
+        }
+        DecompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        FOR(i32, I, 0, N) {
+          auto Diff = BlockFloats[I] - BlockFloatsCopy[I];
+          RMSE += Diff * Diff;
+        }
       }
     }
     Avg /= C;
@@ -1862,18 +1881,32 @@ CompressBlock() {
       Avg += N;
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 BlockFloatsCopy[4 * 4 * 4];
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.y - I * 1.f * W3.y;
+          BlockFloats[I] = BlockFloatsCopy[I] = Particles[C.ParticleId].Pos.y - I * 1.f * W3.y;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        //CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        InitWrite(&Bs, Bs.Stream);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        Flush(&Bs);
+        StreamSize += BitSize(Bs);
+        InitRead(&Bs, Bs.Stream);
+        FOR(i32, I, 0, 64) {
+          BlockFloats[I] = 0;
+        }
+        DecompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        FOR(i32, I, 0, N) {
+          auto Diff = BlockFloats[I] - BlockFloatsCopy[I];
+          RMSE += Diff * Diff;
+        }
       }
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
   }
 
-  /* process X */
+  ///* process X */
   if (Params.NDims >= 1) {
     printf("processing X -------------\n");
     std::vector<std::vector<particle_cell>> ProjectedCells(B3.x);
@@ -1907,16 +1940,31 @@ CompressBlock() {
       Avg += N;
       if (N > 0) {
         f64 BlockFloats[4 * 4 * 4] = {};
+        f64 BlockFloatsCopy[4 * 4 * 4];
         FOR(int, I, 0, N) { // copy the data over
           const auto& C = ProjCells[I];
-          BlockFloats[I] = Particles[C.ParticleId].Pos.x - I * 1.f * W3.x;
+          BlockFloats[I] = BlockFloatsCopy[I] = Particles[C.ParticleId].Pos.x - I * 1.f * W3.x;
         }
-        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        //CompressBlockZfp(Params.Accuracy, N, BlockFloats, &BlockStream);
+        InitWrite(&Bs, Bs.Stream);
+        CompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        Flush(&Bs);
+        StreamSize += BitSize(Bs);
+        InitRead(&Bs, Bs.Stream);
+        FOR(i32, I, 0, 64) {
+          BlockFloats[I] = 0;
+        }
+        DecompressBlockZfp(Params.Accuracy, N, BlockFloats, &Bs);
+        FOR(i32, I, 0, N) {
+          auto Diff = BlockFloats[I] - BlockFloatsCopy[I];
+          RMSE += Diff * Diff;
+        }
       }
     }
     Avg /= C;
     printf("   Avg N = %d\n", Avg);
   }
+  Dealloc(&Bs);
 }
 
 static void
@@ -2086,6 +2134,7 @@ main(int Argc, cstr* Argv) {
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     CompressBlock();
     Flush(&BlockStream);
+    i64 BlockStreamSize = Size(BlockStream);
     printf("done compression\n");
     /* immediately decode the stream (for testing) */
     InitRead(&BlockStream, BlockStream.Stream);
@@ -2093,12 +2142,13 @@ main(int Argc, cstr* Argv) {
     printf("N = %lld\n", N);
     DecodeTreeDFS(0, N, 0, Grid, Params.NLevels - 1,
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    DecompressBlock();
+    //DecompressBlock();
     //NaiveCompressUsingZfp(Params.Accuracy);
     //printf("compressed size = %lld bytes\n", Size(BlockStream) - (BitsSkipped / 8));
     printf("compressed size = %lld bytes\n", Size(BlockStream));
     RMSE = sqrt(RMSE / (N * Params.NDims));
     printf("RMSE = %f\n", RMSE);
+    printf("Stream size = %lld\n", (StreamSize + 7) / 8 + BlockStreamSize);
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
