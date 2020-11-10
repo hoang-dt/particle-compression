@@ -3,7 +3,9 @@
 
 // TODO: better memory allocation (to put the leaves on the same memory block)
 // TODO: memory deallocation?
-#define ZFP
+//#define ZFP
+//#define ZFP_ONE_PARTICLE_PER_CELL
+#define NO_ZFP
 #define DOCTEST_CONFIG_IMPLEMENT
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS
 #define SEXPR_IMPLEMENTATION
@@ -1298,6 +1300,7 @@ TestCompressSeries(f64 Accuracy) {
 
 f64 RMSE = 0;
 i64 StreamSize = 0;
+i64 NParticlesDecoded = 0;
 
 static void
 DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
@@ -1324,6 +1327,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     return;
   if (Begin < Mid) {
     if (Begin + 1 == Mid) { // left leaf
+      ++NParticlesDecoded;
       vec3f P3 = Particles[Begin].Pos;
       auto G = SplitGrid(Grid, D, Split, Left);
       bbox BBox{
@@ -1331,10 +1335,13 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       /* decode the refinement bits (NOTE: either toggle this or the next block) */
-#if !defined(ZFP)
+#if defined(NO_ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       FOR(int, I, 0, 3) { // read refinement bits
+#if defined(ZFP_ONE_PARTICLE_PER_CELL)
         while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#else
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#endif
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = Read(&BlockStream);
           G.Dims3[I] *= 0.5f;
@@ -1345,11 +1352,14 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
             BBox.Min[I] = Half;
           }
         }
+#if defined(NO_ZFP)
         float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
         auto Diff = Half - Particles[Begin].Pos[I];
         RMSE += Diff * Diff;
+#endif
       }
-#else
+#endif
+#if defined(ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       /* put the particle into the grid */
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
       vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
@@ -1374,17 +1384,21 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
   }
   if (Mid < End) {
     if (Mid + 1 == End) { // right leaf
+      ++NParticlesDecoded;
       vec3f P3 = Particles[Mid].Pos;
       auto G = SplitGrid(Grid, D, Split, Right);
       bbox BBox{
         .Min = Params.BBox.Min + G.From3 * W3,
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
-#if !defined(ZFP)
+#if defined(NO_ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       /* decode the refinement bits (NOTE: either enable this or the next block) */
       FOR(int, I, 0, 3) {
+#if defined(ZFP_ONE_PARTICLE_PER_CELL)
         while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#else
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#endif
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = Read(&BlockStream);
           G.Dims3[I] *= 0.5f;
@@ -1395,11 +1409,14 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
             BBox.Min[I] = Half;
           }
         }
+#if defined(NO_ZFP)
         float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
         auto Diff = Half - Particles[Mid].Pos[I];
         RMSE += Diff * Diff;
+#endif
       }
-#else
+#endif
+#if defined(ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       /* put the particle into the grid */
       vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
@@ -1470,10 +1487,13 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       /* Write the refinement bits (NOTE: keep either this or the next block, not both) */
-#if !defined(ZFP)
+#if defined(NO_ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       FOR(int, I, 0, 3) { // write refinement bits
+#if defined(ZFP_ONE_PARTICLE_PER_CELL)
         while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#else
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#endif
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1486,7 +1506,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           }
         }
       }
-#else
+#endif
+#if defined(ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
       vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
       vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
@@ -1518,10 +1539,13 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
       };
       /* Write the refinement bits (NOTE: keep either this or the next block, not both) */
-#if !defined(ZFP)
+#if defined(NO_ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       FOR(int, I, 0, 3) {
+#if defined(ZFP_ONE_PARTICLE_PER_CELL)
         while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-        //while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#else
+        while (BBox.Max[I] - BBox.Min[I] > Params.Accuracy) {
+#endif
           float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           bool LeftSide = P3[I] < Half;
           Write(&BlockStream, LeftSide);
@@ -1534,7 +1558,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           }
         }
       }
-#else
+#endif
+#if defined(ZFP) || defined(ZFP_ONE_PARTICLE_PER_CELL)
       vec3i From3((i32)G.From3.x, (i32)G.From3.y, (i32)G.From3.z);
       vec3i Dims3((i32)G.Dims3.x, (i32)G.Dims3.y, (i32)G.Dims3.z);
       vec3i Stride3((i32)G.Stride3.x, (i32)G.Stride3.y, (i32)G.Stride3.z);
@@ -2149,6 +2174,7 @@ main(int Argc, cstr* Argv) {
     RMSE = sqrt(RMSE / (N * Params.NDims));
     printf("RMSE = %f\n", RMSE);
     printf("Stream size = %lld\n", (StreamSize + 7) / 8 + BlockStreamSize);
+    printf("Num particles decoded = %lld\n", NParticlesDecoded);
     /* NOTE: old method
     BuildTreeInner(q_item{ .Begin = 0,
                            .End = (i64)Particles.size(),
