@@ -1742,6 +1742,7 @@ struct q_item {
 
 struct params {
   char Name[64];
+  char DimsStr[128] = {};
   vec2i Version = vec2i(1, 0);
   int NDims = 3;
   cstr InFile;
@@ -1807,6 +1808,7 @@ struct block {
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 inline block_table Blocks;
 inline std::vector<particle> Particles;
+inline std::vector<particle> ParticlesDecoded;
 inline std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
 inline std::vector<bitstream> RefBlockStreams; // [height] -> bitstream (of the current block)
 inline std::vector<u64> CurrBlocks; // [level] -> current block id
@@ -1823,6 +1825,7 @@ inline i64 NBlocksWritten = 0;
 #define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
 #define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
 #define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
+
 
 /* tree block (including refinement block) */
 inline void
@@ -1851,6 +1854,7 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (particles %lld)\n", Params.NParticles);
   fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
   fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
+  fprintf(Fp, "    (dims-string %s)\n", Params.DimsStr);
   fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
   fprintf(Fp, "  )\n"); // end common)
   fprintf(Fp, "  (format\n");
@@ -1992,7 +1996,6 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   fclose(Fp);
 }
 
-inline char DimsStr[128] = {};
 
 template <node_type R>
 struct tree {
@@ -2339,3 +2342,4 @@ inline vec3i Factors[] = {
 //  return Ret ? (i8)Index : Default;
 //}
 //#endif
+
