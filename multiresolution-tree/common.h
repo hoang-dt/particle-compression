@@ -1740,6 +1740,8 @@ struct q_item {
   split_type SplitType;
 };
 
+enum class refinement_mode { NONE, PARTIAL, FULL }; 
+
 struct params {
   char Name[64];
   char DimsStr[128] = {};
@@ -1753,6 +1755,7 @@ struct params {
   action Action = action::Encode;
   i64 NParticles;
   float Accuracy = 0;
+  float DecodeAccuracy = 0;
   bbox BBox;
   vec3i LogDims3;
   vec3i BlockDims3; // TODO: compute this
@@ -1761,7 +1764,8 @@ struct params {
   int MaxNBlocks = INT_MAX;
   i8 MaxLevel = 127;
   int MaxParticleSubSampling = 0;
-  bool NoRefinement = false;
+  //bool NoRefinement = false;
+  refinement_mode RefinementMode = refinement_mode::NONE;
 };
 
 inline grid
@@ -1862,6 +1866,7 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (resolutions %d)\n", Params.NLevels);
   fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
   fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
+  fprintf(Fp, "    (refinement %d)\n", !Params.NoRefinement);
   fprintf(Fp, "    (height %d)\n", Params.MaxHeight);
   fprintf(Fp, "  )\n"); // end format)
   fprintf(Fp, ")\n"); // end )
@@ -1960,6 +1965,38 @@ ReadVtu(cstr FileName) {
   //fp.rawRead(particles.velocity[0]);
   //fp.seek(4, SEEK_CUR);
   //fp.rawRead(particles.concentration[0]);
+  return Particles;
+}
+
+inline void
+WriteRawParticles(cstr FileName, const std::vector<particle>& Particles) {
+  auto Fp = fopen(FileName, "wb");
+  //vtu_header Header;
+  //int MagicOffset = 4072;
+  //fwrite(&MagicOffset, sizeof(MagicOffset), 1, Fp);
+  //Header.size = Particles.size();
+  i64 Size = Particles.size();
+  fwrite(&Size, sizeof(Size), 1, Fp);
+  //WritePOD(Fp, Header);
+  //i32 Temp = 0;
+  //fwrite(&Temp, 4, 1, Fp);
+  FOR_EACH(P, Particles) {
+    fwrite(&P->Pos, sizeof(*P), 1, Fp);
+  }
+  fclose(Fp);
+}
+
+inline std::vector<particle>
+ReadRawParticles(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  std::vector<particle> Particles;
+  i64 Size = 0;
+  fread(&Size, sizeof(Size), 1, Fp);
+  Particles.resize(Size);
+  FOR_EACH(P, Particles) {
+    fread(&P->Pos, sizeof(*P), 1, Fp);
+  }
+  fclose(Fp);
   return Particles;
 }
 
