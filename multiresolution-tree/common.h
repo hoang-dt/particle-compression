@@ -1866,7 +1866,7 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (resolutions %d)\n", Params.NLevels);
   fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
   fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
-  fprintf(Fp, "    (refinement %d)\n", !Params.NoRefinement);
+  fprintf(Fp, "    (refinement %d)\n", Params.RefinementMode);
   fprintf(Fp, "    (height %d)\n", Params.MaxHeight);
   fprintf(Fp, "  )\n"); // end format)
   fprintf(Fp, ")\n"); // end )

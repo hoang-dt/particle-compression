@@ -130,8 +130,8 @@ ReadMetaFile(cstr FileName) {
           printf("Accuracy = %.8g\n", Params.Accuracy);
         } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "refinement")) {
           REQUIRE(Expr->type == SE_INT);
-          Params.NoRefinement = Expr->i == 0;
-          printf("Refinement = %d\n", !Params.NoRefinement);
+          Params.RefinementMode = (refinement_mode)Expr->i;
+          printf("Refinement = %d\n", Params.RefinementMode);
         } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "height")) {
           REQUIRE(Expr->type == SE_INT);
           Params.MaxHeight = Expr->i;
@@ -1096,7 +1096,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
           .SplitType = SpatialSplit
         });
       }
-    } else if (!Params.NoRefinement) { // Q.Height == Params.BaseHeight
+    } else if (Params.RefinementMode != refinement_mode::NONE) { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
@@ -1339,7 +1339,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     if (Begin + 1 == Mid) { // left leaf
       ++NParticlesDecoded;
       auto G = SplitGrid(Grid, D, Split, Left);
-      if (!Params.NoRefinement) {
+      if (Params.RefinementMode != refinement_mode::NONE) {
         vec3f Pos3;
         bbox BBox{
           .Min = Params.BBox.Min + G.From3 * W3,
@@ -1375,7 +1375,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     if (Mid + 1 == End) { // right leaf
       ++NParticlesDecoded;
       auto G = SplitGrid(Grid, D, Split, Right);
-      if (!Params.NoRefinement) {
+      if (Params.RefinementMode != refinement_mode::NONE) {
         bbox BBox{
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
@@ -1480,7 +1480,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   }
   if (Mid < End) {
     if (Mid + 1 == End) { // right leaf
-      if (!Params.NoRefinement) {
+      if (Params.RefinementMode != refinement_mode::NONE) {
         vec3f P3 = Particles[Mid].Pos;
         auto G = SplitGrid(Grid, D, Split, Right);
         bbox BBox{
@@ -2039,13 +2039,16 @@ main(int Argc, cstr* Argv) {
   if (Params.Action == action::Encode) {
     if (!OptVal(Argc, Argv, "--name", &Params.OutFile)) EXIT_ERROR("missing --name");
     sprintf(Params.Name, "%s", Params.OutFile);
-    if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missin --ndims");
+    if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
-    Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
+    //Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
+    char Temp[32];
+    cstr Str = Temp;
+    OptVal(Argc, Argv, "--refinement", &Str);
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
