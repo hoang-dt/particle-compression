@@ -1238,9 +1238,10 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
           }
         }
       }
-      if (Found)
+      if (Found) {
+        Err += MinDiff;
         break;
-      Err += MinDiff;
+      }
     }
   }
   int NDims = Dims3.z == 1 ? 2 : 3;
@@ -2238,8 +2239,8 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
-    auto Particles1 = ReadParticles(Params.InFile);
-    auto Particles2 = ReadParticles(Params.OutFile);
+    auto Particles2 = ReadParticles(Params.InFile);
+    auto Particles1 = ReadParticles(Params.OutFile);
     //std::vector<particle> Particles1 = ReadXYZ(Params.InFile);
     //std::vector<particle> Particles2 = ReadXYZ(Params.OutFile);
     f32 Err = Error(Particles1, Particles2, Params.Dims3);
