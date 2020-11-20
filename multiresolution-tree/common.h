@@ -2380,3 +2380,10 @@ inline vec3i Factors[] = {
 //}
 //#endif
 
+template <typename t> INLINE
+t Clamp(t X, t A, t B) {
+  if (X < A) return A;
+  if (X > B) return B;
+  return X;
+}
+

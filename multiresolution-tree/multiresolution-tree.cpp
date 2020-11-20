@@ -1189,11 +1189,12 @@ Handler(const doctest::AssertData& ad) {
 
 #define EXIT_ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
 
+/* NOTE: Particles2 should be the reference */
 static f32
 Error(const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3) {
   bbox BBox = ComputeBoundingBox(Particles1);
   vec3f W3 = (BBox.Max - BBox.Min) / vec3f(Dims3);
-  std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z);
+  std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z, vec3f(NAN));
   FOR_EACH(P, Particles1) {
     vec3i Coord{
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
@@ -1207,8 +1208,40 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
       MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
       MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
-    vec3f Diff = Grid[Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x] - P->Pos;
-    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+    i32 MaxD = MAX(Dims3.z, MAX(Dims3.x, Dims3.y)) / 2;
+    for (i32 D = 0; D < MaxD; ++D) {
+      f32 MinDiff = INFINITY;
+      bool Found = false;
+      //boundary_loop_3d BL(Dims3, vec3i(D), Coord);
+      i32 Dz = -MIN(Coord.z, D);
+      for (i32 Dz = -D; Dz <= D; ++Dz) { // bottom z loop
+        i32 Z = Coord.z + Dz;
+        if (Z < 0 || Z >= Dims3.z) continue;
+        bool EdgeZ = (Dz == -D) || (Dz == D) || (Z == 0) || (Z == Dims3.z - 1);
+        for (i32 Dy = -D; Dy <= D; ++Dy) {
+          i32 Y = Dy + Coord.y;
+          if (Y < 0 || Y >= Dims3.y) continue;
+          bool EdgeY = (Dy == -D) || (Dy == D) || (Y == 0) || (Y == Dims3.y - 1);
+          bool Edge = EdgeZ || EdgeY;
+          if (!Edge) continue;
+          for (i32 Dx = -D; Dx <= D; ++Dx) {
+            i32 X = Dx + Coord.x;
+            if (X < 0 || X >= Dims3.x) continue;
+            bool EdgeX = (Dx == -D) || (Dx == D) || (X == 0) || (X == Dims3.x - 1);
+            if (!Edge && !EdgeX) continue;
+            i32 Idx = Z * (Dims3.x * Dims3.y) + Y * (Dims3.x) + X;
+            if (Grid[Idx].x == Grid[Idx].x) { // not NAN
+              vec3f Diff = Grid[Idx] - P->Pos;
+              MinDiff = MIN(MinDiff, Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z);
+              Found = true;
+            }
+          }
+        }
+      }
+      if (Found)
+        break;
+      Err += MinDiff;
+    }
   }
   int NDims = Dims3.z == 1 ? 2 : 3;
   Err = std::sqrt(Err / (NDims * Particles2.size()));
