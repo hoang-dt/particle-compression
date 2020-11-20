@@ -171,7 +171,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .Height = u8(Q.Height + 1),
         });
       }
-    } else if (Params.RefinementMode != refinement_mode::NONE) { // Q.Height == Params.BaseHeight
+    } else if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);

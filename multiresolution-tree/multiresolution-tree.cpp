@@ -1096,7 +1096,7 @@ BuildTreeInner(q_item Q, float Accuracy) {
           .SplitType = SpatialSplit
         });
       }
-    } else if (Params.RefinementMode != refinement_mode::NONE) { // Q.Height == Params.BaseHeight
+    } else if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // Q.Height == Params.BaseHeight
       /* encoding the refinement bits */
       REQUIRE(N == 1);
       assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
@@ -1352,7 +1352,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     .Min = Params.BBox.Min + Grid.From3 * W3,
     .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
   };
-  bool Stop = true; // stop decoding
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED; // stop decoding
   FOR(i32, I, 0, 3) {
     if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
       Stop = false;
@@ -1372,7 +1372,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     if (Begin + 1 == Mid) { // left leaf
       ++NParticlesDecoded;
       auto G = SplitGrid(Grid, D, Split, Left);
-      if (Params.RefinementMode != refinement_mode::NONE) {
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3f Pos3;
         bbox BBox{
           .Min = Params.BBox.Min + G.From3 * W3,
@@ -1408,7 +1408,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
     if (Mid + 1 == End) { // right leaf
       ++NParticlesDecoded;
       auto G = SplitGrid(Grid, D, Split, Right);
-      if (Params.RefinementMode != refinement_mode::NONE) {
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         bbox BBox{
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
@@ -1467,7 +1467,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
     .Min = Params.BBox.Min + Grid.From3 * W3,
     .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
   };
-  bool Stop = Params.RefinementMode != refinement_mode::FULL;
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
   FOR(i32, I, 0, 3) {
     if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
       Stop = false;
@@ -1481,14 +1481,13 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
     return;
   if (Begin < Mid) {
     if (Begin + 1 == Mid) { // left leaf
-      if (Params.RefinementMode == refinement_mode::FULL) {
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
         vec3f P3 = Particles[Begin].Pos;
         auto G = SplitGrid(Grid, D, Split, Left);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
-        /* Write the refinement bits (NOTE: keep either this or the next block, not both) */
         FOR(int, I, 0, 3) { // write refinement bits
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
@@ -1513,10 +1512,10 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   }
   if (Mid < End) {
     if (Mid + 1 == End) { // right leaf
-      if (Params.RefinementMode != refinement_mode::NONE) {
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3f P3 = Particles[Mid].Pos;
         auto G = SplitGrid(Grid, D, Split, Right);
-        bbox BBox{
+        bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
@@ -2082,6 +2081,9 @@ main(int Argc, cstr* Argv) {
     char Temp[32];
     cstr Str = Temp;
     OptVal(Argc, Argv, "--refinement", &Str);
+    if (strcmp(Str, "error"     ) == 0) Params.RefinementMode = refinement_mode::ERROR_BASED;
+    if (strcmp(Str, "lossless"  ) == 0) Params.RefinementMode = refinement_mode::LOSSLESS;
+    if (strcmp(Str, "separation") == 0) Params.RefinementMode = refinement_mode::SEPARATION_ONLY;
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");

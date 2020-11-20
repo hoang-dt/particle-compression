@@ -1740,7 +1740,7 @@ struct q_item {
   split_type SplitType;
 };
 
-enum class refinement_mode { NONE, PARTIAL, FULL }; 
+enum class refinement_mode { ERROR_BASED, LOSSLESS, SEPARATION_ONLY }; 
 
 struct params {
   char Name[64];
@@ -1765,7 +1765,7 @@ struct params {
   i8 MaxLevel = 127;
   int MaxParticleSubSampling = 0;
   //bool NoRefinement = false;
-  refinement_mode RefinementMode = refinement_mode::NONE;
+  refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
 };
 
 inline grid
