@@ -1191,11 +1191,14 @@ Handler(const doctest::AssertData& ad) {
 
 /* NOTE: Particles2 should be the reference */
 static f32
-Error(const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3) {
-  bbox BBox = ComputeBoundingBox(Particles1);
+Error(
+  const bbox& BBox, 
+  const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
+{
+  //bbox BBox = ComputeBoundingBox(Particles1);
   vec3f W3 = (BBox.Max - BBox.Min) / vec3f(Dims3);
   std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z, vec3f(NAN));
-  FOR_EACH(P, Particles1) {
+  FOR_EACH(P, Particles2) {
     vec3i Coord{
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
       MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
@@ -1203,7 +1206,7 @@ Error(const std::vector<particle>& Particles1, const std::vector<particle>& Part
     Grid[Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x] = P->Pos;
   }
   float Err = 0;
-  FOR_EACH(P, Particles2) {
+  FOR_EACH(P, Particles1) {
     vec3i Coord{
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
       MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
@@ -1395,7 +1398,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
         }
         Particles.push_back(particle{ Pos3 });
-      } else {
+      } else { // do not read the refinement bits
         GenerateParticlesPerNode(1, G, W3);
       }
     } else { // recurse on the left
@@ -1431,7 +1434,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
         }
         Particles.push_back(particle{ Pos3 });
-      } else {
+      } else { // do not read the refinement bits
         GenerateParticlesPerNode(1, G, W3);
       }
     } else { // recurse on the right
@@ -2239,14 +2242,18 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
-    auto Particles2 = ReadParticles(Params.InFile);
-    auto Particles1 = ReadParticles(Params.OutFile);
+    auto Particles1 = ReadParticles(Params.InFile);
+    auto Particles2 = ReadParticles(Params.OutFile);
     //std::vector<particle> Particles1 = ReadXYZ(Params.InFile);
     //std::vector<particle> Particles2 = ReadXYZ(Params.OutFile);
-    f32 Err = Error(Particles1, Particles2, Params.Dims3);
-    printf("error = %f\n", Err);
+    bbox BBox = ComputeBoundingBox(Particles1);
+    f32 Err1 = Error(BBox, Particles1, Particles2, Params.Dims3);
+    f32 Err2 = Error(BBox, Particles2, Particles1, Params.Dims3);
+    printf("error = %f\n", MAX(Err1, Err2));
   }
 
   //RandomLevels(&Particles);
 }
+// TODO: we need to swap the roles of Particles1 and Particles2 when computing the error
+// and also pass in the bounding box from outside the function Error
 
