@@ -22,6 +22,10 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
     BBox.Min = min(BBox.Min, P3->Pos);
     BBox.Max = max(BBox.Max, P3->Pos);
   }
+  vec3f D3 = BBox.Max - BBox.Min;
+  vec3f Adjustment3 = D3 / 16384; // enlarge the bounding box a little bit to avoid numerical issue at the boundary
+  BBox.Min -= Adjustment3;
+  BBox.Max += Adjustment3;
   return BBox;
 }
 
@@ -62,7 +66,6 @@ INLINE static i64 BOffset(i64 B) { return B & WORD_MASK; }
 //  free(BitSet->Words);
 //  free(BitSet);
 //}
-
 
 static bool
 ReadMetaFile(cstr FileName) {
@@ -1198,15 +1201,17 @@ Error(
   //bbox BBox = ComputeBoundingBox(Particles1);
   vec3f W3 = (BBox.Max - BBox.Min) / vec3f(Dims3);
   std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z, vec3f(NAN));
-  FOR_EACH(P, Particles2) {
+  FOR_EACH(P, Particles1) {
     vec3i Coord{
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
       MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
       MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
-    Grid[Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x] = P->Pos;
+    i32 Idx = Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x;
+    assert(Grid[Idx].x != Grid[Idx].x);
+    Grid[Idx] = P->Pos;
   }
   float Err = 0;
-  FOR_EACH(P, Particles1) {
+  FOR_EACH(P, Particles2) {
     vec3i Coord{
       MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
       MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
@@ -1215,9 +1220,7 @@ Error(
     for (i32 D = 0; D < MaxD; ++D) {
       f32 MinDiff = INFINITY;
       bool Found = false;
-      //boundary_loop_3d BL(Dims3, vec3i(D), Coord);
-      i32 Dz = -MIN(Coord.z, D);
-      for (i32 Dz = -D; Dz <= D; ++Dz) { // bottom z loop
+      for (i32 Dz = -D; Dz <= D; ++Dz) {
         i32 Z = Coord.z + Dz;
         if (Z < 0 || Z >= Dims3.z) continue;
         bool EdgeZ = (Dz == -D) || (Dz == D) || (Z == 0) || (Z == Dims3.z - 1);
@@ -1226,12 +1229,11 @@ Error(
           if (Y < 0 || Y >= Dims3.y) continue;
           bool EdgeY = (Dy == -D) || (Dy == D) || (Y == 0) || (Y == Dims3.y - 1);
           bool Edge = EdgeZ || EdgeY;
-          if (!Edge) continue;
           for (i32 Dx = -D; Dx <= D; ++Dx) {
             i32 X = Dx + Coord.x;
             if (X < 0 || X >= Dims3.x) continue;
             bool EdgeX = (Dx == -D) || (Dx == D) || (X == 0) || (X == Dims3.x - 1);
-            if (!Edge && !EdgeX) continue;
+            if (!(Edge || EdgeX)) continue;
             i32 Idx = Z * (Dims3.x * Dims3.y) + Y * (Dims3.x) + X;
             if (Grid[Idx].x == Grid[Idx].x) { // not NAN
               vec3f Diff = Grid[Idx] - P->Pos;
@@ -1244,6 +1246,8 @@ Error(
       if (Found) {
         Err += MinDiff;
         break;
+      } else {
+        //assert(false);
       }
     }
   }
@@ -1378,7 +1382,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
       auto G = SplitGrid(Grid, D, Split, Left);
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3f Pos3;
-        bbox BBox{
+        bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
@@ -1487,11 +1491,13 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
     if (Begin + 1 == Mid) { // left leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
         vec3f P3 = Particles[Begin].Pos;
+        vec3f Pos3;
         auto G = SplitGrid(Grid, D, Split, Left);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
+        assert(BBox.Min[1] <= P3[1] & BBox.Max[1] >= P3[1]);
         FOR(int, I, 0, 3) { // write refinement bits
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
@@ -1505,6 +1511,11 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
               BBox.Min[I] = Half;
             }
           }
+          assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
         }
       }
     } else { // recurse on the left
@@ -1517,12 +1528,14 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   if (Mid < End) {
     if (Mid + 1 == End) { // right leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+        vec3f Pos3;
         vec3f P3 = Particles[Mid].Pos;
         auto G = SplitGrid(Grid, D, Split, Right);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
+        assert(BBox.Min[1] <= P3[1] & BBox.Max[1] >= P3[1]);
         FOR(int, I, 0, 3) {
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
@@ -1536,6 +1549,11 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
               BBox.Min[I] = Half;
             }
           }
+          assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
         }
       }
     } else { // recurse on the right
@@ -2139,6 +2157,8 @@ main(int Argc, cstr* Argv) {
     fclose(Fp);
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("Stream size = %lld\n", BlockStreamSize);
+    printf("RMSE = %f\n", sqrt(RMSE / (Particles.size() * Params.NDims)));
+    printf("# particles = %lld\n", NParticlesDecoded / Params.NDims);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -2249,7 +2269,7 @@ main(int Argc, cstr* Argv) {
     bbox BBox = ComputeBoundingBox(Particles1);
     f32 Err1 = Error(BBox, Particles1, Particles2, Params.Dims3);
     f32 Err2 = Error(BBox, Particles2, Particles1, Params.Dims3);
-    printf("error = %f\n", MAX(Err1, Err2));
+    printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
   }
 
   //RandomLevels(&Particles);
