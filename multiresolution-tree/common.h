@@ -1724,7 +1724,7 @@ struct grid {
 
 enum split_type { ResolutionSplit, SpatialSplit };
 enum side { Left, Right };
-enum class action : int { Encode, Decode, Error };
+enum class action : int { Encode, Decode, Error, Convert };
 
 struct q_item {
   i64 Begin, End;
@@ -1937,6 +1937,45 @@ ReadCosmo(cstr FileName) {
   return Particles;
 }
 
+inline std::vector<particle>
+ReadPly(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  char Buf[128];
+  fgets(Buf, sizeof Buf, Fp); // "ply"
+  fgets(Buf, sizeof Buf, Fp); // "format ascii" or "format binary_little_endian 1.0"
+  bool Ascii = strstr(Buf, "ascii");
+  // assume float x, y, z
+  int NDims = 0;
+  i64 NParticles = 0;
+  while (!strstr(Buf, "end_header")) {
+    fgets(Buf, sizeof Buf, Fp);
+    if (strstr(Buf, "element vertex")) {
+      sscanf(Buf, "element vertex %lld", &NParticles);
+    } else if (strstr(Buf, "property float x") || strstr(Buf, "property float y") || strstr(Buf, "property float z")) {
+      ++NDims;
+    }
+  }
+  // read the contents
+  std::vector<particle> Particles(NParticles);
+  if (Ascii) {
+    if (NDims == 3) {
+      FOR_EACH(P, Particles) {
+        fgets(Buf, sizeof Buf, Fp);
+        sscanf(Buf, "%f %f %f", &P->Pos.x, &P->Pos.y, &P->Pos.z);
+      }
+    } else if (NDims == 2) {
+      FOR_EACH(P, Particles) {
+        fgets(Buf, sizeof Buf, Fp);
+        sscanf(Buf, "%f %f", &P->Pos.x, &P->Pos.y);
+        P->Pos.z = 0;
+      }
+    }
+  } else { // binary
+    // TODO
+  }
+  return Particles;
+}
+
 struct vtu_header {
   u32 pad3;
   u32 size;
@@ -2032,7 +2071,27 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   }
   fclose(Fp);
 }
-
+template <typename t> inline void
+WritePLY(cstr FileName, t Begin, t End) {
+  FILE* Fp = fopen(FileName, "w");
+  auto NParticles = End - Begin;
+  fprintf(Fp, "ply\n");
+  //fprintf(Fp, "format binary_little_endian 1.0\n");
+  fprintf(Fp, "format ascii 1.0\n");
+  fprintf(Fp, "element vertex %lld\n", NParticles);
+  fprintf(Fp, "property float x\n");
+  fprintf(Fp, "property float y\n");
+  fprintf(Fp, "property float z\n");
+  fprintf(Fp, "end_header\n");
+  for (auto P = Begin; P != End; ++P) {
+    fprintf(Fp, "%.7f %.7f %.7f\n", P->Pos.x, P->Pos.y, P->Pos.z);
+  }
+  //fflush(Fp);
+  //for (auto P = Begin; P != End; ++P) {
+  //  fwrite(&P->Pos, sizeof(*P), 1, Fp);
+  //}
+  fclose(Fp);
+}
 
 template <node_type R>
 struct tree {

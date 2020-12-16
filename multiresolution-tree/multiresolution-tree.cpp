@@ -2065,17 +2065,26 @@ static std::vector<particle>
 ReadParticles(cstr FileName) {
   if (strstr(FileName, ".xyz"))
     return ReadXYZ(FileName);
-  else if (strstr(FileName, ".dat"))
+  if (strstr(FileName, ".dat"))
     return ReadCosmo(FileName);
-  else if (strstr(FileName, ".vtu"))
+  if (strstr(FileName, ".vtu"))
     return ReadVtu(FileName);
-  else if (strstr(FileName, ".pos"))
+  if (strstr(FileName, ".pos"))
     return ReadRawParticles(FileName);
   return std::vector<particle>();
 }
 
+static void
+WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
+  if (strstr(FileName, ".xyz"))
+    WriteXYZ(FileName, Particles.begin(), Particles.end());
+  if (strstr(FileName, ".ply"))
+    WritePLY(FileName, Particles.begin(), Particles.end());
+}
+
 int
 main(int Argc, cstr* Argv) {
+  ReadPly("ss740k.ply");
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2088,6 +2097,7 @@ main(int Argc, cstr* Argv) {
   if (strcmp("encode", Action) == 0) Params.Action = action::Encode;
   else if (strcmp("decode", Action) == 0) Params.Action = action::Decode;
   else if (strcmp("error", Action) == 0) Params.Action = action::Error;
+  else if (strcmp("convert", Action) == 0) Params.Action = action::Convert;
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
@@ -2270,6 +2280,11 @@ main(int Argc, cstr* Argv) {
     f32 Err1 = Error(BBox, Particles1, Particles2, Params.Dims3);
     f32 Err2 = Error(BBox, Particles2, Particles1, Params.Dims3);
     printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
+  } else if (Params.Action == action::Convert) {
+    if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+    auto Particles = ReadParticles(Params.InFile);
+    WriteParticles(Params.OutFile, Particles);
   }
 
   //RandomLevels(&Particles);
