@@ -1021,8 +1021,6 @@ struct Range {
 //  }}
 //}
 
-// TODO: write a routine to read from disk and reconstruct the tree/particles
-// TODO: write a routine to compute the PSNR of positions
 // TODO: what if we have 0 particles? should we stop the resolution divide?
 static void
 BuildTreeInner(q_item Q, float Accuracy) {
@@ -1497,9 +1495,10 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
-        assert(BBox.Min[1] <= P3[1] & BBox.Max[1] >= P3[1]);
+        auto BBoxCopy = BBox;
         FOR(int, I, 0, 3) { // write refinement bits
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+            assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
             Write(&BlockStream, LeftSide);
@@ -1535,8 +1534,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           .Min = Params.BBox.Min + G.From3 * W3,
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
-        assert(BBox.Min[1] <= P3[1] & BBox.Max[1] >= P3[1]);
-        FOR(int, I, 0, 3) {
+        FOR(int, I, 0, 3) { // write the refinement bits
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
@@ -2071,6 +2069,8 @@ ReadParticles(cstr FileName) {
     return ReadVtu(FileName);
   if (strstr(FileName, ".pos"))
     return ReadRawParticles(FileName);
+  if (strstr(FileName, ".ply"))
+    return ReadPly(FileName);
   return std::vector<particle>();
 }
 
@@ -2084,7 +2084,6 @@ WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
 
 int
 main(int Argc, cstr* Argv) {
-  ReadPly("ss740k.ply");
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2118,7 +2117,7 @@ main(int Argc, cstr* Argv) {
     if (strcmp(Str, "separation") == 0) Params.RefinementMode = refinement_mode::SEPARATION_ONLY;
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
-    if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
+    //if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
     Particles = ReadParticles(Params.InFile);
     if (Particles.size() == 0)
       EXIT_ERROR("No particles read");
@@ -2283,7 +2282,17 @@ main(int Argc, cstr* Argv) {
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+    vec3f Min3(0, 0, 0);
+    bool Dequantize = OptVal(Argc, Argv, "--min", &Min3);
+    f32 Scale = 1;
+    OptVal(Argc, Argv, "--scale", &Scale);
+    Scale = 1 / Scale;
     auto Particles = ReadParticles(Params.InFile);
+    if (Dequantize) {
+      FOR_EACH(P, Particles) {
+        P->Pos = (P->Pos * Scale) + Min3;
+      }
+    }
     WriteParticles(Params.OutFile, Particles);
   }
 

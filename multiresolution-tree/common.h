@@ -1092,6 +1092,17 @@ ToDouble(const stref& Str, f64* Result) {
   return !Failure;
 }
 
+inline bool
+ToFloat(const stref& Str, f32* Result) {
+  if (!Str || Str.Size <= 0)
+    return false;
+  char* EndPtr = nullptr;
+  *Result = strtof(Str.ConstPtr, &EndPtr);
+  bool Failure = errno == ERANGE || EndPtr == Str.ConstPtr || !EndPtr ||
+    !(isspace(*EndPtr) || ispunct(*EndPtr) || (*EndPtr) == 0);
+  return !Failure;
+}
+
 /* Argument parsing code */
 inline bool
 OptVal(int NArgs, cstr* Args, cstr Opt, cstr* Val) {
@@ -1135,6 +1146,18 @@ OptVal(int NArgs, cstr* Args, cstr Opt, u8* Val) {
       bool Success = ToInt(Args[I + 1], &IntVal);
       *Val = IntVal;
       return Success;
+    }
+  }
+  return false;
+}
+
+inline bool
+OptVal(int NArgs, cstr* Args, cstr Opt, vec3f* Val) {
+  for (int I = 0; I + 3 < NArgs; ++I) {
+    if (strncmp(Args[I], Opt, 32) == 0) {
+      return ToFloat(Args[I + 1], &Val->x) &&
+        ToFloat(Args[I + 2], &Val->y) &&
+        ToFloat(Args[I + 3], &Val->z);
     }
   }
   return false;
