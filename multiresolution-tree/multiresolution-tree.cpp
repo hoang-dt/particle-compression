@@ -722,7 +722,7 @@ GenerateParticlesPerNode(i64 N, const grid& Grid, const vec3f& W3) {
   GridPoints.resize(N);
   //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   vec3f Dims3 = Grid.Dims3;
-
+  
   i64 NElems = N;
   i64 I = 0;
 //  f32 M = f32(Dims3.z) * f32(Dims3.y) * f32(Dims3.x);
@@ -1190,6 +1190,103 @@ Handler(const doctest::AssertData& ad) {
 
 #define EXIT_ERROR(Msg) { fprintf(stderr, Msg); exit(1); }
 
+#include "kdtree.h"
+
+static f32
+Error3( 
+  const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
+{
+  std::vector<point<float, 3>> Pos(Particles1.size());
+  FOR(i64, I, 0, Particles1.size()) {
+    Pos[I].coords_[0] = Particles1[I].Pos[0];
+    Pos[I].coords_[1] = Particles1[I].Pos[1];
+    Pos[I].coords_[2] = Particles1[I].Pos[2];
+  }
+  kdtree<float, 3> Tree(Pos.begin(), Pos.end());
+  float Err = 0;
+  FOR_EACH(P, Particles2) {
+    point<float, 3> Point;
+    Point.coords_[0] = P->Pos.x;
+    Point.coords_[1] = P->Pos.y;
+    Point.coords_[2] = P->Pos.z;
+    auto Nearest = Tree.nearest(Point);
+    vec3f Q(Nearest.coords_[0], Nearest.coords_[1], Nearest.coords_[2]);
+    vec3f Diff = Q - P->Pos;
+    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+  }
+  int NDims = Dims3.z == 1 ? 2 : 3;
+  Err = std::sqrt(Err / (NDims * Particles2.size()));
+  return Err;
+}
+
+//static f32
+//Error2(
+//  const bbox& BBox, 
+//  const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
+//{
+//  //bbox BBox = ComputeBoundingBox(Particles1);
+//  vec3f W3 = (BBox.Max - BBox.Min) / vec3f(Dims3);
+//  std::vector<std::vector<vec3f>> Grid(Dims3.x * Dims3.y * Dims3.z);
+//  //std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z, vec3f(NAN));
+//  i32 ParticlesPerCell = MAX(1, Particles1.size() / (Dims3.x * Dims3.y * Dims3.z));
+//  FOR_EACH(P, Particles1) {
+//    vec3i Coord{
+//      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
+//      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+//      MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
+//    i32 Idx = Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x;
+//    //assert(Grid[Idx].x != Grid[Idx].x);
+//    if (Grid[Idx].empty())
+//      Grid[Idx].reserve(ParticlesPerCell);
+//    Grid[Idx].push_back(P->Pos);
+//  }
+//  float Err = 0;
+//  FOR_EACH(P, Particles2) {
+//    vec3i Coord{
+//      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
+//      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+//      MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
+//    i32 MaxD = MAX(Dims3.z, MAX(Dims3.x, Dims3.y)) / 2;
+//    for (i32 D = 0; D < MaxD; ++D) {
+//      f32 MinDiff = INFINITY;
+//      bool Found = false;
+//      for (i32 Dz = -D; Dz <= D; ++Dz) {
+//        i32 Z = Coord.z + Dz;
+//        if (Z < 0 || Z >= Dims3.z) continue;
+//        bool EdgeZ = (Dz == -D) || (Dz == D) || (Z == 0) || (Z == Dims3.z - 1);
+//        for (i32 Dy = -D; Dy <= D; ++Dy) {
+//          i32 Y = Dy + Coord.y;
+//          if (Y < 0 || Y >= Dims3.y) continue;
+//          bool EdgeY = (Dy == -D) || (Dy == D) || (Y == 0) || (Y == Dims3.y - 1);
+//          bool Edge = EdgeZ || EdgeY;
+//          for (i32 Dx = -D; Dx <= D; ++Dx) {
+//            i32 X = Dx + Coord.x;
+//            if (X < 0 || X >= Dims3.x) continue;
+//            bool EdgeX = (Dx == -D) || (Dx == D) || (X == 0) || (X == Dims3.x - 1);
+//            if (!(Edge || EdgeX)) continue;
+//            i32 Idx = Z * (Dims3.x * Dims3.y) + Y * (Dims3.x) + X;
+//            FOR_EACH() {
+//              vec3f Diff = Grid[Idx] - P->Pos;
+//              MinDiff = MIN(MinDiff, Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z);
+//              Found = true;
+//            }
+//            if (Grid[Idx].x == Grid[Idx].x) { // not NAN
+//            }
+//          }
+//        }
+//      }
+//      if (Found) {
+//        Err += MinDiff;
+//        break;
+//      } else {
+//        //assert(false);
+//      }
+//    }
+//  }
+//  int NDims = Dims3.z == 1 ? 2 : 3;
+//  Err = std::sqrt(Err / (NDims * Particles2.size()));
+//  return Err;
+//}
 /* NOTE: Particles2 should be the reference */
 static f32
 Error(
@@ -2084,6 +2181,7 @@ WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
 
 int
 main(int Argc, cstr* Argv) {
+  ReadPly("redandblack_vox10_1479.ply");
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2276,8 +2374,8 @@ main(int Argc, cstr* Argv) {
     //std::vector<particle> Particles1 = ReadXYZ(Params.InFile);
     //std::vector<particle> Particles2 = ReadXYZ(Params.OutFile);
     bbox BBox = ComputeBoundingBox(Particles1);
-    f32 Err1 = Error(BBox, Particles1, Particles2, Params.Dims3);
-    f32 Err2 = Error(BBox, Particles2, Particles1, Params.Dims3);
+    f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
+    f32 Err2 = Error3(Particles2, Particles1, Params.Dims3);
     printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");

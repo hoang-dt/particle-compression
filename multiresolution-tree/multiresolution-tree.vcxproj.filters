@@ -44,5 +44,8 @@
     <ClInclude Include="zfp.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="kdtree.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
