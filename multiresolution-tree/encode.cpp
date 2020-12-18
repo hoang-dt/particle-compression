@@ -81,35 +81,23 @@ EncodeNodeNew(i64 NodeIdx, i64 M, i64 N) {
 /* Encode particle refinement bits */
 static void
 EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
-  //vec3f P3 = Pos;
-  //u8 H = Params.BaseHeight + 1;
-  //i8 D = Params.BaseHeight % Params.NDims;
-  //u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
-  //while (H <= Params.MaxHeight) {
-  //  i8 K = H - Params.BaseHeight - 1;
-  //  if (CurrRefBlocks[K].BlockId == u64(-1))
-  //    CurrRefBlocks[K].BlockId = BaseBlockIdx;
-  //  if (CurrRefBlocks[K].Level == -1)
-  //    CurrRefBlocks[K].Level = Level;
-  //  //u64 BlockIdx = BaseBlockIdx + (K + 1) * NBlocksAtLeaf;
-  //  bool NewBlock = BaseBlockIdx != CurrRefBlocks[K].BlockId;
-  //  bool NewLevel = CurrRefBlocks[K].Level != Level;
-  //  if (NewBlock || NewLevel) {
-  //    i64 NBlocksAtLeaf = NUM_BLOCKS_AT_LEAF(CurrRefBlocks[K].Level);
-  //    WriteBlock(&RefBlockStreams[K], CurrRefBlocks[K].Level, CurrRefBlocks[K].BlockId + (K + 1) * NBlocksAtLeaf);
-  //    CurrRefBlocks[K].Level = Level;
-  //    CurrRefBlocks[K].BlockId = BaseBlockIdx;
-  //  }
-  //  bitstream* Bs = &RefBlockStreams[K];
-  //  GrowToAccomodate(Bs, 1);
-  //  float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5f;
-  //  bool Left = P3[D] < Half;
-  //  Write(Bs, Left);
-  //  if (Left) BBox.Max[D] = Half;
-  //  else BBox.Min[D] = Half;
-  //  D = (D + 1) % Params.NDims;
-  //  ++H;
-  //}
+  vec3f P3 = Pos;
+  u8 H = Params.BaseHeight + 1;
+  i8 D = Params.BaseHeight % Params.NDims;
+  u64 BaseBlockIdx = NODE_TO_BLOCK_INDEX(NodeIdx);
+  while (H <= Params.MaxHeight) {
+    i8 K = H - Params.BaseHeight - 1;
+    //bitstream* Bs = &RefBlockStreams[K];
+    bitstream* Bs = &BlockStreams[K];
+    GrowToAccomodate(Bs, 1);
+    float Half = (BBox.Max[D] + BBox.Min[D]) * 0.5f;
+    bool Left = P3[D] < Half;
+    Write(Bs, Left);
+    if (Left) BBox.Max[D] = Half;
+    else BBox.Min[D] = Half;
+    D = (D + 1) % Params.NDims;
+    ++H;
+  }
 }
 /* Here we always use the "resolution" splits */
 void

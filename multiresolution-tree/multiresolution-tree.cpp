@@ -1643,6 +1643,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         }
       }
     } else { // recurse on the left
+      if (Begin + 1 == Mid)
+        int Stop =0;
       bool RSplit = Split == ResolutionSplit;
       split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
       BuildTreeDFS(Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
@@ -2260,7 +2262,7 @@ main(int Argc, cstr* Argv) {
     grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
-    //BlockStreams.resize(Params.NLevels + 1);
+    BlockStreams.resize(Params.NLevels + 1);
     //RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight); // refinement stream
     //CurrBlocks.resize(Params.NLevels, 0);
     //CurrRefBlocks.resize(Params.MaxHeight - Params.BaseHeight);
@@ -2269,7 +2271,7 @@ main(int Argc, cstr* Argv) {
     //  CurrRefBlocks[H].BlockId = u64(-1);
     //}
     //BlockBytes.resize(Params.NLevels);
-    //EncodeRootNew(Particles.size());
+    EncodeRootNew(Particles.size());
     /* compute the maximum height based on the accuracy */
     if (Params.MaxHeight == 255) {
       Params.MaxHeight = 0;
@@ -2280,15 +2282,15 @@ main(int Argc, cstr* Argv) {
     }
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
     Params.BlockDims3 = Params.Dims3;
-    //ParticleCells.resize(PROD(Params.BlockDims3));
-    InitWrite(&BlockStream, 100000000); // 100 MB
-    CdfTable = CreateBinomialTable(cutoff1);
-    GrowToAccomodate(&BlockStream, 100000000); // 100 MB
-    Coder.InitWrite(100000000);
+    ////ParticleCells.resize(PROD(Params.BlockDims3));
+    //InitWrite(&BlockStream, 100000000); // 100 MB
+    //CdfTable = CreateBinomialTable(cutoff1);
+    //GrowToAccomodate(&BlockStream, 100000000); // 100 MB
     //Coder.InitWrite(100000000);
-    WriteVarByte(&BlockStream, Particles.size());
-    BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
-      Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
+    ////Coder.InitWrite(100000000);
+    //WriteVarByte(&BlockStream, Particles.size());
+    //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
+    //  Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, ResolutionSplit, 0);
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
