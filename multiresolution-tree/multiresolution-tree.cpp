@@ -1442,7 +1442,6 @@ TestCompressSeries(f64 Accuracy) {
 
 f64 RMSE = 0;
 i64 StreamSize = 0;
-i64 NParticlesDecoded = 0;
 i64 NParticlesGenerated = 0;
 
 static void
@@ -1557,6 +1556,7 @@ EncodeNode(i64 NodeIdx, i64 M, i64 N) {
   EncodeRange(Mean, StdDev, f64(0), f64(M), f64(N), CdfTable, &BlockStream, &Coder);
 }
 
+// TODO: need to skip to one node per cell without abusing the recursion (stackoverflow)
 static void
 BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -1582,11 +1582,11 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / GridDims3;
   bbox ParentBBox {
     .Min = Params.BBox.Min + Grid.From3 * W3,
-    .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3) * W3
+    .Max = Params.BBox.Min + (Grid.From3 + Grid.Dims3 * Grid.Stride3) * W3
   };
   bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
   FOR(i32, I, 0, 3) {
-    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) { // TODO: not enough for lossless
       Stop = false;
       break;
     }
@@ -1617,12 +1617,31 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         auto G = SplitGrid(Grid, D, Split, Left);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
-          .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
+          .Max = Params.BBox.Min + (G.From3 + G.Dims3 * G.Stride3) * W3
         };
-        auto BBoxCopy = BBox;
+        FOR(int, I, 0, 3) { // go until one particle per cell
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+            G.Dims3[I] *= 0.5f;
+            float Half = Params.BBox.Min[I] + (G.From3[I] + G.Dims3[I] * G.Stride3[I]) * W3[I];
+            bool LeftSide = P3[I] < Half;
+            Write(&BlockStream, LeftSide);
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] += G.Dims3[I] * G.Stride3[I];
+              BBox.Min[I] = Half;
+            }
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+          }
+        }
         FOR(int, I, 0, 3) { // write refinement bits
+          // NOTE: the last condition is for lossless coding
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy && !(BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)) {
-            assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
             Write(&BlockStream, LeftSide);
@@ -1634,7 +1653,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
               BBox.Min[I] = Half;
             }
           }
-          assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           auto Diff = Pos3[I] - P3[I];
           if (BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)
@@ -1643,10 +1663,9 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         }
       }
     } else { // recurse on the left
-      if (Begin + 1 == Mid)
-        int Stop =0;
       bool RSplit = Split == ResolutionSplit;
-      split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
+      //split_type NextSplit = (RSplit && Level > 1) ? ResolutionSplit : SpatialSplit;
+      split_type NextSplit = SpatialSplit ;
       BuildTreeDFS(Begin, Mid, (Code * 2 + 1), SplitGrid(Grid, D, Split, Left), 
         Level - RSplit, NextSplit, Depth + 1);
     }
@@ -1659,9 +1678,28 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         auto G = SplitGrid(Grid, D, Split, Right);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
-          .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
+          .Max = Params.BBox.Min + (G.From3 + G.Dims3 * G.Stride3) * W3
         };
+        FOR(int, I, 0, 3) { // go until one particle per cell
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          while (G.Dims3[I] > 1 && BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+            G.Dims3[I] *= 0.5f;
+            float Half = Params.BBox.Min[I] + (G.From3[I] + G.Dims3[I] * G.Stride3[I]) * W3[I];
+            bool LeftSide = P3[I] < Half;
+            Write(&BlockStream, LeftSide);
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] += G.Dims3[I] * G.Stride3[I];
+              BBox.Min[I] = Half;
+            }
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+          }
+        }
         FOR(int, I, 0, 3) { // write the refinement bits
+          // NOTE: the last condition is for lossless coding
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy && !(BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
@@ -1684,6 +1722,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         }
       }
     } else { // recurse on the right
+      //BuildTreeDFS(Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
+      //  Level, SpatialSplit, Depth + 1);
       BuildTreeDFS(Mid, End, (Code * 2 + 2), SplitGrid(Grid, D, Split, Right), 
         Level, SpatialSplit, Depth + 1);
     }
@@ -2262,16 +2302,8 @@ main(int Argc, cstr* Argv) {
     grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
     printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
-    BlockStreams.resize(Params.NLevels + 1);
-    //RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight); // refinement stream
-    //CurrBlocks.resize(Params.NLevels, 0);
-    //CurrRefBlocks.resize(Params.MaxHeight - Params.BaseHeight);
-    //FOR(u8, H, 0, CurrRefBlocks.size()) {
-    //  CurrRefBlocks[H].Level = -1;
-    //  CurrRefBlocks[H].BlockId = u64(-1);
-    //}
-    //BlockBytes.resize(Params.NLevels);
-    EncodeRootNew(Particles.size());
+    //BlockStreams.resize(Params.NLevels + 1);
+    //EncodeRootNew(Particles.size());
     /* compute the maximum height based on the accuracy */
     if (Params.MaxHeight == 255) {
       Params.MaxHeight = 0;
@@ -2282,16 +2314,21 @@ main(int Argc, cstr* Argv) {
     }
     Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
     Params.BlockDims3 = Params.Dims3;
+    //BuildTreeNew(q_item_new{ .Begin = 0,
+    //                          .End = (i64)Particles.size(),
+    //                          .Idx = 1,
+    //                          .Grid = Grid,
+    //                          .Height = 0 }, Params.Accuracy);
+
     ////ParticleCells.resize(PROD(Params.BlockDims3));
-    //InitWrite(&BlockStream, 100000000); // 100 MB
-    //CdfTable = CreateBinomialTable(cutoff1);
+    CdfTable = CreateBinomialTable(cutoff1);
+    InitWrite(&BlockStream, 100000000); // 100 MB
     //GrowToAccomodate(&BlockStream, 100000000); // 100 MB
-    //Coder.InitWrite(100000000);
-    ////Coder.InitWrite(100000000);
-    //WriteVarByte(&BlockStream, Particles.size());
+    Coder.InitWrite(100000000);
+    WriteVarByte(&BlockStream, Particles.size());
     //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
     //  Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, ResolutionSplit, 0);
+    BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, SpatialSplit, 0);
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
@@ -2300,7 +2337,7 @@ main(int Argc, cstr* Argv) {
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("Stream size = %lld\n", BlockStreamSize);
     printf("RMSE = %f\n", sqrt(RMSE / (Particles.size() * Params.NDims)));
-    printf("# particles = %lld\n", NParticlesDecoded / Params.NDims);
+    printf("# particles = %lld\n", NParticlesDecoded/* / Params.NDims*/);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");

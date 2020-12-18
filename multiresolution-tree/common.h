@@ -2469,3 +2469,4 @@ t Clamp(t X, t A, t B) {
   return X;
 }
 
+inline i64 NParticlesDecoded = 0;
