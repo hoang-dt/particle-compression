@@ -1543,6 +1543,19 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
   }
 }
 
+static cdf_table CdfTable;
+static arithmetic_coder<> Coder;
+
+INLINE static void
+EncodeNode(i64 NodeIdx, i64 M, i64 N) {
+  bitstream* Bs = &BlockStream;
+  GrowToAccomodate(Bs, 8);
+  //EncodeCenteredMinimal((u32)N, (u32)M + 1, Bs);
+  /* NOTE: comment out the following to disable the binomial coding */
+  f64 Mean = f64(M) / 2; // mean
+  f64 StdDev = sqrt(f64(M)) / 2; // standard deviation
+  EncodeRange(Mean, StdDev, f64(0), f64(M), f64(N), CdfTable, &BlockStream, &Coder);
+}
 static void
 BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -1578,8 +1591,9 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
     }
   }
   if (!Stop)
-    EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
+    //EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
     //WriteVarByte(&BlockStream, u32(Mid - Begin));
+    EncodeNode(0, End - Begin, Mid - Begin);
   else
     return;
   if (Begin < Mid) {
@@ -1610,7 +1624,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           auto Diff = Pos3[I] - P3[I];
-          RMSE += Diff * Diff;
+          if (BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)
+            Diff = 0;
           ++NParticlesDecoded;
         }
       }
@@ -1647,6 +1662,8 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
           auto Diff = Pos3[I] - P3[I];
+          if (BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)
+            Diff = 0;
           RMSE += Diff * Diff;
           ++NParticlesDecoded;
         }
@@ -2181,7 +2198,6 @@ WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
 
 int
 main(int Argc, cstr* Argv) {
-  ReadPly("redandblack_vox10_1479.ply");
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2253,12 +2269,15 @@ main(int Argc, cstr* Argv) {
     Params.BlockDims3 = Params.Dims3;
     //ParticleCells.resize(PROD(Params.BlockDims3));
     InitWrite(&BlockStream, 100000000); // 100 MB
+    CdfTable = CreateBinomialTable(cutoff1);
+    GrowToAccomodate(&BlockStream, 100000000); // 100 MB
+    Coder.InitWrite(100000000);
     //Coder.InitWrite(100000000);
     WriteVarByte(&BlockStream, Particles.size());
     BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
     Flush(&BlockStream);
-    i64 BlockStreamSize = Size(BlockStream);
+    i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
     fwrite(BlockStream.Stream.Data, BlockStreamSize, 1, Fp);
     fclose(Fp);
@@ -2365,6 +2384,7 @@ main(int Argc, cstr* Argv) {
     //  printf("bytes read = %lld\n", BlockBytesRead);
     //  WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
     //}
+  //================= ERROR =========================
   } else if (Params.Action == action::Error) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
@@ -2377,18 +2397,27 @@ main(int Argc, cstr* Argv) {
     f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
     f32 Err2 = Error3(Particles2, Particles1, Params.Dims3);
     printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
+  //================= CONVERT =======================
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
-    vec3f Min3(0, 0, 0);
-    bool Dequantize = OptVal(Argc, Argv, "--min", &Min3);
-    f32 Scale = 1;
-    OptVal(Argc, Argv, "--scale", &Scale);
-    Scale = 1 / Scale;
+    bool Quantize = OptExists(Argc, Argv, "--quantize");
+    f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
     auto Particles = ReadParticles(Params.InFile);
-    if (Dequantize) {
+    if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
-        P->Pos = (P->Pos * Scale) + Min3;
+        MaxAbsX = MAX(MaxAbsX, fabs(P->Pos.x));
+        MaxAbsY = MAX(MaxAbsY, fabs(P->Pos.y));
+        MaxAbsZ = MAX(MaxAbsZ, fabs(P->Pos.z));
+      }
+      int EMaxX = Exponent(MaxAbsX), EMaxY = Exponent(MaxAbsY), EMaxZ = Exponent(MaxAbsZ);
+      /* quantize */
+      int Bits = 23;
+      f64 ScaleX = ldexp(1, Bits - 1 - EMaxX), ScaleY = ldexp(1, Bits - 1 - EMaxY), ScaleZ = ldexp(1, Bits - 1 - EMaxZ);
+      FOR_EACH(P, Particles) {
+        P->Pos.x = i32(ScaleX * P->Pos.x);
+        P->Pos.y = i32(ScaleY * P->Pos.y);
+        P->Pos.z = i32(ScaleZ * P->Pos.z);
       }
     }
     WriteParticles(Params.OutFile, Particles);

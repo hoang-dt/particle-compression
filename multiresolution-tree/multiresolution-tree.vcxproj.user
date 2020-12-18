@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>multiresolution-tree.exe --in D:/Datasets/Particles/nanospheres/ss740k.xyz --action encode --ndims 3 --accuracy 1 --name nanosphere --refinement error </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>.\multiresolution-tree.exe --in ss740k-int.ply --action encode --ndims 3 --name ss740k --nlevels 1 --accuracy 1 --refinement error </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
