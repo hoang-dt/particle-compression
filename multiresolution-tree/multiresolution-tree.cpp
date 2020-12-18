@@ -1556,6 +1556,7 @@ EncodeNode(i64 NodeIdx, i64 M, i64 N) {
   f64 StdDev = sqrt(f64(M)) / 2; // standard deviation
   EncodeRange(Mean, StdDev, f64(0), f64(M), f64(N), CdfTable, &BlockStream, &Coder);
 }
+
 static void
 BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -1590,12 +1591,24 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
       break;
     }
   }
-  if (!Stop)
-    //EncodeCenteredMinimal(u32(Mid - Begin), u32(End - Begin + 1), &BlockStream);
+  if (!Stop) {
     //WriteVarByte(&BlockStream, u32(Mid - Begin));
-    EncodeNode(0, End - Begin, Mid - Begin);
-  else
+    i64 M = End - Begin;
+    i64 N = Mid - Begin;
+    i64 CellCount = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z;
+    if (CellCount - M < M) {
+      //EncodeNode(0, CellCount - M, CellCount / 2 - N);
+      EncodeCenteredMinimal(u32(CellCount / 2 - N), u32(CellCount - M + 1), &BlockStream);
+      assert(CellCount - M >= CellCount / 2 - N);
+      assert((CellCount & 1) == 0 || CellCount == 1);
+    //  //printf("hello\n");
+    } else {
+      //EncodeNode(0, M, N);
+      EncodeCenteredMinimal(u32(N), u32(M + 1), &BlockStream);
+    }
+  } else {
     return;
+  }
   if (Begin < Mid) {
     if (Begin + 1 == Mid) { // left leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
@@ -1608,7 +1621,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         };
         auto BBoxCopy = BBox;
         FOR(int, I, 0, 3) { // write refinement bits
-          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy && !(BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)) {
             assert(BBox.Min[I] <= P3[I] & BBox.Max[I] >= P3[I]);
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
@@ -1647,7 +1660,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           .Max = Params.BBox.Min + (G.From3 + G.Dims3) * W3
         };
         FOR(int, I, 0, 3) { // write the refinement bits
-          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy && !(BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)) {
             float Half = (BBox.Max[I] + BBox.Min[I]) * 0.5f;
             bool LeftSide = P3[I] < Half;
             Write(&BlockStream, LeftSide);
@@ -2276,6 +2289,7 @@ main(int Argc, cstr* Argv) {
     WriteVarByte(&BlockStream, Particles.size());
     BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
       Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
+    //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, ResolutionSplit, 0);
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
