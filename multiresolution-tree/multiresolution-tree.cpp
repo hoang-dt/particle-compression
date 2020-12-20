@@ -29,6 +29,18 @@ ComputeBoundingBox(const std::vector<particle>& Particles) {
   return BBox;
 }
 
+static bbox_int
+ComputeBoundingBox(const std::vector<particle_int>& Particles) {
+  REQUIRE(!Particles.empty());
+  bbox_int BBox;
+  BBox.Min = BBox.Max = Particles[0].Pos;
+  FOR_EACH(P3, Particles) {
+    BBox.Min = min(BBox.Min, P3->Pos);
+    BBox.Max = max(BBox.Max, P3->Pos);
+  }
+  return BBox;
+}
+
 // First 4 bits = Level
 // Last 60 bits = block id of particle
 #define BLOCK_ID(Level, ParticleId, BlockBits) ((u64(Level) << 60) + ((ParticleId) >> ((Level) + (BlockBits))))
@@ -1111,6 +1123,24 @@ BuildTreeInner(q_item Q, float Accuracy) {
   }
 }
 
+static void
+ComputeGrid(
+  std::vector<particle_int>* Particles, const bbox_int& BBox, i64 Begin, i64 End, i8 Depth, str DimsStr)
+{
+  REQUIRE(Begin < End); // this cannot be a leaf node
+  vec3i BBoxExt3 = Extent(BBox);
+  i8 D = 0;
+  while (BBoxExt3.x > 1 || BBoxExt3.y > 1 || BBoxExt3.z > 1) {
+    if (BBoxExt3.x >= BBoxExt3.y && BBoxExt3.x >= BBoxExt3.z)
+      D = 0;
+    else if (BBoxExt3.y >= BBoxExt3.z && BBoxExt3.y >= BBoxExt3.x)
+      D = 1;
+    else if (BBoxExt3.z >= BBoxExt3.y && BBoxExt3.z >= BBoxExt3.x)
+      D = 2;
+    DimsStr[Depth++] = 'x' + D; 
+    BBoxExt3[D] = (BBoxExt3[D] + 1) >> 1;
+  }
+}
 /* Return the dimensions of the underlying grid (in terms of power of two) */
 static vec3i
 ComputeGrid(
@@ -1120,11 +1150,11 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   vec3f BBoxExt3 = Extent(BBox);
   i8 D;
-  if (BBoxExt3.x > BBoxExt3.y && BBoxExt3.x > BBoxExt3.z)
+  if (BBoxExt3.x >= BBoxExt3.y && BBoxExt3.x >= BBoxExt3.z)
     D = 0;
-  else if (BBoxExt3.y > BBoxExt3.z && BBoxExt3.y > BBoxExt3.x)
+  else if (BBoxExt3.y >= BBoxExt3.z && BBoxExt3.y >= BBoxExt3.x)
     D = 1;
-  else if (BBoxExt3.z > BBoxExt3.y && BBoxExt3.z > BBoxExt3.x)
+  else if (BBoxExt3.z >= BBoxExt3.y && BBoxExt3.z >= BBoxExt3.x)
     D = 2;
   DimsStr[Depth] = 'x' + D; 
   f32 Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
@@ -1557,8 +1587,141 @@ EncodeNode(i64 NodeIdx, i64 M, i64 N) {
 }
 
 #define SPLIT SpatialSplit
-#define THRESHOLD 0 //(1 << 6) // where we switch from spatial split to resolution split
-// TODO: need to skip to one node per cell without abusing the recursion (stackoverflow)
+#define THRESHOLD 0 // where we switch from spatial split to resolution split
+static void
+BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
+  i8 D = Params.DimsStr[Depth] - 'x';
+  if (Grid.Dims3[D] == 1) {
+    return BuildTreeInt(Particles, Begin, End, Grid, Split, Depth + 1);
+  }
+  i64 Mid = Begin;
+  i32 MM = 0;
+  if (Split == ResolutionSplit) { // resolution split
+    auto RPred = [D, &Grid](const particle_int& P) {
+      i32 Bin = P.Pos[D];
+      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
+      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else { // spatial split
+    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      return P.Pos[D] <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+  bbox_int ParentBBox {
+    .Min = Grid.From3,
+    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+  };
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+      Stop = false;
+      break;
+    }
+  }
+  if (!Stop) {
+    i64 M = End - Begin;
+    i64 N = Mid - Begin;
+    i64 P = M - N; // number of points on the right
+    i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
+    i64 CellCountRight = 1;
+    FOR(int, I, 0, Params.NDims) {
+      CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+    }
+    REQUIRE(CellCount >= M);
+    if (CellCount - M < M) { // more empty than occupied cells, encode the empty cells
+      if (Split == SpatialSplit)
+        EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+      else // resolution split, use binomial coding
+        EncodeNode(0, CellCount - M, CellCountRight - P);
+    } else { // encode the particles
+      if (Split == SpatialSplit)
+        EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+      else // resolution split, use binomial coding
+        EncodeNode(0, M, P);
+    }
+  } else {
+    return;
+  }
+  /* recurse on the left or right */
+  if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // left leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
+        vec3i P3 = Particles[Begin].Pos;
+        vec3i Pos3;
+        auto G = SplitGrid(Grid, D, Split, Left);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the left
+      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
+      BuildTreeInt(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), NextSplit, Depth + 1);
+    }
+  }
+  if (Mid < End) {
+    if (Mid + 1 == End) { // right leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+        vec3i Pos3;
+        vec3i P3 = Particles[Mid].Pos;
+        auto G = SplitGrid(Grid, D, Split, Right);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (G.Dims3[I] > 1/* && BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy*/) { // NOTE: enable this to refine the tree uniformly until the leaf level
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the right
+      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
+      BuildTreeInt(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
+    }
+  }
+}
 static void
 BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -1676,6 +1839,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
           if (BBox.Max[I] <= P3[I] + 1 && BBox.Min[I] >= P3[I] - 1)
             Pos3[I] = ceil(BBox.Min[I]);
           auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
           ++NParticlesDecoded;
         }
       }
@@ -1695,7 +1859,7 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
         auto G = SplitGrid(Grid, D, Split, Right);
         bbox BBox {
           .Min = Params.BBox.Min + G.From3 * W3,
-          .Max = Params.BBox.Min + (G.From3 + G.Dims3 * G.Stride3) * W3
+          .Max = Params.BBox.Min + (G.From3 + (G.Dims3 - 1) * G.Stride3 + 1) * W3
         };
         FOR(int, I, 0, Params.NDims) { // go until one particle per cell
           REQUIRE(BBox.Min[I] <= P3[I]);
@@ -2269,12 +2433,24 @@ ReadParticles(cstr FileName) {
   return std::vector<particle>();
 }
 
+static std::vector<particle_int>
+ReadParticlesInt(cstr FileName) {
+  if (strstr(FileName, ".ply"))
+    return ReadPlyInt(FileName);
+  return std::vector<particle_int>();
+}
+
 static void
 WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
   if (strstr(FileName, ".xyz"))
     WriteXYZ(FileName, Particles.begin(), Particles.end());
   if (strstr(FileName, ".ply"))
     WritePLY(FileName, Particles.begin(), Particles.end());
+}
+
+static void
+WriteParticlesInt(cstr FileName, const std::vector<particle_int>& Particles) {
+  WritePLYInt(FileName, Particles);
 }
 
 int
@@ -2313,33 +2489,33 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     //if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
-    Particles = ReadParticles(Params.InFile);
-    if (Particles.size() == 0)
+    ParticlesInt = ReadParticlesInt(Params.InFile);
+    if (ParticlesInt.size() == 0)
       EXIT_ERROR("No particles read");
-    Params.NParticles = Particles.size();
-    printf("number of particles = %zu\n", Particles.size());
-    Params.BBox = ComputeBoundingBox(Particles);
-    if (Params.BBox.Max.z == Params.BBox.Min.z) // 2D data set
-      Params.BBox.Max.z = Params.BBox.Min.z + 1;
-    Params.LogDims3 = ComputeGrid(&Particles, Params.BBox, 0, Particles.size(), 0, Params.DimsStr);
+    Params.NParticles = ParticlesInt.size();
+    printf("number of particles = %zu\n", ParticlesInt.size());
+    Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
+    if (Params.BBoxInt.Max.z == Params.BBoxInt.Min.z) // 2D data set
+      Params.BBoxInt.Max.z = Params.BBoxInt.Min.z + 1;
+    ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
     printf("%s\n", Params.DimsStr);
-    Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
-    Params.Dims3 = vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
-    grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
+    //Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
+    Params.Dims3 = Params.BBoxInt.Max - Params.BBoxInt.Min + 1; //vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
+    grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3f ") - (" PRIvec3f ")\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
-    printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
+    //printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
     //BlockStreams.resize(Params.NLevels + 1);
     //EncodeRootNew(Particles.size());
     /* compute the maximum height based on the accuracy */
-    if (Params.MaxHeight == 255) {
-      Params.MaxHeight = 0;
-      vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-      while (W3.x > Params.Accuracy) { ++Params.MaxHeight; W3.x *= 0.5; }
-      while (W3.y > Params.Accuracy) { ++Params.MaxHeight; W3.y *= 0.5; }
-      while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
-    }
-    Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
-    Params.BlockDims3 = Params.Dims3;
+    //if (Params.MaxHeight == 255) {
+    //  Params.MaxHeight = 0;
+    //  vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
+    //  while (W3.x > Params.Accuracy) { ++Params.MaxHeight; W3.x *= 0.5; }
+    //  while (W3.y > Params.Accuracy) { ++Params.MaxHeight; W3.y *= 0.5; }
+    //  while (W3.z > Params.Accuracy) { ++Params.MaxHeight; W3.z *= 0.5; }
+    //}
+    //Params.MaxHeight = MAX(Params.MaxHeight, Params.BaseHeight);
+    //Params.BlockDims3 = Params.Dims3;
     //BuildTreeNew(q_item_new{ .Begin = 0,
     //                          .End = (i64)Particles.size(),
     //                          .Idx = 1,
@@ -2349,12 +2525,12 @@ main(int Argc, cstr* Argv) {
     ////ParticleCells.resize(PROD(Params.BlockDims3));
     CdfTable = CreateBinomialTable(cutoff1);
     InitWrite(&BlockStream, 100000000); // 100 MB
-    //GrowToAccomodate(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
-    WriteVarByte(&BlockStream, Particles.size());
-    //BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, 
-    //  Params.NLevels > 1 ? ResolutionSplit : SpatialSplit, 0);
-    BuildTreeDFS(0, Particles.size(), 0, Grid, Params.NLevels - 1, SPLIT, 0);
+    WriteVarByte(&BlockStream, ParticlesInt.size());
+    FOR_EACH(P, ParticlesInt) {
+      P->Pos = P->Pos - Params.BBoxInt.Min;
+    }
+    BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
@@ -2362,8 +2538,8 @@ main(int Argc, cstr* Argv) {
     fclose(Fp);
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("Stream size = %lld\n", BlockStreamSize);
-    printf("RMSE = %f\n", sqrt(RMSE / (Particles.size() * Params.NDims)));
-    printf("# particles = %lld\n", NParticlesDecoded/* / Params.NDims*/);
+    printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));
+    printf("# particles = %lld\n", NParticlesDecoded / Params.NDims);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -2482,7 +2658,8 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     bool Quantize = OptExists(Argc, Argv, "--quantize");
     f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
-    auto Particles = ReadParticles(Params.InFile);
+    Particles = ReadParticles(Params.InFile);
+    ParticlesInt.resize(Particles.size());
     if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
         MaxAbsX = MAX(MaxAbsX, fabs(P->Pos.x));
@@ -2491,15 +2668,17 @@ main(int Argc, cstr* Argv) {
       }
       int EMaxX = Exponent(MaxAbsX), EMaxY = Exponent(MaxAbsY), EMaxZ = Exponent(MaxAbsZ);
       /* quantize */
-      int Bits = 23;
+      int Bits = 10;
       f64 ScaleX = ldexp(1, Bits - 1 - EMaxX), ScaleY = ldexp(1, Bits - 1 - EMaxY), ScaleZ = ldexp(1, Bits - 1 - EMaxZ);
-      FOR_EACH(P, Particles) {
-        P->Pos.x = i32(ScaleX * P->Pos.x);
-        P->Pos.y = i32(ScaleY * P->Pos.y);
-        P->Pos.z = i32(ScaleZ * P->Pos.z);
+      for (i64 I = 0; I < Particles.size() ; ++I) {
+        ParticlesInt[I].Pos.x = i32(ScaleX * Particles[I].Pos.x);
+        ParticlesInt[I].Pos.y = i32(ScaleY * Particles[I].Pos.y);
+        ParticlesInt[I].Pos.z = i32(ScaleZ * Particles[I].Pos.z);
       }
+      WriteParticlesInt(Params.OutFile, ParticlesInt);
+    } else {
+      WriteParticles(Params.OutFile, Particles);
     }
-    WriteParticles(Params.OutFile, Particles);
   }
 
   //RandomLevels(&Particles);

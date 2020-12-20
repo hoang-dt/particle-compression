@@ -1541,6 +1541,8 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   if (n == 2) {
     Write(Bs, v == 1);
     return;
+  } else if (n == 1) {
+    return;
   }
   u32 l1 = Msb(n);
   u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
@@ -1732,7 +1734,9 @@ EncodeRange(double m, double s,
 struct empty_struct { };
 
 struct bbox { vec3f Min, Max; };
+struct bbox_int { vec3i Min, Max; };
 INLINE vec3f Extent(const bbox& BBox) { return BBox.Max - BBox.Min; }
+INLINE vec3i Extent(const bbox_int& BBox) { return BBox.Max - BBox.Min; }
 
 enum node_type { Root, Inner };
 
@@ -1741,8 +1745,16 @@ struct particle {
   //u64 Code = 0; //
 };
 
+struct particle_int {
+  vec3i Pos;
+};
+
 struct grid {
   vec3f From3, Dims3, Stride3;
+};
+
+struct grid_int {
+  vec3i From3, Dims3, Stride3;
 };
 
 enum split_type { ResolutionSplit, SpatialSplit };
@@ -1780,6 +1792,7 @@ struct params {
   float Accuracy = 0;
   float DecodeAccuracy = 0;
   bbox BBox;
+  bbox_int BBoxInt;
   vec3i LogDims3;
   vec3i BlockDims3; // TODO: compute this
   u8 BaseHeight;
@@ -1790,6 +1803,21 @@ struct params {
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
 };
+
+inline grid_int
+SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
+  auto Out = Grid;
+  if (SplitType == ResolutionSplit) {
+    Out.From3[D] += (Side == Right) * Out.Stride3[D];
+    Out.Dims3[D] = (Out.Dims3[D] + (Side == Left)) >> 1;
+    Out.Stride3[D] <<= 1;
+  } else { // spatial split
+    i32 LeftDims = (Out.Dims3[D] + 1) >> 1;
+    Out.Dims3[D] = Side == Left? LeftDims : Out.Dims3[D] - LeftDims;
+    Out.From3[D] += (Side == Right) * Out.Stride3[D] * LeftDims;
+  }
+  return Out;
+}
 
 inline grid
 SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
@@ -1835,6 +1863,7 @@ struct block {
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
 inline block_table Blocks;
 inline std::vector<particle> Particles;
+inline std::vector<particle_int> ParticlesInt;
 inline std::vector<particle> ParticlesDecoded;
 inline std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
 inline std::vector<bitstream> RefBlockStreams; // [height] -> bitstream (of the current block)
@@ -1957,6 +1986,47 @@ ReadCosmo(cstr FileName) {
     ReadPOD(Fp, &Vel); // dummy
   }
   fclose(Fp);
+  return Particles;
+}
+
+inline std::vector<particle_int>
+ReadPlyInt(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  char Buf[128];
+  fgets(Buf, sizeof Buf, Fp); // "ply"
+  fgets(Buf, sizeof Buf, Fp); // "format ascii" or "format binary_little_endian 1.0"
+  bool Ascii = strstr(Buf, "ascii");
+  // assume float x, y, z
+  int NDims = 0;
+  i64 NParticles = 0;
+  while (!strstr(Buf, "end_header")) {
+    fgets(Buf, sizeof Buf, Fp);
+    if (strstr(Buf, "element vertex")) {
+      sscanf(Buf, "element vertex %lld", &NParticles);
+    } else if (strstr(Buf, "property float x") || strstr(Buf, "property float y") || strstr(Buf, "property float z")) {
+      ++NDims;
+    } else if (strstr(Buf, "property int x") || strstr(Buf, "property int y") || strstr(Buf, "property int z")) {
+      ++NDims;
+    }
+  }
+  // read the contents
+  std::vector<particle_int> Particles(NParticles);
+  if (Ascii) {
+    if (NDims == 3) {
+      FOR_EACH(P, Particles) {
+        fgets(Buf, sizeof Buf, Fp);
+        sscanf(Buf, "%d %d %d", &P->Pos.x, &P->Pos.y, &P->Pos.z);
+      }
+    } else if (NDims == 2) {
+      FOR_EACH(P, Particles) {
+        fgets(Buf, sizeof Buf, Fp);
+        sscanf(Buf, "%d %d", &P->Pos.x, &P->Pos.y);
+        P->Pos.z = 0;
+      }
+    }
+  } else { // binary
+    // TODO
+  }
   return Particles;
 }
 
@@ -2108,6 +2178,28 @@ WritePLY(cstr FileName, t Begin, t End) {
   fprintf(Fp, "end_header\n");
   for (auto P = Begin; P != End; ++P) {
     fprintf(Fp, "%.7f %.7f %.7f\n", P->Pos.x, P->Pos.y, P->Pos.z);
+  }
+  //fflush(Fp);
+  //for (auto P = Begin; P != End; ++P) {
+  //  fwrite(&P->Pos, sizeof(*P), 1, Fp);
+  //}
+  fclose(Fp);
+}
+
+inline void
+WritePLYInt(cstr FileName, const std::vector<particle_int>& Particles) {
+  FILE* Fp = fopen(FileName, "w");
+  i64 NParticles = Particles.size();
+  fprintf(Fp, "ply\n");
+  //fprintf(Fp, "format binary_little_endian 1.0\n");
+  fprintf(Fp, "format ascii 1.0\n");
+  fprintf(Fp, "element vertex %lld\n", NParticles);
+  fprintf(Fp, "property int x\n");
+  fprintf(Fp, "property int y\n");
+  fprintf(Fp, "property int z\n");
+  fprintf(Fp, "end_header\n");
+  FOR_EACH(P, Particles) {
+    fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);
   }
   //fflush(Fp);
   //for (auto P = Begin; P != End; ++P) {
