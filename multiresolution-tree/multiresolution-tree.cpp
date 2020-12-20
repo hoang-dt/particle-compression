@@ -1588,6 +1588,12 @@ EncodeNode(i64 NodeIdx, i64 M, i64 N) {
 
 #define SPLIT SpatialSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
+i64 SeparationCodeLength = 0;
+i64 RefinementCodeLength = 0;
+f64 Ratio = 0;
+i64 RatioCount = 0;
+i64 NodesWithMoreEmptyCellsCount = 0;
+i64 NodesWithMoreParticlesCount = 0;
 static void
 BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -1627,25 +1633,47 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
     i64 N = Mid - Begin;
     i64 P = M - N; // number of points on the right
     i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
+    if (CellCount == M)
+      return; // may speed up the encoding
     i64 CellCountRight = 1;
     FOR(int, I, 0, Params.NDims) {
       CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
     }
     REQUIRE(CellCount >= M);
-    if (CellCount - M < M) { // more empty than occupied cells, encode the empty cells
+    if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
+      ++NodesWithMoreParticlesCount;
       if (Split == SpatialSplit)
         EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
       else // resolution split, use binomial coding
         EncodeNode(0, CellCount - M, CellCountRight - P);
-    } else { // encode the particles
+      SeparationCodeLength += log2(f64(CellCount - M + 1));
+      if (M < CellCount) {
+        Ratio += (f64(CellCount - P) / (CellCount - M));
+        RatioCount++;
+      }
+    } else { // more empty cells than particles, encode the particles
+      ++NodesWithMoreEmptyCellsCount;
       if (Split == SpatialSplit)
         EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
       else // resolution split, use binomial coding
         EncodeNode(0, M, P);
+      SeparationCodeLength += log2(M + 1);
+      Ratio += (f64(N) / M);
+      RatioCount++;
     }
   } else {
     return;
   }
+  //if (Begin < Mid) {
+  //  Write(&BlockStream, 1);
+  //} else {
+  //  Write(&BlockStream, 0);
+  //}
+  //if (Mid < End) {
+  //  Write(&BlockStream, 1);
+  //} else {
+  //  Write(&BlockStream, 0);
+  //}
   /* recurse on the left or right */
   if (Begin < Mid) {
     if (Begin + 1 == Mid) { // left leaf
@@ -1665,6 +1693,7 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
             i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
             bool LeftSide = P3[I] <= Half;
             Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
             if (LeftSide) {
               BBox.Max[I] = Half;
             } else {
@@ -1702,6 +1731,7 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
             i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
             bool LeftSide = P3[I] <= Half;
             Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
             if (LeftSide) {
               BBox.Max[I] = Half;
             } else {
@@ -2537,9 +2567,15 @@ main(int Argc, cstr* Argv) {
     fwrite(BlockStream.Stream.Data, BlockStreamSize, 1, Fp);
     fclose(Fp);
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
-    printf("Stream size = %lld\n", BlockStreamSize);
+    printf("Stream size                        = %lld\n", BlockStreamSize);
+    printf("Separation code size (theoretical) = %lld\n", (SeparationCodeLength + 7 ) / 8);
+    printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
+    printf("Refinement code size               = %lld\n", (RefinementCodeLength + 7 ) / 8);
     printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));
     printf("# particles = %lld\n", NParticlesDecoded / Params.NDims);
+    printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
+    printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
+    printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
