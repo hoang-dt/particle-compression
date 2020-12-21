@@ -1757,7 +1757,7 @@ struct grid_int {
   vec3i From3, Dims3, Stride3;
 };
 
-enum split_type { ResolutionSplit, SpatialSplit };
+enum split_type { ResolutionSplit, SpatialSplit, BalanceSplit };
 enum side { Left, Right };
 enum class action : int { Encode, Decode, Error, Convert };
 
@@ -2194,9 +2194,9 @@ WritePLYInt(cstr FileName, const std::vector<particle_int>& Particles) {
   //fprintf(Fp, "format binary_little_endian 1.0\n");
   fprintf(Fp, "format ascii 1.0\n");
   fprintf(Fp, "element vertex %lld\n", NParticles);
-  fprintf(Fp, "property int x\n");
-  fprintf(Fp, "property int y\n");
-  fprintf(Fp, "property int z\n");
+  fprintf(Fp, "property float x\n");
+  fprintf(Fp, "property float y\n");
+  fprintf(Fp, "property float z\n");
   fprintf(Fp, "end_header\n");
   FOR_EACH(P, Particles) {
     fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);

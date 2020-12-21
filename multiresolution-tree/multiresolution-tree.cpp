@@ -1586,6 +1586,28 @@ EncodeNode(i64 NodeIdx, i64 M, i64 N) {
   EncodeRange(Mean, StdDev, f64(0), f64(M), f64(N), CdfTable, &BlockStream, &Coder);
 }
 
+/* generate random particles in a grid of 512^3, with a given density */
+static std::vector<particle_int>
+GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
+  //REQUIRE(Prob >= 0);
+  //REQUIRE(Prob <= 100);
+  printf("prob = %d\n", Prob);
+  std::vector<particle_int> Result;
+  Result.reserve(128 * 128 * 128);
+  FOR(i32, I, 0, 128) {
+    FOR(i32, J, 0, 128) {
+      FOR(i32, K, 0, 128) {
+        if ((rand() % 100) < Prob) {
+          Result.push_back(particle_int{.Pos = {I, J, K}});
+        } else {
+          int Stop = 0;
+        }
+      }
+    }
+  }
+  return Result;
+}
+
 #define SPLIT SpatialSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
 i64 SeparationCodeLength = 0;
@@ -1642,6 +1664,7 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
     REQUIRE(CellCount >= M);
     if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
       ++NodesWithMoreParticlesCount;
+      REQUIRE(CellCountRight >= P);
       if (Split == SpatialSplit)
         EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
       else // resolution split, use binomial coding
@@ -1674,6 +1697,128 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
   //} else {
   //  Write(&BlockStream, 0);
   //}
+  /* recurse on the left or right */
+  if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // left leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
+        vec3i P3 = Particles[Begin].Pos;
+        vec3i Pos3;
+        auto G = SplitGrid(Grid, D, Split, Left);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the left
+      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
+      BuildTreeInt(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), NextSplit, Depth + 1);
+    }
+  }
+  if (Mid < End) {
+    if (Mid + 1 == End) { // right leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+        vec3i Pos3;
+        vec3i P3 = Particles[Mid].Pos;
+        auto G = SplitGrid(Grid, D, Split, Right);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (G.Dims3[I] > 1/* && BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy*/) { // NOTE: enable this to refine the tree uniformly until the leaf level
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the right
+      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
+      BuildTreeInt(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
+    }
+  }
+}
+
+/* Split so that the number of particles are approximately equal on both sides 
+(instead of splitting in the middle of the bounding box) */
+static void
+BuildTreeIntBalance(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
+  i8 D = Params.DimsStr[Depth] - 'x';
+  if (Grid.Dims3[D] == 1) {
+    return BuildTreeInt(Particles, Begin, End, Grid, Split, Depth + 1);
+  }
+  i64 Mid = Begin;
+  i32 MM = 0;
+  if (Split == BalanceSplit) { // resolution split
+    auto Pred = [D](const particle_int& P1, const particle_int& P2) {
+      return P1.Pos[D] < P2.Pos[D];
+    };
+    std::sort(Particles.begin() + Begin, Particles.end() + End, Pred);
+    Mid = (Begin + End) / 2;
+  } else { // spatial split
+    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      return P.Pos[D] <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+  bbox_int ParentBBox {
+    .Min = Grid.From3,
+    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+  };
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+      Stop = false;
+      break;
+    }
+  }
+  if (!Stop) {
+    // encode the bin where Particle[Mid].Pos[D] is
+    i32 E = Particles[End - 1].Pos[D];
+    i32 B = Particles[Begin].Pos[D];
+    i32 M = Particles[Mid].Pos[D];
+    EncodeCenteredMinimal(M - B, E - B + 1, &BlockStream);
+  } else {
+    return;
+  }
   /* recurse on the left or right */
   if (Begin < Mid) {
     if (Begin + 1 == Mid) { // left leaf
@@ -2434,6 +2579,33 @@ CompressBlockFast() {
   }
 }
 
+std::vector<particle_int>
+RemoveRepeatedParticles(std::vector<particle_int>& Input) {
+  std::vector<particle_int> Output;
+  Output.reserve(Input.size());
+  std::sort(Input.begin(), Input.end(), [](const auto& P1, const auto& P2) {
+    bool SameZ = P1.Pos.z == P2.Pos.z;
+    if (SameZ) {
+      bool SameY = P1.Pos.y == P2.Pos.y;
+      if (SameY) {
+        return P1.Pos.x < P2.Pos.x;
+      } else {
+        return P1.Pos.y < P2.Pos.y;
+      }
+    } else {
+      return P1.Pos.z < P2.Pos.z;
+    }
+    return true;
+  });
+  Output.push_back(Input[0]);
+  for (i64 I = 1; I < Input.size(); ++I) {
+    if (Input[I].Pos != Input[I - 1].Pos) {
+      Output.push_back(Input[I]);
+    }
+  }
+  return Output;
+}
+
 // TODO: add the number of blocks to the .idx file
 // TODO: 
 
@@ -2465,7 +2637,7 @@ ReadParticles(cstr FileName) {
 
 static std::vector<particle_int>
 ReadParticlesInt(cstr FileName) {
-  if (strstr(FileName, ".ply"))
+ if (strstr(FileName, ".ply"))
     return ReadPlyInt(FileName);
   return std::vector<particle_int>();
 }
@@ -2485,6 +2657,13 @@ WriteParticlesInt(cstr FileName, const std::vector<particle_int>& Particles) {
 
 int
 main(int Argc, cstr* Argv) {
+  //{
+  //  i32 Prob = 0;
+  //  ToInt(Argv[1], &Prob);
+  //  auto Particles = GenerateRandomParticles(Prob);
+  //  WritePLYInt(PRINT("%random-%d.ply", Prob), Particles);
+  //  return 0;
+  //}
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2520,6 +2699,7 @@ main(int Argc, cstr* Argv) {
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     //if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
     ParticlesInt = ReadParticlesInt(Params.InFile);
+    ParticlesInt = RemoveRepeatedParticles(ParticlesInt);
     if (ParticlesInt.size() == 0)
       EXIT_ERROR("No particles read");
     Params.NParticles = ParticlesInt.size();
