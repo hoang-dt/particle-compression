@@ -1608,8 +1608,12 @@ GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
   return Result;
 }
 
+i64 Counts[33] = {};
+i64 ZeroCount = 0;
+i64 TotalCount = 0;
 #define SPLIT SpatialSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
+#define THRESHOLD2 0
 i64 SeparationCodeLength = 0;
 i64 RefinementCodeLength = 0;
 f64 Ratio = 0;
@@ -1657,32 +1661,58 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
     i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
     if (CellCount == M)
       return; // may speed up the encoding
-    i64 CellCountRight = 1;
-    FOR(int, I, 0, Params.NDims) {
-      CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
-    }
-    REQUIRE(CellCount >= M);
-    if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
-      ++NodesWithMoreParticlesCount;
-      REQUIRE(CellCountRight >= P);
-      if (Split == SpatialSplit)
-        EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
-      else // resolution split, use binomial coding
-        EncodeNode(0, CellCount - M, CellCountRight - P);
-      SeparationCodeLength += log2(f64(CellCount - M + 1));
-      if (M < CellCount) {
-        Ratio += (f64(CellCount - P) / (CellCount - M));
+    if (CellCount > THRESHOLD2) {
+      i64 CellCountRight = 1;
+      FOR(int, I, 0, Params.NDims) {
+        CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+      }
+      REQUIRE(CellCount >= M);
+      if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
+        ++NodesWithMoreParticlesCount;
+        REQUIRE(CellCountRight >= P);
+        //if (Split == SpatialSplit)
+        //  EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+        //else // resolution split, use binomial coding
+        //  EncodeNode(0, CellCount - M, CellCountRight - P);
+        if (CellCountRight - P <= 32) {
+          ++Counts[CellCountRight - P];
+        }
+        if (CellCountRight - P == 0) {
+          SeparationCodeLength += 1;
+          ++ZeroCount;
+          ++TotalCount;
+        } else {
+          SeparationCodeLength += log2(CellCount - M);
+          ++TotalCount;
+        }
+        //SeparationCodeLength += log2(f64(CellCount - M + 1));
+        if (M < CellCount) {
+          Ratio += (f64(CellCount - P) / (CellCount - M));
+          RatioCount++;
+        }
+      } else { // more empty cells than particles, encode the particles
+        ++NodesWithMoreEmptyCellsCount;
+        //if (Split == SpatialSplit)
+        //  EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+        //else // resolution split, use binomial coding
+        //  EncodeNode(0, M, P);
+        if (P <= 32) {
+          ++Counts[P];
+        }
+        if (P == 0) {
+          SeparationCodeLength += 1;
+          ++ZeroCount;
+          ++TotalCount;
+        } else {
+          SeparationCodeLength += log2(M);
+          ++TotalCount;
+        }
+        //SeparationCodeLength += log2(M + 1);
+        Ratio += (f64(N) / M);
         RatioCount++;
       }
-    } else { // more empty cells than particles, encode the particles
-      ++NodesWithMoreEmptyCellsCount;
-      if (Split == SpatialSplit)
-        EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
-      else // resolution split, use binomial coding
-        EncodeNode(0, M, P);
-      SeparationCodeLength += log2(M + 1);
-      Ratio += (f64(N) / M);
-      RatioCount++;
+    } else {
+      Write(&BlockStream, 0, CellCount);
     }
   } else {
     return;
@@ -2756,6 +2786,10 @@ main(int Argc, cstr* Argv) {
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
+    printf("zero ratio = %f Zero count = %lld total count = %lld\n", f64(ZeroCount) / TotalCount, ZeroCount, TotalCount);
+    FOR (int, I, 0, 33) {
+      printf("%d ", Counts[I]);
+    }
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
