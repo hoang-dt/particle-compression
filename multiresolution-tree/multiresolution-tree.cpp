@@ -1614,7 +1614,7 @@ i64 TotalCount = 0;
 #define SPLIT SpatialSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
 #define THRESHOLD2 0
-i64 SeparationCodeLength = 0;
+f64 SeparationCodeLength = 0;
 i64 RefinementCodeLength = 0;
 f64 Ratio = 0;
 i64 RatioCount = 0;
@@ -1661,58 +1661,61 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
     i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
     if (CellCount == M)
       return; // may speed up the encoding
-    if (CellCount > THRESHOLD2) {
-      i64 CellCountRight = 1;
-      FOR(int, I, 0, Params.NDims) {
-        CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+    
+    i64 CellCountRight = 1;
+    FOR(int, I, 0, Params.NDims) {
+      CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+    }
+    REQUIRE(CellCount >= M);
+    if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
+      ++NodesWithMoreParticlesCount;
+      REQUIRE(CellCountRight >= P);
+      //if (Split == SpatialSplit)
+      //  EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+      //else // resolution split, use binomial coding
+      //  EncodeNode(0, CellCount - M, CellCountRight - P);
+      if (CellCountRight - P <= 32) {
+        ++Counts[CellCountRight - P];
       }
-      REQUIRE(CellCount >= M);
-      if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
-        ++NodesWithMoreParticlesCount;
-        REQUIRE(CellCountRight >= P);
-        //if (Split == SpatialSplit)
-        //  EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
-        //else // resolution split, use binomial coding
-        //  EncodeNode(0, CellCount - M, CellCountRight - P);
-        if (CellCountRight - P <= 32) {
-          ++Counts[CellCountRight - P];
-        }
-        if (CellCountRight - P == 0) {
-          SeparationCodeLength += 1;
-          ++ZeroCount;
-          ++TotalCount;
-        } else {
-          SeparationCodeLength += log2(CellCount - M);
-          ++TotalCount;
-        }
-        //SeparationCodeLength += log2(f64(CellCount - M + 1));
-        if (M < CellCount) {
-          Ratio += (f64(CellCount - P) / (CellCount - M));
-          RatioCount++;
-        }
-      } else { // more empty cells than particles, encode the particles
-        ++NodesWithMoreEmptyCellsCount;
-        //if (Split == SpatialSplit)
-        //  EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
-        //else // resolution split, use binomial coding
-        //  EncodeNode(0, M, P);
-        if (P <= 32) {
-          ++Counts[P];
-        }
-        if (P == 0) {
-          SeparationCodeLength += 1;
-          ++ZeroCount;
-          ++TotalCount;
-        } else {
-          SeparationCodeLength += log2(M);
-          ++TotalCount;
-        }
-        //SeparationCodeLength += log2(M + 1);
-        Ratio += (f64(N) / M);
+      if (CellCountRight - P == 0) {
+        SeparationCodeLength += 1;
+        //Write(&BlockStream, 0);
+        ++ZeroCount;
+        ++TotalCount;
+        EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+      } else {
+        EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+        SeparationCodeLength += log2(CellCount - M +1);
+        ++TotalCount;
+      }
+      //SeparationCodeLength += log2(f64(CellCount - M + 1));
+      if (M < CellCount) {
+        Ratio += (f64(CellCount - P) / (CellCount - M));
         RatioCount++;
       }
-    } else {
-      Write(&BlockStream, 0, CellCount);
+    } else { // more empty cells than particles, encode the particles
+      ++NodesWithMoreEmptyCellsCount;
+      //if (Split == SpatialSplit)
+      //  EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+      //else // resolution split, use binomial coding
+      //  EncodeNode(0, M, P);
+      if (P <= 32) {
+        ++Counts[P];
+      }
+      if (P == 0) {
+        SeparationCodeLength += 1;
+        ++ZeroCount;
+        ++TotalCount;
+        //Write(&BlockStream, 0);
+        EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+      } else {
+        EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+        SeparationCodeLength += log2(M+1);
+        ++TotalCount;
+      }
+      //SeparationCodeLength += log2(M + 1);
+      Ratio += (f64(N) / M);
+      RatioCount++;
     }
   } else {
     return;
@@ -1802,6 +1805,249 @@ BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const gri
     } else { // recurse on the right
       split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
       BuildTreeInt(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
+    }
+  }
+}
+
+static constexpr int Threshold = 1 << 10;
+static u32 ProbCount[Threshold + 1][Threshold + 1] = {};
+static u32 SingleProbCount[Threshold + 1] = {};
+static u32 ProbTotal = 0;
+
+inline void
+CreateProbTable() {
+  FOR(int, N, 0, Threshold + 1)
+    FOR(int, K, 1, N + 1)
+      ProbCount[N][K] += ProbCount[N][K-1];
+  FOR(int, N, 1, Threshold + 1) {
+    SingleProbCount[N] += SingleProbCount[N - 1];
+    ProbTotal = SingleProbCount[N];
+  }
+}
+
+/* In the first pass, we collect statistics about node value distribution */
+static void
+BuildTreeIntPass1(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
+  i8 D = Params.DimsStr[Depth] - 'x';
+  if (Grid.Dims3[D] == 1) {
+    return BuildTreeIntPass1(Particles, Begin, End, Grid, Split, Depth + 1);
+  }
+  i64 Mid = Begin;
+  i32 MM = 0;
+  if (Split == ResolutionSplit) {
+    auto RPred = [D, &Grid](const particle_int& P) {
+      i32 Bin = P.Pos[D];
+      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
+      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else {
+    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      return P.Pos[D] <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+  bbox_int ParentBBox {
+    .Min = Grid.From3,
+    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+  };
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+      Stop = false;
+      break;
+    }
+  }
+  if (!Stop) {
+    i64 M = End - Begin;
+    i64 P = End - Mid;
+    i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
+    if (CellCount == M)
+      return;
+    i64 CellCountRight = 1;
+    FOR(int, I, 0, Params.NDims) {
+      CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+    }
+    if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
+      if (CellCount - M <= Threshold) {
+        ++ProbCount[CellCount - M][CellCountRight - P];
+        ++SingleProbCount[CellCountRight - P];
+      }
+    } else { // more empty cells than particles
+      if (M <= Threshold) {
+        ++ProbCount[M][P];
+        ++SingleProbCount[P];
+      }
+    }
+  } else {
+    return;
+  }
+
+   if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // left leaf
+    } else { // recurse on the left
+      split_type NextSplit = SpatialSplit;
+      BuildTreeIntPass1(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), NextSplit, Depth + 1);
+    }
+  }
+  if (Mid < End) {
+    if (Mid + 1 == End) { // right leaf
+    } else { // recurse on the right
+      split_type NextSplit = SpatialSplit;
+      BuildTreeIntPass1(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
+    }
+  }
+}
+
+static void
+BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
+  i8 D = Params.DimsStr[Depth] - 'x';
+  if (Grid.Dims3[D] == 1) {
+    return BuildTreeIntPass2(Particles, Begin, End, Grid, Split, Depth + 1);
+  }
+  i64 Mid = Begin;
+  i32 MM = 0;
+  if (Split == ResolutionSplit) { // resolution split
+    auto RPred = [D, &Grid](const particle_int& P) {
+      i32 Bin = P.Pos[D];
+      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
+      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else { // spatial split
+    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      return P.Pos[D] <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+  bbox_int ParentBBox {
+    .Min = Grid.From3,
+    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+  };
+  bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+      Stop = false;
+      break;
+    }
+  }
+  if (!Stop) {
+    i64 M = End - Begin;
+    i64 P = End - Mid; // number of points on the right
+    i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
+    if (CellCount == M)
+      return; // may speed up the encoding
+    i64 CellCountRight = 1;
+    FOR(int, I, 0, Params.NDims) {
+      CellCountRight *= I == D ? (Grid.Dims3[I] >> 1) : Grid.Dims3[I];
+    }
+    REQUIRE(CellCount >= M);
+    if (CellCount - M < M) { // more particles than empty cells, encode the empty cells
+      REQUIRE(CellCountRight >= P);
+      if (CellCount - M <= Threshold) {
+        ArithmeticEncode(CellCount - M, CellCountRight - P, ProbCount[CellCount - M][CellCount - M], ProbCount[CellCount - M], &Coder);
+        //ArithmeticEncode(CellCount - M, CellCountRight - P, ProbTotal, SingleProbCount, &Coder);
+        f64 R = CellCountRight - P == 0 ? ProbCount[CellCount - M][0] : ProbCount[CellCount - M][CellCountRight - P] - ProbCount[CellCount - M][CellCountRight - P - 1];
+        REQUIRE(R > 0);
+        SeparationCodeLength += log2(f64(ProbCount[CellCount - M][CellCount - M]) / R);
+      } else {
+        EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - M + 1), &BlockStream);
+        SeparationCodeLength += log2(CellCount - M + 1);
+      }
+    } else { // more empty cells than particles, encode the particles
+      if (M <= Threshold) {
+        ArithmeticEncode(M, P, ProbCount[M][M], ProbCount[M], &Coder);
+        //ArithmeticEncode(M, P, ProbTotal, SingleProbCount, &Coder);
+        f64 R = P == 0 ? ProbCount[M][0] : ProbCount[M][P] - ProbCount[M][P-1];
+        REQUIRE(R > 0);
+        SeparationCodeLength += log2(f64(ProbCount[M][M]) / R);
+      } else {
+        EncodeCenteredMinimal(u32(P), u32(M + 1), &BlockStream);
+        SeparationCodeLength += log2(M + 1);
+      }
+    }
+  } else {
+    return;
+  }
+  /* recurse on the left or right */
+  if (Begin < Mid) {
+    if (Begin + 1 == Mid) { // left leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
+        vec3i P3 = Particles[Begin].Pos;
+        vec3i Pos3;
+        auto G = SplitGrid(Grid, D, Split, Left);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the left
+      split_type NextSplit = SpatialSplit;
+      BuildTreeIntPass2(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), NextSplit, Depth + 1);
+    }
+  }
+  if (Mid < End) {
+    if (Mid + 1 == End) { // right leaf
+      if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+        vec3i Pos3;
+        vec3i P3 = Particles[Mid].Pos;
+        auto G = SplitGrid(Grid, D, Split, Right);
+        bbox_int BBox {
+          .Min = G.From3,
+          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+        };
+        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+            REQUIRE(BBox.Min[I] <= P3[I]);
+            REQUIRE(BBox.Max[I] >= P3[I]);
+            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            bool LeftSide = P3[I] <= Half;
+            Write(&BlockStream, LeftSide);
+            ++RefinementCodeLength;
+            if (LeftSide) {
+              BBox.Max[I] = Half;
+            } else {
+              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+            }
+          }
+          REQUIRE(BBox.Min[I] <= P3[I]);
+          REQUIRE(BBox.Max[I] >= P3[I]);
+          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          auto Diff = Pos3[I] - P3[I];
+          RMSE += Diff * Diff;
+          ++NParticlesDecoded;
+        }
+      }
+    } else { // recurse on the right
+      split_type NextSplit = SpatialSplit;
+      BuildTreeIntPass2(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
     }
   }
 }
@@ -2763,7 +3009,7 @@ main(int Argc, cstr* Argv) {
     //                          .Height = 0 }, Params.Accuracy);
 
     ////ParticleCells.resize(PROD(Params.BlockDims3));
-    CdfTable = CreateBinomialTable(cutoff1);
+    //CdfTable = CreateBinomialTable(cutoff1);
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
     WriteVarByte(&BlockStream, ParticlesInt.size());
@@ -2771,6 +3017,10 @@ main(int Argc, cstr* Argv) {
       P->Pos = P->Pos - Params.BBoxInt.Min;
     }
     BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    //BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    //CreateProbTable();
+    //BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    //Coder.EncodeFinalize();
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
@@ -2778,7 +3028,7 @@ main(int Argc, cstr* Argv) {
     fclose(Fp);
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("Stream size                        = %lld\n", BlockStreamSize);
-    printf("Separation code size (theoretical) = %lld\n", (SeparationCodeLength + 7 ) / 8);
+    printf("Separation code size (theoretical) = %f\n", (SeparationCodeLength + 7 ) / 8);
     printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
     printf("Refinement code size               = %lld\n", (RefinementCodeLength + 7 ) / 8);
     printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));

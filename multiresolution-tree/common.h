@@ -1619,6 +1619,18 @@ CreateBinomialTable(int N) {
   return table;
 }
 
+/* n = number of particles in the parent 
+   v = number of particles in the child
+   c = sum of entire cdf */
+inline void
+ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* Coder) {
+  assert(v >= 0 && v <= n);
+  u32 lo = v == 0 ? 0 : CdfTable[v - 1];
+  u32 hi = CdfTable[v];
+  prob<u32> prob{lo, hi, c};
+  Coder->Encode(prob);
+}
+
 inline void
 EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
   assert(v >= 0 && v <= n);
