@@ -2057,10 +2057,6 @@ BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, cons
 static void
 BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End, bbox_int BBox, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
-  FOR(i64, I, Begin, End) {
-    REQUIRE(ParticlesInt[I].Pos[D] <= BBox.Max[D]);
-    REQUIRE(ParticlesInt[I].Pos[D] >= BBox.Min[D]);
-  }
   i64 Mid = Begin;
   i32 MM = 0;
   if (Split == BalanceSplit) { // balance split
@@ -2089,70 +2085,83 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   i32 E = ParticlesInt[End-1].Pos[D];
   i32 B = ParticlesInt[Begin].Pos[D];
   i32 M = ParticlesInt[Mid-1].Pos[D]; // split into [B - M], [M - E)
-  if (E == 24 && B == 15 && M == 20)
-    int Stop = 0;
+  auto G = BBox.Max - BBox.Min + 1;
+  i64 CellCount = i64(G.x) * i64(G.y) * i64(G.z);
+  if (CellCount == End - Begin)
+    return; // may speed up the encoding
   REQUIRE(B <= M);
   REQUIRE(M <= E);
   REQUIRE(BBox.Min[D] <= M);
   REQUIRE(BBox.Max[D] >= M);
   EncodeCenteredMinimal(M - BBox.Min[D], BBox.Max[D] - BBox.Min[D] + 1, &BlockStream);
+  SeparationCodeLength += log2(BBox.Max[D] - BBox.Min[D] + 1);
   /* recurse on the left or right */
   if (Begin < Mid) {
-    BBox.Max[D] = M;
+    auto BBoxCopy = BBox;
+    BBoxCopy.Max[D] = M;
+    //FOR(i64, I, Begin, Mid) {
+    //  REQUIRE(ParticlesInt[I].Pos[D] <= BBoxCopy.Max[D]);
+    //  REQUIRE(ParticlesInt[I].Pos[D] >= BBoxCopy.Min[D]);
+    //}
     if (Begin + 1 == Mid) { // left leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
         vec3i P3 = ParticlesInt[Begin].Pos;
         vec3i Pos3;
         FOR(int, I, 0, Params.NDims) {
-          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
-            REQUIRE(BBox.Min[I] <= P3[I]);
-            REQUIRE(BBox.Max[I] >= P3[I]);
-            i32 Half = (BBox.Min[I] + BBox.Max[I]) >> 1;
+          while (BBoxCopy.Max[I] - BBoxCopy.Min[I] > 2 * Params.Accuracy) {
+            REQUIRE(BBoxCopy.Min[I] <= P3[I]);
+            REQUIRE(BBoxCopy.Max[I] >= P3[I]);
+            i32 Half = (BBoxCopy.Min[I] + BBoxCopy.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
-            Write(&BlockStream, LeftSide);
+            //Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
-              BBox.Max[I] = Half;
+              BBoxCopy.Max[I] = Half;
             } else {
-              BBox.Min[I] = Half + 1;
+              BBoxCopy.Min[I] = Half + 1;
             }
           }
-          //REQUIRE(BBox.Min[I] <= P3[I]);
-          //REQUIRE(BBox.Max[I] >= P3[I]);
-          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          Pos3[I] = (BBoxCopy.Max[I] + BBoxCopy.Min[I]) >> 1;
           auto Diff = Pos3[I] - P3[I];
           RMSE += Diff * Diff;
           ++NParticlesDecoded;
         }
       }
     } else { // recurse on the left
+      //if (BBoxCopy.Max[D] - BBoxCopy.Min[D] > End - Begin) { // fewer particles (should we switch to the other mode?)
+      //  return;
+      //}
       split_type NextSplit = BalanceSplit;
-      BuildTreeIntBalance(ParticlesInt, Begin, Mid, BBox, NextSplit, Depth + 1);
+      BuildTreeIntBalance(ParticlesInt, Begin, Mid, BBoxCopy, NextSplit, Depth + 1);
     }
   }
+
   if (Mid < End) {
-    BBox.Min[D] = M;
+    auto BBoxCopy = BBox;
+    BBoxCopy.Min[D] = M;
+    //FOR(i64, I, Mid, End) {
+    //  REQUIRE(ParticlesInt[I].Pos[D] <= BBoxCopy.Max[D]);
+    //  REQUIRE(ParticlesInt[I].Pos[D] >= BBoxCopy.Min[D]);
+    //}
     if (Mid + 1 == End) { // right leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3i Pos3;
         vec3i P3 = ParticlesInt[Mid].Pos;
         FOR(int, I, 0, Params.NDims) { // go until one particle per cell
-          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
-            REQUIRE(BBox.Min[I] <= P3[I]);
-            REQUIRE(BBox.Max[I] >= P3[I]);
-            i32 Half = (BBox.Min[I] + BBox.Max[I]) >> 1;
+          while (BBoxCopy.Max[I] - BBoxCopy.Min[I] > 2 * Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
+            REQUIRE(BBoxCopy.Min[I] <= P3[I]);
+            REQUIRE(BBoxCopy.Max[I] >= P3[I]);
+            i32 Half = (BBoxCopy.Min[I] + BBoxCopy.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
-            Write(&BlockStream, LeftSide);
+            //Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
-              BBox.Max[I] = Half;
+              BBoxCopy.Max[I] = Half;
             } else {
-              BBox.Min[I] = Half + 1;
+              BBoxCopy.Min[I] = Half + 1;
             }
           }
-         // REQUIRE(BBox.Min[I] <= P3[I]);
-          //REQUIRE(BBox.Max[I] >= P3[I]);
-          Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+          Pos3[I] = (BBoxCopy.Max[I] + BBoxCopy.Min[I]) >> 1;
           auto Diff = Pos3[I] - P3[I];
           RMSE += Diff * Diff;
           ++NParticlesDecoded;
@@ -2160,7 +2169,7 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
       }
     } else { // recurse on the right
       split_type NextSplit = BalanceSplit;
-      BuildTreeIntBalance(ParticlesInt, Mid, End, BBox, NextSplit, Depth + 1);
+      BuildTreeIntBalance(ParticlesInt, Mid, End, BBoxCopy, NextSplit, Depth + 1);
     }
   }
 }
