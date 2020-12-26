@@ -1611,7 +1611,7 @@ GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
 i64 Counts[33] = {};
 i64 ZeroCount = 0;
 i64 TotalCount = 0;
-#define SPLIT SpatialSplit
+#define SPLIT BalanceSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
 #define THRESHOLD2 0
 f64 SeparationCodeLength = 0;
@@ -2055,74 +2055,70 @@ BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, cons
 /* Split so that the number of particles are approximately equal on both sides 
 (instead of splitting in the middle of the bounding box) */
 static void
-BuildTreeIntBalance(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
+BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End, bbox_int BBox, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
-  if (Grid.Dims3[D] == 1) {
-    return BuildTreeInt(Particles, Begin, End, Grid, Split, Depth + 1);
+  FOR(i64, I, Begin, End) {
+    REQUIRE(ParticlesInt[I].Pos[D] <= BBox.Max[D]);
+    REQUIRE(ParticlesInt[I].Pos[D] >= BBox.Min[D]);
   }
   i64 Mid = Begin;
   i32 MM = 0;
-  if (Split == BalanceSplit) { // resolution split
+  if (Split == BalanceSplit) { // balance split
     auto Pred = [D](const particle_int& P1, const particle_int& P2) {
       return P1.Pos[D] < P2.Pos[D];
     };
-    std::sort(Particles.begin() + Begin, Particles.end() + End, Pred);
-    Mid = (Begin + End) / 2;
+    std::sort(ParticlesInt.begin() + Begin, ParticlesInt.begin() + End, Pred);
+    Mid = (Begin + End + 1) / 2;
   } else { // spatial split
-    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
-    auto SPred = [MM, D, &Grid](const particle_int& P) {
-      return P.Pos[D] <= MM;
-    };
-    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+    //MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    //auto SPred = [MM, D, &Grid](const particle_int& P) {
+    //  return P.Pos[D] <= MM;
+    //};
+    //Mid = std::partition(RANGE(ParticlesInt, Begin, End), SPred) - ParticlesInt.begin();
   }
-  bbox_int ParentBBox {
-    .Min = Grid.From3,
-    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
-  };
   bool Stop = Params.RefinementMode == refinement_mode::ERROR_BASED;
   FOR(i32, I, 0, 3) {
-    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+    if (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
       Stop = false;
       break;
     }
   }
-  if (!Stop) {
-    // encode the bin where Particle[Mid].Pos[D] is
-    i32 E = Particles[End - 1].Pos[D];
-    i32 B = Particles[Begin].Pos[D];
-    i32 M = Particles[Mid].Pos[D];
-    EncodeCenteredMinimal(M - B, E - B + 1, &BlockStream);
-  } else {
+  if (Stop)
     return;
-  }
+    // encode the bin where Particle[Mid].Pos[D] is
+  i32 E = ParticlesInt[End-1].Pos[D];
+  i32 B = ParticlesInt[Begin].Pos[D];
+  i32 M = ParticlesInt[Mid-1].Pos[D]; // split into [B - M], [M - E)
+  if (E == 24 && B == 15 && M == 20)
+    int Stop = 0;
+  REQUIRE(B <= M);
+  REQUIRE(M <= E);
+  REQUIRE(BBox.Min[D] <= M);
+  REQUIRE(BBox.Max[D] >= M);
+  EncodeCenteredMinimal(M - BBox.Min[D], BBox.Max[D] - BBox.Min[D] + 1, &BlockStream);
   /* recurse on the left or right */
   if (Begin < Mid) {
+    BBox.Max[D] = M;
     if (Begin + 1 == Mid) { // left leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
-        vec3i P3 = Particles[Begin].Pos;
+        vec3i P3 = ParticlesInt[Begin].Pos;
         vec3i Pos3;
-        auto G = SplitGrid(Grid, D, Split, Left);
-        bbox_int BBox {
-          .Min = G.From3,
-          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
-        };
-        FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+        FOR(int, I, 0, Params.NDims) {
           while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
             REQUIRE(BBox.Min[I] <= P3[I]);
             REQUIRE(BBox.Max[I] >= P3[I]);
-            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
-            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            i32 Half = (BBox.Min[I] + BBox.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
             Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
               BBox.Max[I] = Half;
             } else {
-              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+              BBox.Min[I] = Half + 1;
             }
           }
-          REQUIRE(BBox.Min[I] <= P3[I]);
-          REQUIRE(BBox.Max[I] >= P3[I]);
+          //REQUIRE(BBox.Min[I] <= P3[I]);
+          //REQUIRE(BBox.Max[I] >= P3[I]);
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
           auto Diff = Pos3[I] - P3[I];
           RMSE += Diff * Diff;
@@ -2130,37 +2126,32 @@ BuildTreeIntBalance(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
         }
       }
     } else { // recurse on the left
-      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
-      BuildTreeInt(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), NextSplit, Depth + 1);
+      split_type NextSplit = BalanceSplit;
+      BuildTreeIntBalance(ParticlesInt, Begin, Mid, BBox, NextSplit, Depth + 1);
     }
   }
   if (Mid < End) {
+    BBox.Min[D] = M;
     if (Mid + 1 == End) { // right leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3i Pos3;
-        vec3i P3 = Particles[Mid].Pos;
-        auto G = SplitGrid(Grid, D, Split, Right);
-        bbox_int BBox {
-          .Min = G.From3,
-          .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
-        };
+        vec3i P3 = ParticlesInt[Mid].Pos;
         FOR(int, I, 0, Params.NDims) { // go until one particle per cell
-          while (G.Dims3[I] > 1/* && BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy*/) { // NOTE: enable this to refine the tree uniformly until the leaf level
+          while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) { // NOTE: enable this to refine the tree uniformly until the leaf level
             REQUIRE(BBox.Min[I] <= P3[I]);
             REQUIRE(BBox.Max[I] >= P3[I]);
-            G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
-            i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+            i32 Half = (BBox.Min[I] + BBox.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
             Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
               BBox.Max[I] = Half;
             } else {
-              G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+              BBox.Min[I] = Half + 1;
             }
           }
-          REQUIRE(BBox.Min[I] <= P3[I]);
-          REQUIRE(BBox.Max[I] >= P3[I]);
+         // REQUIRE(BBox.Min[I] <= P3[I]);
+          //REQUIRE(BBox.Max[I] >= P3[I]);
           Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
           auto Diff = Pos3[I] - P3[I];
           RMSE += Diff * Diff;
@@ -2168,11 +2159,12 @@ BuildTreeIntBalance(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
         }
       }
     } else { // recurse on the right
-      split_type NextSplit = Grid.Dims3.x * Grid.Dims3.y * Grid.Dims3.z > THRESHOLD ? SpatialSplit : ResolutionSplit;
-      BuildTreeInt(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), NextSplit, Depth + 1);
+      split_type NextSplit = BalanceSplit;
+      BuildTreeIntBalance(ParticlesInt, Mid, End, BBox, NextSplit, Depth + 1);
     }
   }
 }
+
 static void
 BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -3016,7 +3008,10 @@ main(int Argc, cstr* Argv) {
     FOR_EACH(P, ParticlesInt) {
       P->Pos = P->Pos - Params.BBoxInt.Min;
     }
-    BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    Params.BBoxInt.Max = Params.BBoxInt.Max - Params.BBoxInt.Min;
+    Params.BBoxInt.Min = vec3i(0);
+    BuildTreeIntBalance(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, SPLIT, 0);
+    //BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
     //BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
     //CreateProbTable();
     //BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
