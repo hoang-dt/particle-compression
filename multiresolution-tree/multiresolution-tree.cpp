@@ -1611,7 +1611,7 @@ GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
 i64 Counts[33] = {};
 i64 ZeroCount = 0;
 i64 TotalCount = 0;
-#define SPLIT BalanceSplit
+#define SPLIT SpatialSplit
 #define THRESHOLD 0 // where we switch from spatial split to resolution split
 #define THRESHOLD2 0
 f64 SeparationCodeLength = 0;
@@ -2056,16 +2056,23 @@ BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, cons
 (instead of splitting in the middle of the bounding box) */
 static void
 BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End, bbox_int BBox, split_type Split, i8 Depth) {
-  i8 D = Params.DimsStr[Depth] - 'x';
+  auto G = BBox.Max - BBox.Min + 1; // grid formed by BBox
+  i8 D = 0;
+  if (G[1] > G[D])
+    D = 1;
+  if (G[2] > G[D])
+    D = 2;
+
   i64 Mid = Begin;
+  i32 MM = BBox.Min[D];
   if (Split == BalanceSplit) { // balance split
     auto Pred = [D](const particle_int& P1, const particle_int& P2) {
       return P1.Pos[D] < P2.Pos[D];
     };
     std::sort(ParticlesInt.begin() + Begin, ParticlesInt.begin() + End, Pred);
-    Mid = (Begin + End + 1) / 2;
+    Mid = (Begin + End + 1) >> 1;
   } else { // spatial split
-    i32 MM = (BBox.Min[D] + BBox.Max[D]) / 2;
+    MM = (BBox.Min[D] + BBox.Max[D]) >> 1;
     auto SPred = [MM, D](const particle_int& P) {
       return P.Pos[D] <= MM;
     };
@@ -2081,43 +2088,41 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   if (Stop)
     return;
     // encode the bin where Particle[Mid].Pos[D] is
-  i32 E = ParticlesInt[End-1].Pos[D];
-  i32 B = ParticlesInt[Begin].Pos[D];
-  i32 M = ParticlesInt[Mid-1].Pos[D]; // split into [B - M], [M - E)
-  i32 N = End - Begin;
-  auto G = BBox.Max - BBox.Min + 1;
+  i64 N = End - Begin; // total number of particles
+  i64 P = End - Mid; // number of particles on the right
   i64 CellCount = i64(G.x) * i64(G.y) * i64(G.z);
-  if (CellCount == End - Begin)
-    return; // may speed up the encoding
-  REQUIRE(BBox.Min[D] <= M);
-  REQUIRE(BBox.Max[D] >= M);
+  i64 CellCountRight = 1;
+  FOR(int, I, 0, Params.NDims) {
+    CellCountRight *= I == D ? (G[I] >> 1) : G[I];
+  }
+  if (CellCount - N < N) { // more particles than empty cells, encode the empty cells
+    N = CellCount - N;
+    P = CellCountRight - P;
+  }
+  if (N == 0) {
+    NParticlesDecoded += End - Begin;
+    return;
+  }
+
+  i32 M = Begin;
   if (Split == BalanceSplit) {
-    REQUIRE(B <= M);
-    REQUIRE(M <= E);
-    EncodeCenteredMinimal(M - BBox.Min[D], BBox.Max[D] - BBox.Min[D] + 1, &BlockStream);
-    SeparationCodeLength += log2(BBox.Max[D] - BBox.Min[D] + 1);
+    M = ParticlesInt[Mid-1].Pos[D]; // split into [B - M], [M - E)
+    assert(BBox.Min[D] <= M);
+    assert(BBox.Max[D] >= M);
+    EncodeCenteredMinimal(M - BBox.Min[D], G[D], &BlockStream);
+    SeparationCodeLength += log2(G[D]);
   } else if (Split == SpatialSplit) {
-    i64 CellCountRight = 1;
-    FOR(int, I, 0, Params.NDims) {
-      CellCountRight *= I == D ? (G[I] >> 1) : G[I];
-    }
-    i64 P = End - Mid;
-    if (CellCount - N < N) { // more particles than empty cells, encode the empty cells
-      EncodeCenteredMinimal(u32(CellCountRight - P), u32(CellCount - N + 1), &BlockStream);
-      SeparationCodeLength += log2(CellCount - N + 1);
-    } else { // more empty cells than particles, encode the particles
-      EncodeCenteredMinimal(u32(P), u32(N + 1), &BlockStream);
-      SeparationCodeLength += log2(N + 1);
-    }
+    EncodeCenteredMinimal(u32(P), u32(N + 1), &BlockStream);
+    SeparationCodeLength += log2(N + 1);
   }
   /* recurse on the left or right */
   if (Begin < Mid) {
     auto BBoxCopy = BBox;
-    BBoxCopy.Max[D] = M;
-    //FOR(i64, I, Begin, Mid) {
-    //  REQUIRE(ParticlesInt[I].Pos[D] <= BBoxCopy.Max[D]);
-    //  REQUIRE(ParticlesInt[I].Pos[D] >= BBoxCopy.Min[D]);
-    //}
+    if (Split == BalanceSplit) {
+      BBoxCopy.Max[D] = M;
+    } else if (Split == SpatialSplit) {
+      BBoxCopy.Max[D] = MM;
+    }
     if (Begin + 1 == Mid) { // left leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // write refinement bits
         vec3i P3 = ParticlesInt[Begin].Pos;
@@ -2128,7 +2133,7 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
             REQUIRE(BBoxCopy.Max[I] >= P3[I]);
             i32 Half = (BBoxCopy.Min[I] + BBoxCopy.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
-            //Write(&BlockStream, LeftSide);
+            Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
               BBoxCopy.Max[I] = Half;
@@ -2137,27 +2142,28 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
             }
           }
           Pos3[I] = (BBoxCopy.Max[I] + BBoxCopy.Min[I]) >> 1;
-          auto Diff = Pos3[I] - P3[I];
+          auto Diff = Pos3[I] - P3[I];  
           RMSE += Diff * Diff;
-          ++NParticlesDecoded;
         }
+        ++NParticlesDecoded;
       }
     } else { // recurse on the left
       split_type NextSplit = BalanceSplit;
-      if (BBoxCopy.Max[D] - BBoxCopy.Min[D] > Mid - Begin) { // fewer particles (should we switch to the other mode?)
+      if (BBoxCopy.Max[D] - BBoxCopy.Min[D] + 1 < Mid - Begin) { // fewer particles (should we switch to the other mode?)
         NextSplit = SpatialSplit;
       }
+      //split_type NextSplit = SPLIT;
       BuildTreeIntBalance(ParticlesInt, Begin, Mid, BBoxCopy, NextSplit, Depth + 1);
     }
   }
 
   if (Mid < End) {
     auto BBoxCopy = BBox;
-    BBoxCopy.Min[D] = M;
-    //FOR(i64, I, Mid, End) {
-    //  REQUIRE(ParticlesInt[I].Pos[D] <= BBoxCopy.Max[D]);
-    //  REQUIRE(ParticlesInt[I].Pos[D] >= BBoxCopy.Min[D]);
-    //}
+    if (Split == BalanceSplit) {
+      BBoxCopy.Min[D] = M;
+    } else if (Split == SpatialSplit) {
+      BBoxCopy.Min[D] = MM + 1;
+    }
     if (Mid + 1 == End) { // right leaf
       if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
         vec3i Pos3;
@@ -2168,7 +2174,7 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
             REQUIRE(BBoxCopy.Max[I] >= P3[I]);
             i32 Half = (BBoxCopy.Min[I] + BBoxCopy.Max[I]) >> 1;
             bool LeftSide = P3[I] <= Half;
-            //Write(&BlockStream, LeftSide);
+            Write(&BlockStream, LeftSide);
             ++RefinementCodeLength;
             if (LeftSide) {
               BBoxCopy.Max[I] = Half;
@@ -2179,14 +2185,15 @@ BuildTreeIntBalance(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
           Pos3[I] = (BBoxCopy.Max[I] + BBoxCopy.Min[I]) >> 1;
           auto Diff = Pos3[I] - P3[I];
           RMSE += Diff * Diff;
-          ++NParticlesDecoded;
         }
+        ++NParticlesDecoded;
       }
     } else { // recurse on the right
       split_type NextSplit = BalanceSplit;
-      if (BBoxCopy.Max[D] - BBoxCopy.Min[D] > End - Mid) { // fewer particles (should we switch to the other mode?)
+      if (BBoxCopy.Max[D] - BBoxCopy.Min[D] < End - Mid) { // fewer particles (should we switch to the other mode?)
         NextSplit = SpatialSplit;
       }
+      //split_type NextSplit = SPLIT;
       BuildTreeIntBalance(ParticlesInt, Mid, End, BBoxCopy, NextSplit, Depth + 1);
     }
   }
@@ -3054,7 +3061,7 @@ main(int Argc, cstr* Argv) {
     printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
     printf("Refinement code size               = %lld\n", (RefinementCodeLength + 7 ) / 8);
     printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));
-    printf("# particles = %lld\n", NParticlesDecoded / Params.NDims);
+    printf("# particles = %lld\n", NParticlesDecoded);
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
