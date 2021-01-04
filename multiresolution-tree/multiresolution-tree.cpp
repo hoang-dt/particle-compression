@@ -1879,7 +1879,7 @@ static void
 BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
   i64 N = End - Begin; // total number of particles
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * Grid.Dims3.z;
-  if (CellCount == N) return;
+  if (CellCount == N) { NParticlesDecoded += N; return; };
 
   bbox_int ParentBBox {
     .Min = Grid.From3,
@@ -1951,8 +1951,8 @@ BuildTreeIntPass2(std::vector<particle_int>& Particles, i64 Begin, i64 End, cons
       Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
       auto Diff = Pos3[I] - P3[I];
       RMSE += Diff * Diff;
-      ++NParticlesDecoded;
     }
+    ++NParticlesDecoded;
   } else if (Begin + 1 < Mid) {
     BuildTreeIntPass2(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, Depth + 1);
   }
