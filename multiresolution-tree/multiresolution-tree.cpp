@@ -2328,10 +2328,10 @@ BuildTreeIntPredict(
     i8 ResLvlRight = ResLvl;
     if (Split == ResolutionSplit && !ResSplitOnLeft) ++ ResLvlRight;
     if ((Depth + 1 == Params.StartResolutionSplit) ||
-        (Split == ResolutionSplit && (!ResSplitOnLeft) && ResLvlRight + 1 < Params.NLevels))
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvl + 1, Depth + 1);
+        (Split == ResolutionSplit && (!ResSplitOnLeft) && ResLvl + 1 < Params.NLevels))
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvlRight, Depth + 1);
     else
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvl, Depth + 1);
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvlRight, Depth + 1);
   }
 }
 
