@@ -1619,6 +1619,30 @@ CreateBinomialTable(int N) {
   return table;
 }
 
+inline double
+Pow(double X, int K) {
+  double R = 1;
+  FOR(int, I, 0, K) {
+    R *= X;
+  }
+  return R;
+}
+
+inline cdf_table
+CreateBinomialTable(int N, double P) {
+  auto Table = pascal_triangle(N);
+  for (int n = 0; n <= N; ++n) {
+    for (int k = 0; k <= n; ++k) {
+      double Prob = Table[n][k] * Pow(P, k) * Pow(1 - P, n - k);
+      Prob *= (1ull << 31); // TODO: use 32 bits?
+      Table[n][k] = u32(Prob);
+    }
+    for (int k = 1; k <= n; ++k) {
+      Table[n][k] += Table[n][k-1];
+    }
+  }
+}
+
 /* n = number of particles in the parent 
    v = number of particles in the child
    c = sum of entire cdf */
@@ -1637,7 +1661,8 @@ EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>*
   u32 lo = v == 0 ? 0 : CdfTable[v - 1];
   u32 hi = CdfTable[v];
   u32 scale = 1 << n;
-  prob<u32> prob{lo, hi, scale};
+  REQUIRE(scale == CdfTable[n]);
+  prob<u32> prob{lo, hi, CdfTable[n]};
   Coder->Encode(prob);
 }
 
@@ -1718,7 +1743,7 @@ EncodeRange(double m, double s,
     int n = end - beg + 1; // v can be from 0 to n-1
     int v = int(c - beg);
     if (first && n <= cutoff1)
-      return EncodeBinomialSmallRange(n - 1, v, CdfTable[n - 1], Coder);
+      return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
     if (!first && n <= cutoff2)
       return EncodeCenteredMinimal(v, n, Bs);
     /* compute F(a) and F(b) */

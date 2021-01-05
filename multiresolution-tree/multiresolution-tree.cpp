@@ -2193,6 +2193,11 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   }
 }
 
+/**/
+static void
+BuildTreeIntPredict(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End, bbox_int BBox, split_type Split) {
+}
+
 /* Split so that the number of particles are approximately equal on both sides 
 (instead of splitting in the middle of the bounding box) */
 static void
