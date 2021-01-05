@@ -1836,6 +1836,7 @@ struct params {
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
   i8 MaxLevel = 127;
+  i8 StartResolutionSplit = 0;
   int MaxParticleSubSampling = 0;
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;

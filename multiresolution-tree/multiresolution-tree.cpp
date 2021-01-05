@@ -2198,7 +2198,8 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
 low-resolution nodes to predict the values for finer-resolution nodes */
 static void
 BuildTreeIntPredict(
-  std::vector<particle_int>& Particles, i64 Begin, i64 End,  const grid_int& Grid, split_type Split, i8 ResLvl) 
+  std::vector<particle_int>& Particles, i64 Begin, i64 End,  const grid_int& Grid, 
+  split_type Split, i8 ResLvl, i8 Depth) 
 {
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
@@ -2253,24 +2254,84 @@ BuildTreeIntPredict(
     P = CellCountRight - P;
   }
   N = MIN(N, CellCountRight);
+  //EncodeCenteredMinimal(u32(P), u32(N + 1), &BlockStream);
+  SeparationCodeLength += log2(N + 1);
 
   /* recurse */
   bool ResSplitOnLeft = (Mid - Begin) >= (End - Mid);
   if (Begin + 1 == Mid && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
     // encode the refinement bits
+    vec3i P3 = Particles[Begin].Pos;
+    vec3i Pos3;
+    auto G = SplitGrid(Grid, D, Split, Left);
+    bbox_int BBox {
+      .Min = G.From3,
+      .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+    };
+    FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+      while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+        REQUIRE(BBox.Min[I] <= P3[I]);
+        REQUIRE(BBox.Max[I] >= P3[I]);
+        G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+        i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+        bool LeftSide = P3[I] <= Half;
+        //Write(&BlockStream, LeftSide);
+        ++RefinementCodeLength;
+        if (LeftSide) BBox.Max[I] = Half;
+        else G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+      }
+      REQUIRE(BBox.Min[I] <= P3[I]);
+      REQUIRE(BBox.Max[I] >= P3[I]);
+      Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+      auto Diff = Pos3[I] - P3[I];
+      RMSE += Diff * Diff;
+    }
+    ++NParticlesDecoded;
   } else if (Begin + 1 < Mid) {
-    if (ResSplitOnLeft && ResLvl < Params.NLevels)
-      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), ResolutionSplit, ResLvl + 1);
+    i8 ResLvlLeft = ResLvl;
+    if (Split == ResolutionSplit &&  ResSplitOnLeft) ++ResLvlLeft;
+    if ((Depth + 1 == Params.StartResolutionSplit) || 
+        (Split == ResolutionSplit && ResSplitOnLeft && ResLvl + 1 < Params.NLevels))
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), ResolutionSplit, ResLvlLeft, Depth + 1);
     else
-      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, ResLvl);
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, ResLvlLeft, Depth + 1);
   }
   if (Mid + 1 == End && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+    vec3i Pos3;
+    vec3i P3 = Particles[Mid].Pos;
+    auto G = SplitGrid(Grid, D, Split, Right);
+    bbox_int BBox {
+      .Min = G.From3,
+      .Max = G.From3 + (G.Dims3 - 1) * G.Stride3
+    };
+    FOR(int, I, 0, Params.NDims) { // go until one particle per cell
+      while (BBox.Max[I] - BBox.Min[I] > 2 * Params.Accuracy) {
+        REQUIRE(BBox.Min[I] <= P3[I]);
+        REQUIRE(BBox.Max[I] >= P3[I]);
+        G.Dims3[I] = (G.Dims3[I] + 1) >> 1;
+        i32 Half = G.From3[I] + (G.Dims3[I] - 1) * G.Stride3[I];
+        bool LeftSide = P3[I] <= Half;
+        //Write(&BlockStream, LeftSide);
+        ++RefinementCodeLength;
+        if (LeftSide) BBox.Max[I] = Half;
+        else G.From3[I] = BBox.Min[I] = Half + G.Stride3[I];
+      }
+      REQUIRE(BBox.Min[I] <= P3[I]);
+      REQUIRE(BBox.Max[I] >= P3[I]);
+      Pos3[I] = (BBox.Max[I] + BBox.Min[I]) >> 1;
+      auto Diff = Pos3[I] - P3[I];
+      RMSE += Diff * Diff;
+    }
+    ++NParticlesDecoded;
     // encode the refinement bits
   } else if (Mid + 1 < End) {
-    if ((!ResSplitOnLeft) && ResLvl < Params.NLevels)
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvl + 1);
+    i8 ResLvlRight = ResLvl;
+    if (Split == ResolutionSplit && !ResSplitOnLeft) ++ ResLvlRight;
+    if ((Depth + 1 == Params.StartResolutionSplit) ||
+        (Split == ResolutionSplit && (!ResSplitOnLeft) && ResLvlRight + 1 < Params.NLevels))
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvl + 1, Depth + 1);
     else
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvl);
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvl, Depth + 1);
   }
 }
 
@@ -3229,6 +3290,7 @@ main(int Argc, cstr* Argv) {
     sprintf(Params.Name, "%s", Params.OutFile);
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
+    if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
     if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
@@ -3291,9 +3353,13 @@ main(int Argc, cstr* Argv) {
     //BuildTreeIntBalance(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, SPLIT);
     //BuildTreeIntTryBoth(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, 0);
     //BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
-    BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
-    CreateProbTable();
-    BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    //BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    //CreateProbTable();
+    //BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
+    split_type Split = SpatialSplit;
+    if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
+      Split = ResolutionSplit;
+    BuildTreeIntPredict(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
