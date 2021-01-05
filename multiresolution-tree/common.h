@@ -1841,6 +1841,7 @@ struct params {
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
 };
 
+/* the left side is favored if the dimension is odd */
 inline grid_int
 SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   auto Out = Grid;
@@ -2245,13 +2246,11 @@ WritePLYInt(cstr FileName, const std::vector<particle_int>& Particles) {
   fclose(Fp);
 }
 
-template <node_type R>
 struct tree {
-  tree<Inner>* Left = nullptr;
-  tree<Inner>* Right = nullptr;
-  i64 Begin = 0, End = 0;
-  using bbox_t = std::conditional_t<R == Root, bbox, empty_struct>;
-  [[no_unique_address]] bbox_t BBox = bbox_t();
+  tree* Left = nullptr;
+  tree* Right = nullptr;
+  i64 Count = 0;
+  i64 CountLeft = 0;
 };
 
 struct particle_cell {

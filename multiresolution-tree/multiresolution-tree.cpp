@@ -1620,6 +1620,7 @@ f64 Ratio = 0;
 i64 RatioCount = 0;
 i64 NodesWithMoreEmptyCellsCount = 0;
 i64 NodesWithMoreParticlesCount = 0;
+
 static void
 BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -2193,9 +2194,84 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   }
 }
 
-/**/
+/* At certain depth, we split the node using the Resolution split into a number of levels, then use the
+low-resolution nodes to predict the values for finer-resolution nodes */
 static void
-BuildTreeIntPredict(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End, bbox_int BBox, split_type Split) {
+BuildTreeIntPredict(
+  std::vector<particle_int>& Particles, i64 Begin, i64 End,  const grid_int& Grid, split_type Split, i8 ResLvl) 
+{
+  /* early return if the number of particles is the same as the number of cells */
+  i64 N = End - Begin; // total number of particles
+  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
+  if (CellCount == N) return;
+
+  /* determine the splitting axis */
+  bbox_int ParentBBox {
+    .Min = Grid.From3,
+    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+  };
+  i8 D = 0;
+  if (Grid.Dims3[1] > Grid.Dims3[D]) D = 1;
+  if (Grid.Dims3[2] > Grid.Dims3[D]) D = 2;
+
+  /* split in either resolution or precision */
+  i64 Mid = Begin;
+  i32 MM = 0;
+  if (Split == ResolutionSplit) {
+    auto RPred = [D, &Grid](const particle_int& P) {
+      i32 Bin = P.Pos[D];
+      REQUIRE((Bin - Grid.From3[D]) % Grid.Stride3[D] == 0);
+      Bin = (Bin - Grid.From3[D]) / Grid.Stride3[D];
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else {
+    MM = Grid.From3[D] + (((Grid.Dims3[D] + 1) >> 1) - 1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      return P.Pos[D] <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+
+  /* early return if having enough accuracy */
+  bool EnoughAccuracy = Params.RefinementMode == refinement_mode::ERROR_BASED;
+  FOR(i32, I, 0, 3) {
+    if (ParentBBox.Max[I] - ParentBBox.Min[I] > 2 * Params.Accuracy) {
+      EnoughAccuracy = false;
+      break;
+    }
+  }
+  if (EnoughAccuracy) return;
+
+  /* encode */
+  i64 P = End - Mid; // number of particles on the right
+  auto BBoxRight = MCOPY(ParentBBox, .Min[D] = MM + Grid.Stride3[D]); // bbox of the right child
+  auto GR = (BBoxRight.Max - BBoxRight.Min) / Grid.Stride3 + 1; // grid of the right child
+  i64 CellCountRight = i64(GR.x) * i64(GR.y) * i64(GR.z);
+  if (CellCount - N < N) {
+    N = CellCount - N;
+    P = CellCountRight - P;
+  }
+  N = MIN(N, CellCountRight);
+
+  /* recurse */
+  bool ResSplitOnLeft = (Mid - Begin) >= (End - Mid);
+  if (Begin + 1 == Mid && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+    // encode the refinement bits
+  } else if (Begin + 1 < Mid) {
+    if (ResSplitOnLeft && ResLvl < Params.NLevels)
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), ResolutionSplit, ResLvl + 1);
+    else
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, ResLvl);
+  }
+  if (Mid + 1 == End && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+    // encode the refinement bits
+  } else if (Mid + 1 < End) {
+    if ((!ResSplitOnLeft) && ResLvl < Params.NLevels)
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvl + 1);
+    else
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvl);
+  }
 }
 
 /* Split so that the number of particles are approximately equal on both sides 
