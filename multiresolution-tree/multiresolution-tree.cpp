@@ -2194,8 +2194,62 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   }
 }
 
+/* PredNode, Node, and RefNode should be at the same relative position on the three trees 
+* LastD == true means Left, else means Right 
+* LeftFirst = whether the first split is left
+*/
+// have to detect the last occurrence of RefD to know whether to turn left or right next
+static tree*
+BuildPredTreeRecursive(bool LeftFirst, bool Left, tree* RefNode, tree* Node, i8 Depth, i8 MaxDepth, i8 LastD) {
+  // traverse the three trees in the same way
+  if (!RefNode && !Node) return nullptr;
+  if (Depth == LastD + 1) { // the last split in the dimension of interest (the split just happened)
+    if (Left)    Node = nullptr; // assuming RefNode is always the left one
+    else      RefNode = nullptr;
+  }
+  if (Depth == MaxDepth) { // leaf node
+    REQUIRE(!(RefNode && Node));
+    if (RefNode || Node) {
+      tree* PredNode = new tree;
+      PredNode->Count = RefNode ? RefNode->Count : Node->Count;
+    }
+  } else { // inner node, simply sum up the left and right branches
+    tree* LeftRef = nullptr, *LeftNode = nullptr, *RightRef = nullptr, *RightNode = nullptr;
+    if (RefNode) {
+      LeftRef  = RefNode->Left;
+      RightRef = RefNode->Right;
+    }
+    if (Node) {
+      LeftNode  = Node->Left;
+      RightNode = Node->Right;
+    }
+    tree* LeftPredNode = nullptr, *RightPredNode = nullptr;
+    if (Depth == LastD) { // right before the last split in D happen
+    } else {
+      LeftPredNode  = BuildPredTreeRecursive(LeftFirst, true , LeftRef , LeftNode , Depth + 1, MaxDepth, LastD);
+      RightPredNode = BuildPredTreeRecursive(LeftFirst, false, RightRef, RightNode, Depth + 1, MaxDepth, LastD);
+    }
+    if (!LeftPredNode && !RightPredNode) return nullptr;
+    tree* PredNode  = new tree;
+    PredNode->Left  = LeftPredNode;
+    PredNode->Right = RightPredNode;
+    PredNode->Count = (LeftPredNode ? LeftPredNode->Count : 0) + (RightPredNode ? RightPredNode->Count : 0);
+    return PredNode;
+  }
+}
+
+static tree*
+BuildPredTree(tree* Node, tree* RefNode, i8 RefD) {
+
+  tree* Root = new tree;
+  auto Left  = BuildPredTreeRecursive(Node, RefNode);
+  auto Right = BuildPredTreeRecursive(Node, RefNode);
+
+  return Root;
+}
+
 static std::array<tree*, 2>
-RebuildTree(tree* Node, tree* RefNode, i8 Depth, i8 MaxDepth) {
+RebuildTree(tree* PredNode, tree* Node, tree* RefNode, i8 Depth, i8 MaxDepth) {
   if (!Node && !RefNode) return std::array<tree*, 2>();
   if (Depth + 1 == MaxDepth) { // 
     if (Node && !RefNode) {
