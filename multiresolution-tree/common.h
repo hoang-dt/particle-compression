@@ -2251,7 +2251,6 @@ struct tree {
   tree* Left = nullptr;
   tree* Right = nullptr;
   i64 Count = 0;
-  i64 CountLeft = 0;
 };
 
 struct particle_cell {
