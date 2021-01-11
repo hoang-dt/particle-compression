@@ -149,7 +149,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .End = Mid,
           .Idx = Q.Idx * 2,
           //.Grid = SplitGrid(Q.Grid, Q.D, SpatialSplit, Left),
-          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Left),
+          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, side::Left),
           .D = i8((Q.D + 1) % Params.NDims),
           .Height = u8(Q.Height + 1),
         });
@@ -160,7 +160,7 @@ BuildTreeNew(q_item_new Q, float Accuracy) {
           .End = Q.End,
           .Idx = Q.Idx * 2 + 1,
           //.Grid = SplitGrid(Q.Grid, Q.D, SpatialSplit, Right),
-          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, Right),
+          .Grid = SplitGrid(Q.Grid, Q.D, ResolutionSplit, side::Right),
           .D = i8((Q.D + 1) % Params.NDims),
           .Height = u8(Q.Height + 1),
         });

@@ -1795,7 +1795,7 @@ struct grid_int {
 };
 
 enum split_type { ResolutionSplit, SpatialSplit, BalanceSplit };
-enum side { Left, Right };
+enum class side { Left, Right };
 enum class action : int { Encode, Decode, Error, Convert };
 
 struct q_item {
@@ -1817,8 +1817,8 @@ enum class refinement_mode { ERROR_BASED, LOSSLESS, SEPARATION_ONLY };
 struct params {
   char Name[64];
   char DimsStr[128] = {};
-  i8 MaxDepth = 0;
   vec2i Version = vec2i(1, 0);
+  i8 MaxDepth = 0;
   int NDims = 3;
   cstr InFile;
   cstr OutFile;
@@ -1848,13 +1848,13 @@ inline grid_int
 SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   auto Out = Grid;
   if (SplitType == ResolutionSplit) {
-    Out.From3[D] += (Side == Right) * Out.Stride3[D];
-    Out.Dims3[D] = (Out.Dims3[D] + (Side == Left)) >> 1;
+    Out.From3[D] += (Side == side::Right) * Out.Stride3[D];
+    Out.Dims3[D] = (Out.Dims3[D] + (Side == side::Left)) >> 1;
     Out.Stride3[D] <<= 1;
   } else { // spatial split
     i32 LeftDims = (Out.Dims3[D] + 1) >> 1;
-    Out.Dims3[D] = Side == Left? LeftDims : Out.Dims3[D] - LeftDims;
-    Out.From3[D] += (Side == Right) * Out.Stride3[D] * LeftDims;
+    Out.Dims3[D] = Side == side::Left? LeftDims : Out.Dims3[D] - LeftDims;
+    Out.From3[D] += (Side == side::Right) * Out.Stride3[D] * LeftDims;
   }
   return Out;
 }
@@ -1863,12 +1863,12 @@ inline grid
 SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
   grid Out = Grid;
   if (SplitType == ResolutionSplit) {
-    Out.From3[D] += (Side == Right) * Out.Stride3[D];
+    Out.From3[D] += (Side == side::Right) * Out.Stride3[D];
     Out.Dims3[D] *= 0.5;
     Out.Stride3[D] *= 2;
   } else { // spatial split
     Out.Dims3[D] *= 0.5;
-    Out.From3[D] += (Side == Right) * Out.Stride3[D] * Out.Dims3[D];
+    Out.From3[D] += (Side == side::Right) * Out.Stride3[D] * Out.Dims3[D];
   }
   return Out;
 }
