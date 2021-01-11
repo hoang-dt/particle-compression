@@ -2200,18 +2200,15 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
 */
 // have to detect the last occurrence of RefD to know whether to turn left or right next
 static tree*
-BuildPredTreeRecursive(bool LeftFirst, bool Left, tree* RefNode, tree* Node, i8 Depth, i8 MaxDepth, i8 LastD) {
+BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 LastD) {
   // traverse the three trees in the same way
   if (!RefNode && !Node) return nullptr;
-  if (Depth == LastD + 1) { // the last split in the dimension of interest (the split just happened)
-    if (Left)    Node = nullptr; // assuming RefNode is always the left one
-    else      RefNode = nullptr;
-  }
-  if (Depth == MaxDepth) { // leaf node
+  if (Depth == Params.MaxDepth) { // leaf node
     REQUIRE(!(RefNode && Node));
-    if (RefNode || Node) {
+    if (RefNode || Node) { // only one of the two should be non null
       tree* PredNode = new tree;
       PredNode->Count = RefNode ? RefNode->Count : Node->Count;
+      return PredNode;
     }
   } else { // inner node, simply sum up the left and right branches
     tree* LeftRef = nullptr, *LeftNode = nullptr, *RightRef = nullptr, *RightNode = nullptr;
@@ -2225,10 +2222,18 @@ BuildPredTreeRecursive(bool LeftFirst, bool Left, tree* RefNode, tree* Node, i8 
     }
     tree* LeftPredNode = nullptr, *RightPredNode = nullptr;
     if (Depth == LastD) { // right before the last split in D happen
-    } else {
-      LeftPredNode  = BuildPredTreeRecursive(LeftFirst, true , LeftRef , LeftNode , Depth + 1, MaxDepth, LastD);
-      RightPredNode = BuildPredTreeRecursive(LeftFirst, false, RightRef, RightNode, Depth + 1, MaxDepth, LastD);
+      if (LeftFirst) {  // first split is left, so here we go left on either RefNode or Node, and set the other to null
+        LeftPredNode  = BuildPredTreeRecursive(LeftFirst, LeftRef , nullptr , Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(LeftFirst, nullptr , LeftNode, Depth + 1, LastD);
+      } else { // first split is right, so here we go right on either RefNode or Node, and set the other to null
+        LeftPredNode  = BuildPredTreeRecursive(LeftFirst, RightRef , nullptr , Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(LeftFirst, nullptr , RightNode, Depth + 1, LastD);
+      }
+    } else { // not the last split in D, just go the same route for all three trees
+      LeftPredNode  = BuildPredTreeRecursive(LeftFirst, LeftRef , LeftNode , Depth + 1, LastD);
+      RightPredNode = BuildPredTreeRecursive(LeftFirst, RightRef, RightNode, Depth + 1, LastD);
     }
+    /* combine the two branches */
     if (!LeftPredNode && !RightPredNode) return nullptr;
     tree* PredNode  = new tree;
     PredNode->Left  = LeftPredNode;
@@ -2238,44 +2243,26 @@ BuildPredTreeRecursive(bool LeftFirst, bool Left, tree* RefNode, tree* Node, i8 
   }
 }
 
+// TODO: assuming we always work with power of 2 dimensions, reuse DimsStr
+// TODO: call this function in the code at a ResolutionSplit, after we have constructed the subtrees
 static tree*
-BuildPredTree(tree* Node, tree* RefNode, i8 RefD) {
-
+BuildPredTree(tree* RefNode, tree* Node, i8 Depth, i8 D) {
   tree* Root = new tree;
-  auto Left  = BuildPredTreeRecursive(Node, RefNode);
-  auto Right = BuildPredTreeRecursive(Node, RefNode);
-
+  i8 LastD = Params.MaxDepth;
+  while ((LastD >= 0) && (Params.DimsStr[LastD] != 'x'+D)) --LastD;
+  REQUIRE(LastD > Depth);
+  auto Left  = BuildPredTreeRecursive(true , Node, RefNode, Depth, LastD);
+  auto Right = BuildPredTreeRecursive(false, Node, RefNode, Depth, LastD);
   return Root;
 }
 
-static std::array<tree*, 2>
-RebuildTree(tree* PredNode, tree* Node, tree* RefNode, i8 Depth, i8 MaxDepth) {
-  if (!Node && !RefNode) return std::array<tree*, 2>();
-  if (Depth + 1 == MaxDepth) { // 
-    if (Node && !RefNode) {
-      if (Node->Left) RefNode = new tree;
-    } else if (!Node && RefNode) {
-      if (RefNode->Right) Node = new tree;
-    }
-    auto RefLeft  = RefNode ? RefNode->Left  : nullptr, Left  = Node ? Node->Left  : nullptr;
-    auto RefRight = RefNode ? RefNode->Right : nullptr, Right = Node ? Node->Right : nullptr;
-    RefNode->Count = (RefLeft  ? RefLeft ->Count : 0) + (Left  ? Left ->Count : 0);
-    Node   ->Count = (RefRight ? RefRight->Count : 0) + (Right ? Right->Count : 0);
-  } else { // just sum the left and right
-    auto [ RefLeft , Left ] = RebuildTree(Node->Left , RefNode->Left , Depth + 1, MaxDepth);
-    auto [ RefRight, Right] = RebuildTree(Node->Right, RefNode->Right, Depth + 1, MaxDepth);
-    RefNode->Count = (RefLeft ? RefLeft->Count : 0) + (RefRight ? RefRight->Count : 0);
-    Node   ->Count = (Left    ? Left   ->Count : 0) + (Right    ? Right   ->Count : 0);
-  }
-  return { RefNode, Node };
-}
-
+// TODO: the tree that is returned on the left is the prediction tree
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
-static void
+static tree*
 BuildTreeIntPredict(
   std::vector<particle_int>& Particles, i64 Begin, i64 End,  const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth, tree* Node = nullptr, tree* RefNode = nullptr) 
+  split_type Split, i8 ResLvl, i8 Depth) 
 {
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
@@ -2318,7 +2305,7 @@ BuildTreeIntPredict(
       break;
     }
   }
-  if (EnoughAccuracy) return;
+  if (EnoughAccuracy) return nullptr; // TODO: in the prediction mode, we cannot stop before reaching 1 particle per cell
 
   // TODO: predict based on the RefNode
 
@@ -2334,13 +2321,15 @@ BuildTreeIntPredict(
   N = MIN(N, CellCountRight);
   //EncodeCenteredMinimal(u32(P), u32(N + 1), &BlockStream);
   if (Split == ResolutionSplit)
-    EncodeNode(0, N, P);
-    //SeparationCodeLength += log2(N + 1);
+    //EncodeNode(0, N, P);
+    SeparationCodeLength += log2(N + 1);
   else
     SeparationCodeLength += log2(N + 1);
 
   /* recurse */
-  bool ResSplitOnLeft = (Mid - Begin) >= (End - Mid);
+  tree* Node = new tree;
+  //bool ResSplitOnLeft = (Mid - Begin) >= (End - Mid);
+  bool ResSplitOnLeft = true; // the coarse resolution is on the left
   if (Begin + 1 == Mid && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
     // encode the refinement bits
     vec3i P3 = Particles[Begin].Pos;
@@ -2375,10 +2364,12 @@ BuildTreeIntPredict(
     if (Split == ResolutionSplit &&  ResSplitOnLeft) ++ResLvlLeft;
     if ((Depth + 1 == Params.StartResolutionSplit) || 
         (Split == ResolutionSplit && ResSplitOnLeft && ResLvl + 1 < Params.NLevels))
-      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), ResolutionSplit, ResLvlLeft, Depth + 1, Node->Left, nullptr);
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), ResolutionSplit, ResLvlLeft, Depth + 1);
     else // spatial split
-      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, ResLvlLeft, Depth + 1, Node->Left, );
+      BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, Left), SpatialSplit, ResLvlLeft, Depth + 1);
   }
+
+  /* recurse on the right */
   if (Mid + 1 == End && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
     vec3i Pos3;
     vec3i P3 = Particles[Mid].Pos;
@@ -2413,20 +2404,15 @@ BuildTreeIntPredict(
     if (Split == ResolutionSplit && !ResSplitOnLeft) ++ ResLvlRight;
     if ((Depth + 1 == Params.StartResolutionSplit) ||
         (Split == ResolutionSplit && (!ResSplitOnLeft) && ResLvl + 1 < Params.NLevels))
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvlRight, Depth + 1, Node->Right);
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), ResolutionSplit, ResLvlRight, Depth + 1);
     else
-      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvlRight, Depth + 1, Node->Right);
+      BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, Right), SpatialSplit, ResLvlRight, Depth + 1);
   }
 
   /* construct the prediction tree */
   Node->Count = End - Begin;
-  if (Split == SpatialSplit) {
-    Node->CountLeft = Mid - Begin;
-  } else if (Split == ResolutionSplit) {
-    i64 CountLeft = Node->Left ? Node->Left->CountLeft : 0;
-    i64 CountRight = Node->Right ? Node->Right->CountLeft : 0;
-    Node->CountLeft = CountLeft + CountRight;
-  }
+
+  return Node;
 }
 
 /* Split so that the number of particles are approximately equal on both sides 

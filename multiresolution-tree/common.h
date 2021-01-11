@@ -1817,6 +1817,7 @@ enum class refinement_mode { ERROR_BASED, LOSSLESS, SEPARATION_ONLY };
 struct params {
   char Name[64];
   char DimsStr[128] = {};
+  i8 MaxDepth = 0;
   vec2i Version = vec2i(1, 0);
   int NDims = 3;
   cstr InFile;
