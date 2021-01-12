@@ -2195,16 +2195,18 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
 }
 
 /* Node and RefNode should be at the same relative position on the trees 
-* LeftFirst = whether the first split is left */
+* FirstBranch = the first split
+* LastBranch  = the last split so far */
+enum class branch{ Left, Right };
 static tree*
-BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 LastD) {
+BuildPredTreeRecursive(branch LastBranch, tree* RefNode, tree* Node, i8 Depth, i8 LastD) {
   // traverse the three trees in the same way
   //printf("Depth = %d\n", int(Depth));
   if (!RefNode && !Node) {
     return nullptr;
   }
   if (Depth == Params.MaxDepth) { // leaf node
-    REQUIRE(!(RefNode && Node));
+    //REQUIRE(!(RefNode && Node));
     if (RefNode || Node) { // only one of the two should be non null
       tree* PredNode = new tree;
       PredNode->Count = RefNode ? RefNode->Count : Node->Count;
@@ -2222,16 +2224,25 @@ BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 L
     }
     tree* LeftPredNode = nullptr, *RightPredNode = nullptr;
     if (Depth == LastD) { // right before the last split in D happen
-      if (LeftFirst) {  // first split is left, so here we go left on either RefNode or Node, and set the other to null
-        LeftPredNode  = BuildPredTreeRecursive(LeftFirst, LeftRef , nullptr  , Depth + 1, LastD);
-        RightPredNode = BuildPredTreeRecursive(LeftFirst, nullptr , LeftNode , Depth + 1, LastD);
-      } else { // first split is right, so here we go right on either RefNode or Node, and set the other to null
-        LeftPredNode  = BuildPredTreeRecursive(LeftFirst, RightRef, nullptr  , Depth + 1, LastD);
-        RightPredNode = BuildPredTreeRecursive(LeftFirst, nullptr , RightNode, Depth + 1, LastD);
+    //if (false) { // right before the last split in D happen
+      if (LastBranch == branch::Left) { // we go left on both PredNode and Node
+        LeftPredNode  = BuildPredTreeRecursive(branch::Left , LeftRef, nullptr, Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(branch::Right, nullptr, LeftNode, Depth + 1, LastD);
+      } else { // LastBranch == branch::Right, go right on both PredNode and Node
+        LeftPredNode  = BuildPredTreeRecursive(branch::Left , RightRef, nullptr, Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(branch::Right, nullptr, RightNode, Depth + 1, LastD);
       }
-    } else { // not the last split in D, just go the same route for all three trees
-      LeftPredNode  = BuildPredTreeRecursive(LeftFirst, LeftRef , LeftNode , Depth + 1, LastD);
-      RightPredNode = BuildPredTreeRecursive(LeftFirst, RightRef, RightNode, Depth + 1, LastD);
+    } else if (Params.DimsStr[Depth] == Params.DimsStr[LastD]) { // not the last split in D, just go the same route (delayed by one)
+      if (LastBranch == branch::Left) { // we go left on both PredNode and Node
+        LeftPredNode  = BuildPredTreeRecursive(branch::Left , LeftRef, LeftNode, Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(branch::Right, LeftRef, LeftNode, Depth + 1, LastD);
+      } else { // LastBranch == branch::Right, go right on both PredNode and Node
+        LeftPredNode  = BuildPredTreeRecursive(branch::Left , RightRef, RightNode, Depth + 1, LastD);
+        RightPredNode = BuildPredTreeRecursive(branch::Right, RightRef, RightNode, Depth + 1, LastD);
+      }
+    } else {
+      LeftPredNode  = BuildPredTreeRecursive(LastBranch, LeftRef , LeftNode , Depth + 1, LastD);
+      RightPredNode = BuildPredTreeRecursive(LastBranch, RightRef, RightNode, Depth + 1, LastD);
     }
     /* combine the two branches */
     if (!LeftPredNode && !RightPredNode) {
@@ -2254,9 +2265,9 @@ BuildPredTree(tree* RefNode, tree* Node, i8 Depth, i8 D) {
   tree* Root = new tree;
   i8 LastD = Params.MaxDepth;
   while ((LastD >= 0) && (Params.DimsStr[LastD] != 'x'+D)) --LastD;
-  REQUIRE(LastD > Depth); // TODO: what if LastD == Depth?
-  Root->Left  = BuildPredTreeRecursive(true , RefNode, Node, Depth + 1, LastD);
-  Root->Right = BuildPredTreeRecursive(false, RefNode, Node, Depth + 1, LastD);
+  //REQUIRE(LastD > Depth); // TODO: what if LastD == Depth?
+  Root->Left  = BuildPredTreeRecursive(branch::Left , RefNode, Node, Depth + 1, LastD);
+  Root->Right = BuildPredTreeRecursive(branch::Right, RefNode, Node, Depth + 1, LastD);
   Root->Count = (Root->Left?Root->Left->Count:0) + (Root->Right?Root->Right->Count:0);
   return Root;
 }
@@ -2265,9 +2276,14 @@ static void
 DumpTree(const tree* Node, bool FirstTime = false) {
   static FILE* Fp = fopen("tree.dat", "wb");
   if (Node) {
+    //printf("%lld\n", Node->Count);
     fwrite(&Node->Count, sizeof(Node->Count), 1, Fp);
-    DumpTree(Node->Left, false);
-    DumpTree(Node->Right, false);
+    if (Node->Left || Node->Right) {
+      DumpTree(Node->Left, false);
+      DumpTree(Node->Right, false);
+    }
+  } else {
+    //printf("0\n");
   }
   if (FirstTime) {
     if (Fp) fclose(Fp);
