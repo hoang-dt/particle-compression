@@ -2199,7 +2199,9 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
 static tree*
 BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 LastD) {
   // traverse the three trees in the same way
-  if (!RefNode && !Node) return nullptr;
+  if (!RefNode && !Node) {
+    return nullptr;
+  }
   if (Depth == Params.MaxDepth) { // leaf node
     REQUIRE(!(RefNode && Node));
     if (RefNode || Node) { // only one of the two should be non null
@@ -2231,11 +2233,14 @@ BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 L
       RightPredNode = BuildPredTreeRecursive(LeftFirst, RightRef, RightNode, Depth + 1, LastD);
     }
     /* combine the two branches */
-    if (!LeftPredNode && !RightPredNode) return nullptr;
+    if (!LeftPredNode && !RightPredNode) {
+      return nullptr;
+    }
     tree* PredNode  = new tree;
     PredNode->Left  = LeftPredNode;
     PredNode->Right = RightPredNode;
-    PredNode->Count = (LeftPredNode?LeftPredNode->Count:0) + (RightPredNode?RightPredNode->Count:0);
+    if (LeftPredNode) PredNode->Count = LeftPredNode->Count; else PredNode->Count = 0;
+    if (RightPredNode) PredNode->Count += RightPredNode->Count;
     return PredNode;
   }
 }
@@ -2251,6 +2256,19 @@ BuildPredTree(tree* RefNode, tree* Node, i8 Depth, i8 D) {
   Root->Left  = BuildPredTreeRecursive(true , RefNode, Node, Depth, LastD);
   Root->Right = BuildPredTreeRecursive(false, RefNode, Node, Depth, LastD);
   return Root;
+}
+
+static void
+DumpTree(const tree* Node, bool FirstTime = false) {
+  static FILE* Fp = fopen("tree.dat", "wb");
+  if (Node) {
+    fwrite(&Node->Count, sizeof(Node->Count), 1, Fp);
+    DumpTree(Node->Left, false);
+    DumpTree(Node->Right, false);
+  }
+  if (FirstTime) {
+    if (Fp) fclose(Fp);
+  }
 }
 
 // TODO: the tree that is returned on the left is the prediction tree
@@ -2301,6 +2319,7 @@ BuildTreeIntPredict(
   auto BBoxRight = MCOPY(ParentBBox, .Min[D] = MM + Grid.Stride3[D]); // bbox of the right child
   auto GR = (BBoxRight.Max - BBoxRight.Min) / Grid.Stride3 + 1; // grid of the right child
   i64 CellCountRight = i64(GR.x) * i64(GR.y) * i64(GR.z);
+  i64 CellCountLeft = CellCount - CellCountRight;
   if (CellCount - N < N) {
     N = CellCount - N;
     P = CellCountRight - P;
@@ -2318,14 +2337,14 @@ BuildTreeIntPredict(
   //bool ResSplitOnLeft = (Mid - Begin) >= (End - Mid);
   bool ResSplitOnLeft = true; // the coarse resolution is on the left
   tree* Left = nullptr; 
-  if (Begin + 1 == Mid && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+  if (Begin+1==Mid && CellCountLeft==1) {
     // TODO
     Left = new tree;
     Left->Count = 1;
-  } else if (Begin + 1 < Mid) { // recurse
+  } else if (Begin < Mid) { // recurse
     i8 ResLvlLeft = ResLvl;
-    if (Split == ResolutionSplit &&  ResSplitOnLeft) ++ResLvlLeft;
-    if ((Depth + 1 == Params.StartResolutionSplit) || 
+    if (Split==ResolutionSplit &&  ResSplitOnLeft) ++ResLvlLeft;
+    if ((Depth+1==Params.StartResolutionSplit) || 
         (Split==ResolutionSplit && ResSplitOnLeft && ResLvlLeft+1<Params.NLevels))
       Left = BuildTreeIntPredict(Particles, Begin, Mid, SplitGrid(Grid, D, Split, side::Left), ResolutionSplit, ResLvlLeft, Depth + 1);
     else // spatial split
@@ -2334,15 +2353,15 @@ BuildTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (Mid + 1 == End && Params.RefinementMode != refinement_mode::SEPARATION_ONLY) {
+  if (Mid+1==End && CellCountRight==1) {
     // TODO
     Right = new tree;
     Right->Count = 1;
-  } else if (Mid + 1 < End) {
+  } else if (Mid < End) { //recurse
     i8 ResLvlRight = ResLvl;
-    if (Split == ResolutionSplit && !ResSplitOnLeft) ++ResLvlRight;
-    if ((Depth+1 == Params.StartResolutionSplit) ||
-        (Split == ResolutionSplit && (!ResSplitOnLeft) && ResLvlRight+1<Params.NLevels))
+    if (Split==ResolutionSplit && !ResSplitOnLeft) ++ResLvlRight;
+    if ((Depth+1==Params.StartResolutionSplit) ||
+        (Split==ResolutionSplit && (!ResSplitOnLeft) && ResLvlRight+1<Params.NLevels))
       Right = BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, side::Right), ResolutionSplit, ResLvlRight, Depth + 1);
     else // spatial split
       Right = BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, side::Right), SpatialSplit, ResLvlRight, Depth + 1);
@@ -2356,8 +2375,10 @@ BuildTreeIntPredict(
     Node = new tree;
     Node->Left  = Left;
     Node->Right = Right;
-    Node->Count = (Left?Left->Count:0) + (Right?Right->Count:0);
+    if (Left ) Node->Count = Left->Count; else Node->Count = 0;
+    if (Right) Node->Count += Right->Count;
   }
+  // TODO: deallocate the two merged trees
 
   return Node;
 }
@@ -3407,7 +3428,8 @@ main(int Argc, cstr* Argv) {
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
-    BuildTreeIntPredict(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+    tree* Node = BuildTreeIntPredict(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+    DumpTree(Node, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
