@@ -2199,6 +2199,7 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
 static tree*
 BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 LastD) {
   // traverse the three trees in the same way
+  //printf("Depth = %d\n", int(Depth));
   if (!RefNode && !Node) {
     return nullptr;
   }
@@ -2247,14 +2248,16 @@ BuildPredTreeRecursive(bool LeftFirst, tree* RefNode, tree* Node, i8 Depth, i8 L
 
 // TODO: dealloc the pred tree
 // TODO: construct DimsStr
+// NOTE: Depth is of the parent node of RefNode and Node
 static tree*
 BuildPredTree(tree* RefNode, tree* Node, i8 Depth, i8 D) {
   tree* Root = new tree;
   i8 LastD = Params.MaxDepth;
   while ((LastD >= 0) && (Params.DimsStr[LastD] != 'x'+D)) --LastD;
   REQUIRE(LastD > Depth); // TODO: what if LastD == Depth?
-  Root->Left  = BuildPredTreeRecursive(true , RefNode, Node, Depth, LastD);
-  Root->Right = BuildPredTreeRecursive(false, RefNode, Node, Depth, LastD);
+  Root->Left  = BuildPredTreeRecursive(true , RefNode, Node, Depth + 1, LastD);
+  Root->Right = BuildPredTreeRecursive(false, RefNode, Node, Depth + 1, LastD);
+  Root->Count = (Root->Left?Root->Left->Count:0) + (Root->Right?Root->Right->Count:0);
   return Root;
 }
 
@@ -2339,9 +2342,11 @@ BuildTreeIntPredict(
   tree* Left = nullptr; 
   if (Begin+1==Mid && CellCountLeft==1) {
     // TODO
+    REQUIRE(Depth+1 == Params.MaxDepth);
     Left = new tree;
     Left->Count = 1;
   } else if (Begin < Mid) { // recurse
+    REQUIRE(Depth+1 < Params.MaxDepth);
     i8 ResLvlLeft = ResLvl;
     if (Split==ResolutionSplit &&  ResSplitOnLeft) ++ResLvlLeft;
     if ((Depth+1==Params.StartResolutionSplit) || 
@@ -2355,9 +2360,11 @@ BuildTreeIntPredict(
   tree* Right = nullptr;
   if (Mid+1==End && CellCountRight==1) {
     // TODO
+    REQUIRE(Depth+1 == Params.MaxDepth);
     Right = new tree;
     Right->Count = 1;
   } else if (Mid < End) { //recurse
+    REQUIRE(Depth+1 < Params.MaxDepth);
     i8 ResLvlRight = ResLvl;
     if (Split==ResolutionSplit && !ResSplitOnLeft) ++ResLvlRight;
     if ((Depth+1==Params.StartResolutionSplit) ||
@@ -2365,6 +2372,10 @@ BuildTreeIntPredict(
       Right = BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, side::Right), ResolutionSplit, ResLvlRight, Depth + 1);
     else // spatial split
       Right = BuildTreeIntPredict(Particles, Mid, End, SplitGrid(Grid, D, Split, side::Right), SpatialSplit, ResLvlRight, Depth + 1);
+  }
+
+  if (Depth < Params.MaxDepth) {
+    assert(Left || Right);
   }
 
   /* construct the prediction tree */
@@ -3428,8 +3439,8 @@ main(int Argc, cstr* Argv) {
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
-    tree* Node = BuildTreeIntPredict(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
-    DumpTree(Node, true);
+    tree* MyNode = BuildTreeIntPredict(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+    DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
