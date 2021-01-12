@@ -2292,9 +2292,7 @@ BuildTreeIntPredict(
     .Min = Grid.From3,
     .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
   };
-  i8 D = 0;
-  if (Grid.Dims3[1] > Grid.Dims3[D]) D = 1;
-  if (Grid.Dims3[2] > Grid.Dims3[D]) D = 2;
+  i8 D = Params.DimsStr[Depth] - 'x';
 
   /* split in either resolution or precision */
   i64 Mid = Begin;
