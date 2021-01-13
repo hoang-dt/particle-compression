@@ -1573,6 +1573,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
 }
 
 static cdf_table CdfTable;
+static std::vector<cdf_table> BinomialTables;
 static arithmetic_coder<> Coder;
 
 INLINE static void
@@ -3428,7 +3429,8 @@ main(int Argc, cstr* Argv) {
     //                          .Height = 0 }, Params.Accuracy);
 
     ////ParticleCells.resize(PROD(Params.BlockDims3));
-    CdfTable = CreateBinomialTable(cutoff1);
+    //CdfTable = CreateBinomialTable(BinomialCutoff);
+    BinomialTables = CreateGeneralBinomialTables(BinomialCutoff);
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
     WriteVarByte(&BlockStream, ParticlesInt.size());

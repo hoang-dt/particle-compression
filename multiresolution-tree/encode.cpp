@@ -108,7 +108,7 @@ EncodeParticleNew(u64 NodeIdx, const vec3f& Pos, bbox BBox) {
 void
 BuildTreeNew(q_item_new Q, float Accuracy) {
   /* NOTE: comment to disable the binomial coding */
-  CdfTable = CreateBinomialTable(cutoff1);
+  CdfTable = CreateBinomialTable(BinomialCutoff);
   GrowToAccomodate(&BlockStream, 100000000); // 100 MB
   Coder.InitWrite(100000000);
 

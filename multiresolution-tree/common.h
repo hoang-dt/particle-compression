@@ -1628,19 +1628,42 @@ Pow(double X, int K) {
   return R;
 }
 
+/* create binomial table for general P (0 < P < 1) */
 inline cdf_table
-CreateBinomialTable(int N, double P) {
+CreateBinomialTable(u32 N, f64 P) {
   auto Table = pascal_triangle(N);
-  for (int n = 0; n <= N; ++n) {
-    for (int k = 0; k <= n; ++k) {
-      double Prob = Table[n][k] * Pow(P, k) * Pow(1 - P, n - k);
+  for (u32 n = 0; n <= N; ++n) {
+    for (u32 k = 0; k <= n; ++k) {
+      f64 Prob = Table[n][k] * Pow(P, k) * Pow(1-P, n-k);
       Prob *= (1ull << 31); // TODO: use 32 bits?
       Table[n][k] = u32(Prob);
     }
-    for (int k = 1; k <= n; ++k) {
+    for (u32 k = 1; k <= n; ++k) { // sum up to create the CDF
       Table[n][k] += Table[n][k-1];
     }
   }
+  return Table;
+}
+
+/* Divide the range [0, N] into N+1 equal bins and assign K (0<=K<=N) into one of these bins */
+inline f64
+ProbBin(u32 N, u32 K) {
+  f64 S = 1.0 / (N+1);
+  f64 X = floor(K*N*S);
+  f64 B = MIN(X, N);
+  return (B+0.5) * S;
+}
+
+inline std::vector<cdf_table>
+CreateGeneralBinomialTables(u32 Cutoff) {
+  std::vector<cdf_table> Tables(Cutoff+1);
+  for (u32 N = 0; N <= Cutoff; ++N) {
+    for (u32 K = 0; K <= N; ++K) {
+      f64 P = ProbBin(N, K);
+      Tables[N] = CreateBinomialTable(N, P);
+    }
+  }
+  return Tables;
 }
 
 /* n = number of particles in the parent 
@@ -1656,12 +1679,12 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
 }
 
 inline void
-EncodeBinomialSmallRange(int n, int v,  const cdf& CdfTable, arithmetic_coder<>* Coder) {
-  assert(v >= 0 && v <= n);
-  u32 lo = v == 0 ? 0 : CdfTable[v - 1];
+EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* Coder) {
+  assert(v>=0 && v<=n);
+  u32 lo = v == 0 ? 0 : CdfTable[v-1];
   u32 hi = CdfTable[v];
-  u32 scale = 1 << n;
-  REQUIRE(scale == CdfTable[n]);
+  //u32 scale = 1 << n;
+  //REQUIRE(scale == CdfTable[n]);
   prob<u32> prob{lo, hi, CdfTable[n]};
   Coder->Encode(prob);
 }
@@ -1673,7 +1696,7 @@ DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) 
   return (int)v;
 }
 
-constexpr inline int cutoff1 = 32; // cannot be bigger than 32 else we will have overflow
+constexpr inline int BinomialCutoff = 32; // cannot be bigger than 32 else we will have overflow
 constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
 /* The inverse of encode */
@@ -1691,7 +1714,7 @@ DecodeRange(
     if (beg == end)
       return beg; // no need to write any bit
     int n = end - beg + 1;
-    if (first && n <= cutoff1)
+    if (first && n <= BinomialCutoff)
       return DecodeBinomialSmallRange(n - 1, CdfTable[n - 1], Coder);
     if (!first && n <= cutoff2)
       return beg + DecodeCenteredMinimal(n, Bs);
@@ -1718,13 +1741,12 @@ DecodeRange(
 /* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability */
 inline void
-EncodeRange(double m, double s,
-  double a, double b, double c,
+EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
   const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder)
 {
   assert(a <= b);
   bool first = true;
-
+  
   /* comment out the below to use uniform encoding instead of gaussian distribution */
   //int beg = cast(int)ceil(a);
   //int end = cast(int)floor(b);
@@ -1736,27 +1758,27 @@ EncodeRange(double m, double s,
   //  return encode_centered_minimal(v, n, bs);
 
   while (true) {
-    int beg = (int)std::ceil(a);
-    int end = (int)std::floor(b);
+    u32 beg = (u32)std::ceil(a);
+    u32 end = (u32)std::floor(b);
     if (beg == end)
       return; // no need to write any bit
-    int n = end - beg + 1; // v can be from 0 to n-1
-    int v = int(c - beg);
-    if (first && n <= cutoff1)
+    u32 n = end - beg + 1; // v can be from 0 to n-1
+    u32 v = u32(c - beg);
+    if ( first && n <= BinomialCutoff)
       return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
-    if (!first && n <= cutoff2)
-      return EncodeCenteredMinimal(v, n, Bs);
+    //if (!first && n <= cutoff2)
+    //  return EncodeCenteredMinimal(v, n, Bs);
     /* compute F(a) and F(b) */
     double fa = F(m, s, a);
     double fb = F(m, s, b);
     /* compute F^-1((fa+fb)/2) */
-    double mid = Finv(m, s, (fa + fb) * 0.5);
+    double mid = Finv(m, s, (fa+fb) * 0.5);
     //assert(mid == mid);
-    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+    if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a == mid || b == mid || mid != mid)
+    if (a==mid || b==mid || mid!=mid) // run out of precision
       return EncodeCenteredMinimal(v, n, Bs);
-    assert(a <= mid && mid <= b);
+    assert(a<=mid && mid<=b);
     if (c < mid) {
       Write(Bs, 0);
       b = floor(mid);
