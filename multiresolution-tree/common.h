@@ -1628,6 +1628,9 @@ Pow(double X, int K) {
   return R;
 }
 
+constexpr inline int BinomialCutoff = 32; // cannot be bigger than 32 else we will have overflow
+constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
+
 /* create binomial table for general P (0 < P < 1) */
 inline cdf_table
 CreateBinomialTable(u32 N, f64 P) {
@@ -1654,16 +1657,39 @@ ProbBin(u32 N, u32 K) {
   return (B+0.5) * S;
 }
 
-inline std::vector<cdf_table>
-CreateGeneralBinomialTables(u32 Cutoff) {
-  std::vector<cdf_table> Tables(Cutoff+1);
-  for (u32 N = 0; N <= Cutoff; ++N) {
-    for (u32 K = 0; K <= N; ++K) {
-      f64 P = ProbBin(N, K);
-      Tables[N] = CreateBinomialTable(N, P);
+//inline std::vector<cdf>
+//CreateGeneralBinomialTables() {
+//  std::vector<cdf> Tables((BinomialCutoff+1) * (BinomialCutoff+1));
+//  for (u32 N = 0; N <= BinomialCutoff; ++N) {
+//    for (u32 K = 0; K <= N; ++K) {
+//      f64 P = ProbBin(N, K);
+//      printf("%d %d %d\n", N, K, N*(BinomialCutoff+1)+K);
+//      Tables[N*(BinomialCutoff+1)+K] = CreateBinomialTable(N, P);
+//    }
+//  }
+//  return Tables;
+//}
+
+inline std::vector<std::vector<std::vector<u32>>>
+CreateGeneralBinomialTables() {
+  std::vector<std::vector<std::vector<u32>>> RetVal(BinomialCutoff+1);
+  auto Table = pascal_triangle(BinomialCutoff);
+  for (u32 N = 0; N <= BinomialCutoff; ++N) {
+    RetVal[N].resize(N+1);
+    for (u32 L = 0; L <= N; ++L) {
+      RetVal[N][L].resize(N+1);
+      f64 P = ProbBin(N, L);
+      for (u32 K = 0; K <= N; ++K) {
+        f64 Prob = Table[N][K] * Pow(P, K) * Pow(1-P, N-K);
+        Prob *= (1ull << 31); // TODO: use 32 bits?
+        RetVal[N][L][K] = u32(Prob);
+      }
+      for (u32 K = 1; K <= N; ++K) { // sum up to create the CDF
+        RetVal[N][L][K] += RetVal[N][L][K-1];
+      }
     }
   }
-  return Tables;
+  return RetVal;
 }
 
 /* n = number of particles in the parent 
@@ -1695,9 +1721,6 @@ DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) 
   assert(v <= n);
   return (int)v;
 }
-
-constexpr inline int BinomialCutoff = 32; // cannot be bigger than 32 else we will have overflow
-constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
 /* The inverse of encode */
 // TODO: refactor to put part the logic of this function to the decode function
@@ -1764,8 +1787,10 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
       return; // no need to write any bit
     u32 n = end - beg + 1; // v can be from 0 to n-1
     u32 v = u32(c - beg);
-    if ( first && n <= BinomialCutoff)
+    if ( first && n <= BinomialCutoff) {
+      assert(!CdfTable.empty());
       return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
+    }
     //if (!first && n <= cutoff2)
     //  return EncodeCenteredMinimal(v, n, Bs);
     /* compute F(a) and F(b) */
