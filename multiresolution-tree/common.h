@@ -1651,8 +1651,9 @@ CreateBinomialTable(u32 N, f64 P) {
 /* Divide the range [0, N] into N+1 equal bins and assign K (0<=K<=N) into one of these bins */
 inline f64
 ProbBin(u32 N, u32 K) {
+  f64 T = 1.0 / N;
   f64 S = 1.0 / (N+1);
-  f64 X = floor(K*N*S);
+  f64 X = floor(K*T*(N+1));
   f64 B = MIN(X, N);
   return (B+0.5) * S;
 }
