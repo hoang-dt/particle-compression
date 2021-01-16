@@ -2348,8 +2348,8 @@ BuildTreeIntPredict(const tree* PredNode,
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     f64 Prob = ProbBin(M, K);
     u32 L = u32(Prob * (N+1));
-    L = MIN(L, N);
     assert(L <= N);
+    L = MIN(L, N);
     f64 Mean = N * Prob;
     f64 StdDev = sqrt(N*Prob*(1-Prob));
     if (N <= BinomialCutoff) {
@@ -2377,6 +2377,7 @@ BuildTreeIntPredict(const tree* PredNode,
     assert(Depth+1 == Params.MaxDepth);
     Left = new tree;
     Left->Count = 1;
+    ++NParticlesDecoded;
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
     i8 ResLvlLeft = ResLvl;
@@ -2399,6 +2400,7 @@ BuildTreeIntPredict(const tree* PredNode,
     assert(Depth+1 == Params.MaxDepth);
     Right = new tree;
     Right->Count = 1;
+    ++NParticlesDecoded;
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     auto NextGrid = SplitGrid(Grid, D, Split, side::Right);
