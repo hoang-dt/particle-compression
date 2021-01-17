@@ -1716,43 +1716,41 @@ EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* 
   Coder->Encode(prob);
 }
 
-inline int
+inline u32
 DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   size_t v = Coder->Decode(CdfTable);
   assert(v <= n);
-  return (int)v;
+  return (u32)v;
 }
 
 /* The inverse of encode */
 // TODO: refactor to put part the logic of this function to the decode function
-inline int
+inline u32
 DecodeRange(
-  double m, double s, double a, double b,
+  f64 m, f64 s, f64 a, f64 b,
   const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) 
 {
   assert(a <= b);
   bool first = true;
   while (true) {
-    int beg = (int)std::ceil(a);
-    int end = (int)std::floor(b);
+    u32 beg = (u32)std::ceil(a);
+    u32 end = (u32)std::floor(b);
     if (beg == end)
       return beg; // no need to write any bit
-    int n = end - beg + 1;
-    if (first && n <= BinomialCutoff)
-      return DecodeBinomialSmallRange(n - 1, CdfTable[n - 1], Coder);
-    if (!first && n <= cutoff2)
-      return beg + DecodeCenteredMinimal(n, Bs);
+    u32 n = end - beg + 1;
+    if (first && n<=BinomialCutoff)
+      return DecodeBinomialSmallRange(n-1, CdfTable[n-1], Coder);
     /* compute F(a) and F(b) */
-    double fa = F(m, s, a);
-    double fb = F(m, s, b);
+    f64 fa = F(m, s, a);
+    f64 fb = F(m, s, b);
     // TODO: what if fa==fb
     /* compute F^-1((fa+fb)/2) */
-    double mid = Finv(m, s, (fa + fb) * 0.5);
-    if (mid < a || mid > b) // mid can be infinity when (fa+fb) == 0
+    f64 mid = Finv(m, s, (fa+fb)*0.5);
+    if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a == mid || b == mid)
+    if (a==mid || b==mid)
       return beg + DecodeCenteredMinimal(n, Bs);
-    assert(a <= mid && mid <= b);
+    assert(a<=mid && mid<=b);
 
     auto bit = Read(Bs);
     if (bit == 0) b = std::floor(mid);
@@ -1770,16 +1768,6 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
 {
   assert(a <= b);
   bool first = true;
-  
-  /* comment out the below to use uniform encoding instead of gaussian distribution */
-  //int beg = cast(int)ceil(a);
-  //int end = cast(int)floor(b);
-  //int v = cast(int)c-beg;
-  //int n = end - beg + 1; // v can be from 0 to n-1
-  //if (end-beg+1 <= cutoff)
-  //  return encode_binomial_small_range(n-1, v, CdfTable[n-1], coder);
-  //else
-  //  return encode_centered_minimal(v, n, bs);
 
   while (true) {
     u32 beg = (u32)std::ceil(a);
@@ -1792,13 +1780,11 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
       assert(!CdfTable.empty());
       return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
     }
-    //if (!first && n <= cutoff2)
-    //  return EncodeCenteredMinimal(v, n, Bs);
     /* compute F(a) and F(b) */
-    double fa = F(m, s, a);
-    double fb = F(m, s, b);
+    f64 fa = F(m, s, a);
+    f64 fb = F(m, s, b);
     /* compute F^-1((fa+fb)/2) */
-    double mid = Finv(m, s, (fa+fb) * 0.5);
+    f64 mid = Finv(m, s, (fa+fb) * 0.5);
     //assert(mid == mid);
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
@@ -1999,11 +1985,13 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
   fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
   fprintf(Fp, "    (dims-string %s)\n", Params.DimsStr);
-  fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
+  //fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
+  fprintf(Fp, "    (bounding-box %d %d %d %d %d %d)\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
   fprintf(Fp, "  )\n"); // end common)
   fprintf(Fp, "  (format\n");
   fprintf(Fp, "    (version %d %d)\n", Params.Version[0], Params.Version[1]);
   fprintf(Fp, "    (resolutions %d)\n", Params.NLevels);
+  fprintf(Fp, "    (start-depth %d)\n", Params.StartResolutionSplit);
   fprintf(Fp, "    (block-bits %d)\n", Params.BlockBits);
   fprintf(Fp, "    (accuracy %.10f)\n", Params.Accuracy);
   fprintf(Fp, "    (refinement %d)\n", Params.RefinementMode);
@@ -2186,6 +2174,17 @@ ReadVtu(cstr FileName) {
   //fp.seek(4, SEEK_CUR);
   //fp.rawRead(particles.concentration[0]);
   return Particles;
+}
+
+inline void
+WriteRawParticles(cstr FileName, const std::vector<particle_int>& ParticlesInt) {
+  auto Fp = fopen(FileName, "wb");
+  i64 Size = ParticlesInt.size();
+  fwrite(&Size, sizeof(Size), 1, Fp);
+  FOR_EACH(P, ParticlesInt) {
+    fwrite(&P->Pos, sizeof(*P), 1, Fp);
+  }
+  fclose(Fp);
 }
 
 inline void
