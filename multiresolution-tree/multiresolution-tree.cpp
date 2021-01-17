@@ -2373,16 +2373,16 @@ DecodeTreeIntPredict(const tree* PredNode,
 #if !defined(BINOMIAL)
   i64 Mid = Begin;
   i64 P = End - Mid;
-  //bool Flip = false;
-  //if (CellCount-N < N) {
-  //  Flip = true;
-  //  N = CellCount - N;
-  //}
+  bool Flip = false;
+  if (CellCount-N < N) {
+    Flip = true;
+    N = CellCount - N;
+  }
   //N = MIN(N, CellCountRight);
   P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-  //if (Flip) {
-  //  P = CellCount - N - P;
-  //}
+  if (Flip) {
+    P = CellCountRight - P;
+  }
   Mid = End - P;
 #else
   i64 Mid = Begin;
@@ -2426,7 +2426,7 @@ DecodeTreeIntPredict(const tree* PredNode,
     if (Split == SpatialSplit)
       Left = DecodeTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Left = DecodeTreeIntPredict(nullptr, Particles, Begin, Mid, GridRight, NextSplit, ResLvl+1, Depth+1);
+      Left = DecodeTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
 
   /* recurse on the right */
@@ -2515,11 +2515,11 @@ BuildTreeIntPredict(const tree* PredNode,
 //#define BINOMIAL 1
 #if !defined(BINOMIAL)
   i64 P = End - Mid;
-  //if (CellCount - N < N) {
-  //  N = CellCount - N;
-  //  P = CellCountRight - P;
-  //}
-  //N = MIN(N, CellCountRight);
+  if (CellCount-N < N) {
+    N = CellCount - N;
+    P = CellCountRight - P;
+  }
+  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 #else
   i64 P = Mid - Begin; // number of particles on the left
