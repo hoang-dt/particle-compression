@@ -1326,7 +1326,7 @@ struct arithmetic_coder {
   InitRead() {
     CodeLow = CodeVal = PendingBits = 0;
     CodeHigh = CodeMax;
-    InitRead(&BitStream, BitStream.Stream);
+    ::InitRead(&BitStream, BitStream.Stream);
     for (int I = 0; I < CodeBits; ++I) { // TODO: what if we read past the stream?
       CodeVal <<= 1;
       CodeVal += Read(&BitStream);
@@ -1628,7 +1628,7 @@ Pow(double X, int K) {
   return R;
 }
 
-constexpr inline int BinomialCutoff = 32; // cannot be bigger than 32 else we will have overflow
+constexpr inline int BinomialCutoff = 16; // cannot be bigger than 32 else we will have overflow
 constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
 /* create binomial table for general P (0 < P < 1) */
@@ -1670,6 +1670,25 @@ ProbBin(u32 N, u32 K) {
 //  }
 //  return Tables;
 //}
+#undef max
+
+inline std::vector<std::vector<std::vector<f64>>>
+CreateGeneralBinomialTablesF64() {
+  std::vector<std::vector<std::vector<f64>>> RetVal(BinomialCutoff+1);
+  auto Table = pascal_triangle(BinomialCutoff);
+  for (u32 N = 0; N <= BinomialCutoff; ++N) {
+    RetVal[N].resize(N+1);
+    for (u32 L = 0; L <= N; ++L) {
+      RetVal[N][L].resize(N+1);
+      f64 P = ProbBin(N, L);
+      for (u32 K = 0; K <= N; ++K) {
+        f64 Prob = Table[N][K] * Pow(P, K) * Pow(1-P, N-K);
+        RetVal[N][L][K] = 1.0 / Prob;
+      }
+    }
+  }
+  return RetVal;
+}
 
 inline std::vector<std::vector<std::vector<u32>>>
 CreateGeneralBinomialTables() {
@@ -1682,7 +1701,7 @@ CreateGeneralBinomialTables() {
       f64 P = ProbBin(N, L);
       for (u32 K = 0; K <= N; ++K) {
         f64 Prob = Table[N][K] * Pow(P, K) * Pow(1-P, N-K);
-        Prob *= (1ull << 31); // TODO: use 32 bits?
+        Prob *= (1ull << 30); // TODO: use 32 bits?
         RetVal[N][L][K] = u32(Prob);
       }
       for (u32 K = 1; K <= N; ++K) { // sum up to create the CDF
@@ -1743,12 +1762,12 @@ DecodeRange(
     /* compute F(a) and F(b) */
     f64 fa = F(m, s, a);
     f64 fb = F(m, s, b);
-    // TODO: what if fa==fb
+    // TODO: what if fa==fb and mid is NAN
     /* compute F^-1((fa+fb)/2) */
     f64 mid = Finv(m, s, (fa+fb)*0.5);
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a==mid || b==mid)
+    if (a==mid || b==mid || mid!=mid)
       return beg + DecodeCenteredMinimal(n, Bs);
     assert(a<=mid && mid<=b);
 
@@ -1762,23 +1781,25 @@ DecodeRange(
 
 /* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability */
-inline void
+inline i32
 EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
   const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder)
 {
   assert(a <= b);
   bool first = true;
 
+  i32 BitCount = 0;
   while (true) {
     u32 beg = (u32)std::ceil(a);
     u32 end = (u32)std::floor(b);
     if (beg == end)
-      return; // no need to write any bit
+      return BitCount; // no need to write any bit
     u32 n = end - beg + 1; // v can be from 0 to n-1
     u32 v = u32(c - beg);
     if ( first && n <= BinomialCutoff) {
       assert(!CdfTable.empty());
-      return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
+      EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
+      return BitCount;
     }
     /* compute F(a) and F(b) */
     f64 fa = F(m, s, a);
@@ -1788,18 +1809,24 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
     //assert(mid == mid);
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
-    if (a==mid || b==mid || mid!=mid) // run out of precision
-      return EncodeCenteredMinimal(v, n, Bs);
+    if (a==mid || b==mid || mid!=mid) {// run out of precision
+      EncodeCenteredMinimal(v, n, Bs);
+      return BitCount + log2(n+1); // TODO
+    }
     assert(a<=mid && mid<=b);
     if (c < mid) {
       Write(Bs, 0);
       b = floor(mid);
+      ++BitCount;
     } else { // c >= mid
       Write(Bs, 1);
       a = ceil(mid);
+      ++BitCount;
     }
     first = false;
   }
+
+  return BitCount;
 }
 
 struct empty_struct { };

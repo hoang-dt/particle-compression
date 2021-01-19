@@ -1628,6 +1628,7 @@ DecodeTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_ty
 
 static cdf_table CdfTable;
 static std::vector<cdf_table> BinomialTables;
+static std::vector<std::vector<std::vector<f64>>> BinomialTablesF64;
 static arithmetic_coder<> Coder;
 
 INLINE static void
@@ -2346,6 +2347,13 @@ DumpTree(const tree* Node, bool FirstTime = false) {
   }
 }
 
+struct debug_prob {
+  u32 P = 0;
+  u32 N = 0;
+  u32 L = 0;
+};
+static std::vector<debug_prob> DebugProbs; 
+#define BINOMIAL 1
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2399,8 +2407,15 @@ DecodeTreeIntPredict(const tree* PredNode,
     if (N <= BinomialCutoff) {
       const cdf& Cdf = BinomialTables[N][L];
       P = DecodeBinomialSmallRange(N, Cdf, &Coder);
+      static int Count = 0;
+      const auto& DebugP = DebugProbs[Count];
+      assert(P == DebugP.P);
+      assert(N == DebugP.N);
+      assert(L == DebugP.L);
+      ++Count;
     } else { // 
       P = DecodeRange(Mean, StdDev, f64(0), f64(N), BinomialTables[0], &BlockStream, &Coder);
+      //P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
     }
   } else { // encode as normal
     P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
@@ -2468,6 +2483,13 @@ DecodeTreeIntPredict(const tree* PredNode,
   return Node;
 }
 
+static i64 BinomialCodeSize = 0;
+static i64 RangeCodeSize    = 0;
+static i64 UniformCodeSize1 = 0;
+static i64 UniformCodeSize2 = 0;
+static i64 PredictedNodeCount = 0;
+static i64 NonPredictedNodeCount = 0;
+static i64 NonPredictedCodeSize = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2512,7 +2534,6 @@ BuildTreeIntPredict(const tree* PredNode,
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
-//#define BINOMIAL 1
 #if !defined(BINOMIAL)
   i64 P = End - Mid;
   if (CellCount-N < N) {
@@ -2521,26 +2542,48 @@ BuildTreeIntPredict(const tree* PredNode,
   }
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  BinomialCodeSize += log2(N+1);
 #else
   i64 P = Mid - Begin; // number of particles on the left
+  // TODO: also binomial encode the empty cells if (CellCount-N < N)
   if (PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     f64 Prob = ProbBin(M, K);
     u32 L = u32(Prob * (N+1));
     assert(L <= N);
-    L = MIN(L, N);
+    //L = MIN(L, N);
     f64 Mean = N * Prob;
     f64 StdDev = sqrt(N*Prob*(1-Prob));
+    ++PredictedNodeCount;
     if (N <= BinomialCutoff) {
       const cdf& Cdf = BinomialTables[N][L];
-      EncodeBinomialSmallRange(N, P, Cdf, &Coder);
+      //static int Count = 0;
+      //if (Count % 1000 == 0)
+      //  printf("%lld %lld\n", P, N);
+      //++Count;
+      DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
+      //EncodeBinomialSmallRange(N, P, Cdf, &Coder);
+      BinomialCodeSize += log2(BinomialTablesF64[N][L][P]);
+      UniformCodeSize1 += log2(N+1);
     } else { // 
-      EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      i32 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      RangeCodeSize += BitCount;
+      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+      UniformCodeSize2 += log2(N+1);
+      int Stop = 0;
     }
     //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   } else { // encode as normal
+    if (CellCount-N < N) {
+      N = CellCount - N;
+      P = CellCountLeft - P;
+    }
+    if (ResLvl+1 < Params.NLevels)
+      int Stop = 0;
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    NonPredictedCodeSize += log2(N+1);
+    ++NonPredictedNodeCount;
   }
 #endif
 
@@ -3623,6 +3666,7 @@ main(int Argc, cstr* Argv) {
     ////ParticleCells.resize(PROD(Params.BlockDims3));
     //CdfTable = CreateBinomialTable(BinomialCutoff);
     BinomialTables = CreateGeneralBinomialTables();
+    BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
     WriteVarByte(&BlockStream, ParticlesInt.size());
@@ -3655,8 +3699,21 @@ main(int Argc, cstr* Argv) {
     Flush(&BlockStream);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-    fwrite(BlockStream.Stream.Data, BlockStreamSize, 1, Fp);
+    fwrite(BlockStream.Stream.Data, Size(BlockStream), 1, Fp);
+    fwrite(Coder.BitStream.Stream.Data, Size(Coder.BitStream), 1, Fp);
+    i64 FirstStreamSize = Size(BlockStream);
+    fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+    i64 SecondStreamSize = Size(Coder.BitStream);
+    fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+    printf("%lld %lld\n", FirstStreamSize, SecondStreamSize);
     fclose(Fp);
+    printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
+    printf("Binomial stream size               = %lld\n", (BinomialCodeSize + 7) / 8);
+    printf("Uniform code size 2                = %lld\n", (UniformCodeSize2 + 7) / 8);
+    printf("Range code size                    = %lld\n", (RangeCodeSize + 7) / 8);
+    printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
+    printf("predicted node count               = %lld\n", PredictedNodeCount);
+    printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
     printf("Stream size                        = %lld\n", BlockStreamSize);
     printf("Separation code size (theoretical) = %f\n", (SeparationCodeLength ) / 8);
     printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
@@ -3666,6 +3723,14 @@ main(int Argc, cstr* Argv) {
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
+    /* dump the debug info */
+    FILE* Ff = fopen("debug.dat", "wb");
+    i64 DebugSize = DebugProbs.size();
+    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fwrite(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
+    }
+    fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -3690,7 +3755,20 @@ main(int Argc, cstr* Argv) {
     //BlockStreams.resize(Params.NLevels + 1);
     //RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
-    ReadFile(PRINT("%s.bin", Params.InFile), &BlockStream.Stream);
+    BinomialTables = CreateGeneralBinomialTables();
+    FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
+    FSEEK(Fp, 0, SEEK_END);
+    i64 FirstStreamSize = 0, SecondStreamSize = 0;
+    ReadBackwardPOD(Fp, &SecondStreamSize);
+    ReadBackwardPOD(Fp, &FirstStreamSize);
+    AllocBuf(&BlockStream.Stream, FirstStreamSize);
+    AllocBuf(&Coder.BitStream.Stream, FirstStreamSize);
+    FSEEK(Fp, 0, SEEK_SET);
+    fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+    fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+    //ReadFile(PRINT("%s.bin", Params.InFile), &BlockStream.Stream);
+    if (Fp) fclose(Fp);
+    Coder.InitRead();
     InitRead(&BlockStream, BlockStream.Stream);
     printf("bit stream size = %lld\n", Size(BlockStream.Stream));
     i64 N = ReadVarByte(&BlockStream);
@@ -3698,8 +3776,17 @@ main(int Argc, cstr* Argv) {
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
     split_type Split = SpatialSplit;
-    if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
+    if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
+    /* read the debug info */
+    FILE* Ff = fopen("debug.dat", "rb");
+    i64 DebugSize = 0;
+    fread(&DebugSize, sizeof(DebugSize), 1, Fp);
+    DebugProbs.resize(DebugSize);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fread(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
+    }
+    fclose(Ff);
     tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Grid, Split, 0, 0);
     printf("consumed stream size = %lld\n", Size(BlockStream));
     FOR_EACH(P, ParticlesInt) {
