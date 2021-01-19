@@ -158,6 +158,7 @@
     <ClInclude Include="doctest.h" />
     <ClInclude Include="heap.h" />
     <ClInclude Include="kdtree.h" />
+    <ClInclude Include="rans64.h" />
     <ClInclude Include="sexpr.h" />
     <ClInclude Include="yocto_math.h" />
     <ClInclude Include="zfp.h" />

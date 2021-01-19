@@ -11,6 +11,7 @@
 #define SEXPR_IMPLEMENTATION
 #include "common.h"
 #include "zfp.h"
+#include "rans64.h"
 #include <algorithm>
 
 static bbox
@@ -1630,6 +1631,7 @@ static cdf_table CdfTable;
 static std::vector<cdf_table> BinomialTables;
 static std::vector<std::vector<std::vector<f64>>> BinomialTablesF64;
 static arithmetic_coder<> Coder;
+static Rans64State Rans;
 
 INLINE static void
 EncodeNode(i64 NodeIdx, i64 M, i64 N) {
@@ -2484,12 +2486,13 @@ DecodeTreeIntPredict(const tree* PredNode,
 }
 
 static i64 BinomialCodeSize = 0;
-static i64 RangeCodeSize    = 0;
+static f64 RangeCodeSize    = 0;
 static i64 UniformCodeSize1 = 0;
 static i64 UniformCodeSize2 = 0;
 static i64 PredictedNodeCount = 0;
 static i64 NonPredictedNodeCount = 0;
 static i64 NonPredictedCodeSize = 0;
+static u32* RansPtr = nullptr;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2564,10 +2567,20 @@ BuildTreeIntPredict(const tree* PredNode,
       //++Count;
       DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
       //EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-      BinomialCodeSize += log2(BinomialTablesF64[N][L][P]);
+      Rans64EncSymbol Esym;
+      u32 PrevCummulative = P>0 ? Cdf[P-1] : 0;
+      Rans64EncSymbolInit(&Esym, PrevCummulative, Cdf[P] - PrevCummulative, 31);
+      Rans64EncPutSymbol(&Rans, &RansPtr, &Esym, 31);
+      
+      //BinomialCodeSize += log2(BinomialTablesF64[N][L][P]);
+      auto B1 = BinomialTablesF64[N][L][P];
+      auto B3 = P>0 ? BinomialTables[N][L][P] - BinomialTables[N][L][P-1] : BinomialTables[N][L][P];
+      auto B2 = f64(BinomialTables[N][L][N]) / f64(B3);
+      assert(fabs(B1-B2)/B1 < 1e-3);
+      BinomialCodeSize += log2(f64(B2));
       UniformCodeSize1 += log2(N+1);
     } else { // 
-      i32 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
       RangeCodeSize += BitCount;
       //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
       UniformCodeSize2 += log2(N+1);
@@ -3669,6 +3682,12 @@ main(int Argc, cstr* Argv) {
     BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
+    Rans64EncInit(&Rans);
+    static size_t OutMaxSize = 32 << 20; // 32 MB
+    static size_t OutMaxElems = OutMaxSize / sizeof(u32);
+    u32* OutBuf = new u32[OutMaxElems];
+    u32* OutEnd = OutBuf + OutMaxElems;
+    RansPtr = OutEnd;
     WriteVarByte(&BlockStream, ParticlesInt.size());
     // TODO: preprocess this
     FOR_EACH(P, ParticlesInt) {
@@ -3697,6 +3716,8 @@ main(int Argc, cstr* Argv) {
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
+    Rans64EncFlush(&Rans, &RansPtr);
+    printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr));
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
     fwrite(BlockStream.Stream.Data, Size(BlockStream), 1, Fp);
@@ -3710,7 +3731,7 @@ main(int Argc, cstr* Argv) {
     printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
     printf("Binomial stream size               = %lld\n", (BinomialCodeSize + 7) / 8);
     printf("Uniform code size 2                = %lld\n", (UniformCodeSize2 + 7) / 8);
-    printf("Range code size                    = %lld\n", (RangeCodeSize + 7) / 8);
+    printf("Range code size                    = %f\n",   (RangeCodeSize + 7) / 8);
     printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
     printf("predicted node count               = %lld\n", PredictedNodeCount);
     printf("non predicted node count           = %lld\n", NonPredictedNodeCount);

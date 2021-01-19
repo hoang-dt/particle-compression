@@ -47,5 +47,8 @@
     <ClInclude Include="kdtree.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="rans64.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

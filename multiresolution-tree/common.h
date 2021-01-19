@@ -1302,7 +1302,7 @@ struct prob {
 
 /* Arithmetic coder */
 /* Condition: CodeValBits >= CountBits + 2 TODO : enforce this condition */
-template <typename code_t = u64, typename count_t = u32, int CodeBits = 33, int CountBits = 31>
+template <typename code_t = u64, typename count_t = u32, int CodeBits = 33>
 struct arithmetic_coder {
   static const code_t CodeMax = (code_t(1) << CodeBits) - 1;
   static const code_t CodeOneFourth = code_t(1) << (CodeBits - 2);
@@ -1628,7 +1628,7 @@ Pow(double X, int K) {
   return R;
 }
 
-constexpr inline int BinomialCutoff = 16; // cannot be bigger than 32 else we will have overflow
+constexpr inline int BinomialCutoff = 7; // cannot be bigger than 32 else we will have overflow
 constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
 /* create binomial table for general P (0 < P < 1) */
@@ -1640,6 +1640,7 @@ CreateBinomialTable(u32 N, f64 P) {
       f64 Prob = Table[n][k] * Pow(P, k) * Pow(1-P, n-k);
       Prob *= (1ull << 31); // TODO: use 32 bits?
       Table[n][k] = u32(Prob);
+      assert(u32(Prob) > 0);
     }
     for (u32 k = 1; k <= n; ++k) { // sum up to create the CDF
       Table[n][k] += Table[n][k-1];
@@ -1692,20 +1693,34 @@ CreateGeneralBinomialTablesF64() {
 
 inline std::vector<std::vector<std::vector<u32>>>
 CreateGeneralBinomialTables() {
+  std::vector<std::vector<std::vector<f64>>> Temp(BinomialCutoff+1);
   std::vector<std::vector<std::vector<u32>>> RetVal(BinomialCutoff+1);
   auto Table = pascal_triangle(BinomialCutoff);
   for (u32 N = 0; N <= BinomialCutoff; ++N) {
     RetVal[N].resize(N+1);
+    Temp[N].resize(N+1);
     for (u32 L = 0; L <= N; ++L) {
       RetVal[N][L].resize(N+1);
+      Temp[N][L].resize(N+1);
       f64 P = ProbBin(N, L);
       for (u32 K = 0; K <= N; ++K) {
         f64 Prob = Table[N][K] * Pow(P, K) * Pow(1-P, N-K);
-        Prob *= (1ull << 30); // TODO: use 32 bits?
-        RetVal[N][L][K] = u32(Prob);
+        //Prob *= (1ull << 31); // TODO: use 32 bits?
+        //RetVal[N][L][K] = std::max(u32(1), u32(Prob));
+        Temp[N][L][K] = Prob;
+        //assert(u32(Prob) > 0);
       }
       for (u32 K = 1; K <= N; ++K) { // sum up to create the CDF
-        RetVal[N][L][K] += RetVal[N][L][K-1];
+        Temp[N][L][K] += Temp[N][L][K-1];
+      }
+      /* normalize to uint 31 bits */
+      f64 Scale = f64(1ull << 31) / Temp[N][L][N];
+      for (u32 K = 0; K <= N; ++K) {
+        RetVal[N][L][K] = u32(Temp[N][L][K] * Scale);
+        assert(RetVal[N][L][K] > 0);
+        if (K > 0) {
+          assert(RetVal[N][L][K] > RetVal[N][L][K-1]);
+        }
       }
     }
   }
@@ -1781,14 +1796,14 @@ DecodeRange(
 
 /* Assuming a Gaussian(m, s), and a range [a, b] (0<=a<=b<=N), and c (a<=c<=b), partition [a,b]
 into two bins of equal probability */
-inline i32
+inline f64
 EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
   const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder)
 {
   assert(a <= b);
   bool first = true;
 
-  i32 BitCount = 0;
+  f64 BitCount = 0;
   while (true) {
     u32 beg = (u32)std::ceil(a);
     u32 end = (u32)std::floor(b);
