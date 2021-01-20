@@ -2252,6 +2252,8 @@ BuildTreeIntTryBoth(std::vector<particle_int>& ParticlesInt, i64 Begin, i64 End,
   }
 }
 
+static tree* TreePtr = nullptr;
+
 /* Node and RefNode should be at the same relative position on the trees 
 * FirstBranch = the first split
 * LastBranch  = the last split so far */
@@ -2266,7 +2268,7 @@ BuildPredTreeRecursive(branch LastBranch, tree* RefNode, tree* Node, i8 Depth, i
   if (Depth == Params.MaxDepth) { // leaf node
     //REQUIRE(!(RefNode && Node));
     if (RefNode || Node) { // only one of the two should be non null
-      tree* PredNode = new tree;
+      tree* PredNode = new (TreePtr++) tree;
       PredNode->Count = RefNode ? RefNode->Count : Node->Count;
       return PredNode;
     }
@@ -2306,7 +2308,7 @@ BuildPredTreeRecursive(branch LastBranch, tree* RefNode, tree* Node, i8 Depth, i
     if (!LeftPredNode && !RightPredNode) {
       return nullptr;
     }
-    tree* PredNode  = new tree;
+    tree* PredNode  = new (TreePtr++) tree;
     PredNode->Left  = LeftPredNode;
     PredNode->Right = RightPredNode;
     if (LeftPredNode) PredNode->Count = LeftPredNode->Count; else PredNode->Count = 0;
@@ -2321,7 +2323,7 @@ BuildPredTreeRecursive(branch LastBranch, tree* RefNode, tree* Node, i8 Depth, i
 // NOTE: Depth is of the parent node of RefNode and Node
 static tree*
 BuildPredTree(tree* RefNode, tree* Node, i8 Depth, i8 D) {
-  tree* Root = new tree;
+  tree* Root = new (TreePtr++) tree;
   i8 LastD = Params.MaxDepth;
   while ((LastD >= 0) && (Params.DimsStr[LastD] != 'x'+D)) --LastD;
   //REQUIRE(LastD > Depth); // TODO: what if LastD == Depth?
@@ -2434,7 +2436,7 @@ DecodeTreeIntPredict(const tree* PredNode,
   if (Begin+1==Mid && CellCountLeft==1) {
     // TODO
     assert(Depth+1 == Params.MaxDepth);
-    Left = new tree;
+    Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
     particle_int Particle{.Pos = GridLeft.From3};
@@ -2454,7 +2456,7 @@ DecodeTreeIntPredict(const tree* PredNode,
   tree* Right = nullptr;
   if (Mid+1==End && CellCountRight==1) {
     assert(Depth+1 == Params.MaxDepth);
-    Right = new tree;
+    Right = new (TreePtr++) tree;
     Right->Count = 1;
     particle_int Particle{.Pos = GridRight.From3};
     Particles.push_back(Particle);
@@ -2478,7 +2480,7 @@ DecodeTreeIntPredict(const tree* PredNode,
     printf("Resolution Split\n");
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
-    Node = new tree;
+    Node = new (TreePtr++) tree;
     Node->Left  = Left;
     Node->Right = Right;
     if (Left ) Node->Count = Left->Count; else Node->Count = 0;
@@ -2559,7 +2561,7 @@ BuildTreeIntPredict(const tree* PredNode,
       const cdf& Cdf = BinomialTables[N][L];
       //DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
       EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-    } else if (N>0) { // N > BinomialCutoff
+    } else if (N > 0) { // N > BinomialCutoff
       f64 Mean = N * Prob;
       f64 StdDev = sqrt(N*Prob*(1-Prob));
       f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
@@ -2572,9 +2574,8 @@ BuildTreeIntPredict(const tree* PredNode,
   /* recurse */
   tree* Left = nullptr; 
   if (Begin+1==Mid && CellCountLeft==1) {
-    // TODO
     assert(Depth+1 == Params.MaxDepth);
-    Left = new tree;
+    Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
   } else if (Begin < Mid) { // recurse
@@ -2591,9 +2592,8 @@ BuildTreeIntPredict(const tree* PredNode,
   /* recurse on the right */
   tree* Right = nullptr;
   if (Mid+1==End && CellCountRight==1) {
-    // TODO
     assert(Depth+1 == Params.MaxDepth);
-    Right = new tree;
+    Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
   } else if (Mid < End) { //recurse
@@ -2615,7 +2615,7 @@ BuildTreeIntPredict(const tree* PredNode,
     printf("Resolution Split\n");
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
-    Node = new tree;
+    Node = new (TreePtr++) tree;
     Node->Left  = Left;
     Node->Right = Right;
     if (Left ) Node->Count = Left->Count; else Node->Count = 0;
@@ -3665,7 +3665,7 @@ main(int Argc, cstr* Argv) {
     ////ParticleCells.resize(PROD(Params.BlockDims3));
     //CdfTable = CreateBinomialTable(BinomialCutoff);
     BinomialTables = CreateGeneralBinomialTables();
-    BinomialTablesF64 = CreateGeneralBinomialTablesF64();
+    //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
     //Rans64EncInit(&Rans);
@@ -3698,7 +3698,10 @@ main(int Argc, cstr* Argv) {
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
+    TreePtr = new tree[Params.NParticles * 10];
+    auto TreePtrBackup = TreePtr;
     tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+    delete[] TreePtrBackup;
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
