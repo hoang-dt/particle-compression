@@ -2355,6 +2355,14 @@ struct debug_prob {
   u32 L = 0;
 };
 static std::vector<debug_prob> DebugProbs; 
+static i64 BinomialCodeSize = 0;
+static f64 RangeCodeSize    = 0;
+static i64 UniformCodeSize1 = 0;
+static i64 UniformCodeSize2 = 0;
+static i64 PredictedNodeCount = 0;
+static i64 NonPredictedNodeCount = 0;
+static i64 NonPredictedCodeSize = 0;
+static u32* RansPtr = nullptr;
 #define BINOMIAL 1
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
@@ -2407,17 +2415,27 @@ DecodeTreeIntPredict(const tree* PredNode,
     f64 Mean = N * Prob;
     f64 StdDev = sqrt(N*Prob*(1-Prob));
     if (N <= BinomialCutoff) {
-      const cdf& Cdf = BinomialTables[N][L];
-      P = DecodeBinomialSmallRange(N, Cdf, &Coder);
       static int Count = 0;
+      const cdf& Cdf = BinomialTables[N][L];
+      if (Count == 374678)
+        int Stop = 0;
+      P = DecodeBinomialSmallRange(N, Cdf, &Coder);
+      //Rans64DecSymbol Dsym;
+      //auto V = Rans64DecGet(&Rans, 31);
+      //P = 0; while (P+1<=N && Cdf[P]<V) ++P;
+      ////if (P > 0) P -= (Cdf[P]>V);
+      //u32 PrevCummulative = P>0 ? Cdf[P-1] : 0;
+      //Rans64DecSymbolInit(&Dsym, PrevCummulative, Cdf[P] - PrevCummulative);
+      //Rans64DecAdvanceSymbol(&Rans, &RansPtr, &Dsym, 31);
       const auto& DebugP = DebugProbs[Count];
-      assert(P == DebugP.P);
       assert(N == DebugP.N);
       assert(L == DebugP.L);
+      ////P = DebugP.P;
+      assert(P == DebugP.P);
       ++Count;
     } else { // 
-      P = DecodeRange(Mean, StdDev, f64(0), f64(N), BinomialTables[0], &BlockStream, &Coder);
-      //P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+      //P = DecodeRange(Mean, StdDev, f64(0), f64(N), BinomialTables[0], &BlockStream, &Coder);
+      P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
     }
   } else { // encode as normal
     P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
@@ -2485,14 +2503,6 @@ DecodeTreeIntPredict(const tree* PredNode,
   return Node;
 }
 
-static i64 BinomialCodeSize = 0;
-static f64 RangeCodeSize    = 0;
-static i64 UniformCodeSize1 = 0;
-static i64 UniformCodeSize2 = 0;
-static i64 PredictedNodeCount = 0;
-static i64 NonPredictedNodeCount = 0;
-static i64 NonPredictedCodeSize = 0;
-static u32* RansPtr = nullptr;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2560,31 +2570,33 @@ BuildTreeIntPredict(const tree* PredNode,
     f64 StdDev = sqrt(N*Prob*(1-Prob));
     ++PredictedNodeCount;
     if (N <= BinomialCutoff) {
+      static int Count = 0;
       const cdf& Cdf = BinomialTables[N][L];
       //static int Count = 0;
       //if (Count % 1000 == 0)
       //  printf("%lld %lld\n", P, N);
       //++Count;
       DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
-      //EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-      Rans64EncSymbol Esym;
-      u32 PrevCummulative = P>0 ? Cdf[P-1] : 0;
-      Rans64EncSymbolInit(&Esym, PrevCummulative, Cdf[P] - PrevCummulative, 31);
-      Rans64EncPutSymbol(&Rans, &RansPtr, &Esym, 31);
+      EncodeBinomialSmallRange(N, P, Cdf, &Coder);
+      //Rans64EncSymbol Esym;
+      //u32 PrevCummulative = P>0 ? Cdf[P-1] : 0;
+      //Rans64EncSymbolInit(&Esym, PrevCummulative, Cdf[P] - PrevCummulative, 31);
+      //REQUIRE(Cdf[P] - PrevCummulative > 0);
+      //Rans64EncPutSymbol(&Rans, &RansPtr, &Esym, 31);
       
       //BinomialCodeSize += log2(BinomialTablesF64[N][L][P]);
       auto B1 = BinomialTablesF64[N][L][P];
       auto B3 = P>0 ? BinomialTables[N][L][P] - BinomialTables[N][L][P-1] : BinomialTables[N][L][P];
       auto B2 = f64(BinomialTables[N][L][N]) / f64(B3);
-      assert(fabs(B1-B2)/B1 < 1e-3);
+      //assert(fabs(B1-B2)/B1 < 1e-3);
       BinomialCodeSize += log2(f64(B2));
       UniformCodeSize1 += log2(N+1);
+      ++Count;
     } else { // 
       f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
-      RangeCodeSize += BitCount;
+      //RangeCodeSize += BitCount;
       //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
       UniformCodeSize2 += log2(N+1);
-      int Stop = 0;
     }
     //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   } else { // encode as normal
@@ -2592,8 +2604,6 @@ BuildTreeIntPredict(const tree* PredNode,
       N = CellCount - N;
       P = CellCountLeft - P;
     }
-    if (ResLvl+1 < Params.NLevels)
-      int Stop = 0;
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     NonPredictedCodeSize += log2(N+1);
     ++NonPredictedNodeCount;
@@ -3682,12 +3692,12 @@ main(int Argc, cstr* Argv) {
     BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 100000000); // 100 MB
     Coder.InitWrite(100000000);
-    Rans64EncInit(&Rans);
-    static size_t OutMaxSize = 32 << 20; // 32 MB
-    static size_t OutMaxElems = OutMaxSize / sizeof(u32);
-    u32* OutBuf = new u32[OutMaxElems];
-    u32* OutEnd = OutBuf + OutMaxElems;
-    RansPtr = OutEnd;
+    //Rans64EncInit(&Rans);
+    //static size_t OutMaxSize = 32 << 20; // 32 MB
+    //static size_t OutMaxElems = OutMaxSize / sizeof(u32);
+    //u32* OutBuf = new u32[OutMaxElems]; // TODO: delete this
+    //u32* OutEnd = OutBuf + OutMaxElems;
+    //RansPtr = OutEnd;
     WriteVarByte(&BlockStream, ParticlesInt.size());
     // TODO: preprocess this
     FOR_EACH(P, ParticlesInt) {
@@ -3716,25 +3726,28 @@ main(int Argc, cstr* Argv) {
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
-    Rans64EncFlush(&Rans, &RansPtr);
-    printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr));
+    //Rans64EncFlush(&Rans, &RansPtr);
+    //printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr) * sizeof(u32));
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-    fwrite(BlockStream.Stream.Data, Size(BlockStream), 1, Fp);
-    fwrite(Coder.BitStream.Stream.Data, Size(Coder.BitStream), 1, Fp);
     i64 FirstStreamSize = Size(BlockStream);
-    fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+    //i64 SecondStreamSize = (OutEnd - RansPtr) * sizeof(u32);
     i64 SecondStreamSize = Size(Coder.BitStream);
+    fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+    fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+    //fwrite(RansPtr, SecondStreamSize, 1, Fp);
+    fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+    //i64 SecondStreamSize = Size(Coder.BitStream);
     fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
-    printf("%lld %lld\n", FirstStreamSize, SecondStreamSize);
+    //printf("%lld %lld\n", FirstStreamSize, SecondStreamSize);
     fclose(Fp);
-    printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
+    //printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
     printf("Binomial stream size               = %lld\n", (BinomialCodeSize + 7) / 8);
-    printf("Uniform code size 2                = %lld\n", (UniformCodeSize2 + 7) / 8);
+    //printf("Uniform code size 2                = %lld\n", (UniformCodeSize2 + 7) / 8);
     printf("Range code size                    = %f\n",   (RangeCodeSize + 7) / 8);
-    printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
-    printf("predicted node count               = %lld\n", PredictedNodeCount);
-    printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
+    //printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
+    //printf("predicted node count               = %lld\n", PredictedNodeCount);
+    //printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
     printf("Stream size                        = %lld\n", BlockStreamSize);
     printf("Separation code size (theoretical) = %f\n", (SeparationCodeLength ) / 8);
     printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
@@ -3787,10 +3800,15 @@ main(int Argc, cstr* Argv) {
     FSEEK(Fp, 0, SEEK_SET);
     fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
     fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-    //ReadFile(PRINT("%s.bin", Params.InFile), &BlockStream.Stream);
-    if (Fp) fclose(Fp);
     Coder.InitRead();
     InitRead(&BlockStream, BlockStream.Stream);
+    //RansPtr = new u32[(SecondStreamSize+sizeof(u32)-1) / sizeof(u32)]; // TODO: delete this
+    //fread(RansPtr, SecondStreamSize, 1, Fp);
+    //i64 Temp = 0;
+    //fread(&Temp, sizeof(Temp), 1, Fp);
+    //assert(Temp == FirstStreamSize);
+    if (Fp) fclose(Fp);
+    //Rans64DecInit(&Rans, &RansPtr);
     printf("bit stream size = %lld\n", Size(BlockStream.Stream));
     i64 N = ReadVarByte(&BlockStream);
     printf("DecodeAccuracy = %f\n", Params.DecodeAccuracy);

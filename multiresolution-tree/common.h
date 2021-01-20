@@ -1370,6 +1370,8 @@ struct arithmetic_coder {
       CodeLow <<= 1;
       CodeLow &= CodeMax;
     }
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
   }
 
   void
@@ -1714,7 +1716,7 @@ CreateGeneralBinomialTables() {
         Temp[N][L][K] += Temp[N][L][K-1];
       }
       /* normalize to uint 31 bits */
-      f64 Scale = f64(1ull << 31) / Temp[N][L][N];
+      f64 Scale = f64(1ull << 30) / Temp[N][L][N];
       for (u32 K = 0; K <= N; ++K) {
         RetVal[N][L][K] = u32(Temp[N][L][K] * Scale);
         assert(RetVal[N][L][K] > 0);
@@ -1722,6 +1724,7 @@ CreateGeneralBinomialTables() {
           assert(RetVal[N][L][K] > RetVal[N][L][K-1]);
         }
       }
+      assert(RetVal[N][L][N] == (1ull << 30));
     }
   }
   return RetVal;
