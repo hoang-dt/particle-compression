@@ -2417,8 +2417,6 @@ DecodeTreeIntPredict(const tree* PredNode,
     if (N <= BinomialCutoff) {
       static int Count = 0;
       const cdf& Cdf = BinomialTables[N][L];
-      if (Count == 374678)
-        int Stop = 0;
       P = DecodeBinomialSmallRange(N, Cdf, &Coder);
       //Rans64DecSymbol Dsym;
       //auto V = Rans64DecGet(&Rans, 31);
@@ -2636,7 +2634,7 @@ BuildTreeIntPredict(const tree* PredNode,
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
     else if (Split == ResolutionSplit)
       Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);      
   }
@@ -2675,6 +2673,23 @@ BuildTreeIntPredict(const tree* PredNode,
     if (Right) Node->Count += Right->Count;
   }
   // TODO: deallocate the two merged trees
+  /* output the trees to test with mpeg */
+  if (Split == ResolutionSplit) {
+    for (i64 I = Mid; I < End; ++I) {
+      Particles[I].Pos = (Particles[I].Pos - GridRight.From3) / GridRight.Stride3;
+    }
+    WritePLYInt(PRINT("%s-%d.ply", Params.Name, ResLvl), Particles.begin() + Mid, Particles.begin() + End);
+    split_type NextSplitLeft = 
+      ((Depth+1==Params.StartResolutionSplit) ||
+       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+
+    if (NextSplitLeft == SpatialSplit) { // last resolution split
+      for (i64 I = Begin; I < Mid; ++I) {
+        Particles[I].Pos = (Particles[I].Pos - GridLeft.From3) / GridLeft.Stride3;
+      }
+      WritePLYInt(PRINT("%s-%d.ply", Params.Name, ResLvl+1), Particles.begin() + Begin, Particles.begin() + Mid);
+    }
+  }
 
   return Node;
 }

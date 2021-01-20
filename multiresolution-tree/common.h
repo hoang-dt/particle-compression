@@ -2318,6 +2318,28 @@ WritePLY(cstr FileName, t Begin, t End) {
   fclose(Fp);
 }
 
+template <typename t> inline void
+WritePLYInt(cstr FileName, t Begin, t End) {
+  FILE* Fp = fopen(FileName, "w");
+  i64 NParticles = End - Begin;
+  fprintf(Fp, "ply\n");
+  //fprintf(Fp, "format binary_little_endian 1.0\n");
+  fprintf(Fp, "format ascii 1.0\n");
+  fprintf(Fp, "element vertex %lld\n", NParticles);
+  fprintf(Fp, "property float x\n");
+  fprintf(Fp, "property float y\n");
+  fprintf(Fp, "property float z\n");
+  fprintf(Fp, "end_header\n");
+  for (auto P = Begin; P != End; ++P) {
+    fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);
+  }
+  //fflush(Fp);
+  //for (auto P = Begin; P != End; ++P) {
+  //  fwrite(&P->Pos, sizeof(*P), 1, Fp);
+  //}
+  fclose(Fp);
+}
+
 inline void
 WritePLYInt(cstr FileName, const std::vector<particle_int>& Particles) {
   FILE* Fp = fopen(FileName, "w");
