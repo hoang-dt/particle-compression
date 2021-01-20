@@ -2562,19 +2562,27 @@ BuildTreeIntPredict(const tree* PredNode,
   if (PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    f64 Prob = ProbBin(M, K);
+    f64 Prob = ProbBin(M, K); // probability of throwing particle onto the left
     u32 L = u32(Prob * (N+1));
     assert(L <= N);
+    if (CellCount-N < N) {
+      N = CellCount - N;
+      P = CellCountLeft - P;
+      //L = CellCountLeft>L ? CellCountLeft-L : 0;
+      Prob = 1.0 - Prob; // probability of throwing empty cells to the left
+      L = u32(Prob * (N+1));
+    }
     //L = MIN(L, N);
-    f64 Mean = N * Prob;
-    f64 StdDev = sqrt(N*Prob*(1-Prob));
     ++PredictedNodeCount;
-    if (N <= BinomialCutoff) {
+    if (N<=BinomialCutoff && N>0) {
+      /*if (CellCount-N < N) {
+        N = CellCount - N;
+        P = CellCountLeft - P;
+        L = CellCountLeft>L ? CellCountLeft-L : 0;
+      }*/
       static int Count = 0;
       const cdf& Cdf = BinomialTables[N][L];
       //static int Count = 0;
-      //if (Count % 1000 == 0)
-      //  printf("%lld %lld\n", P, N);
       //++Count;
       DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
       EncodeBinomialSmallRange(N, P, Cdf, &Coder);
@@ -2592,7 +2600,9 @@ BuildTreeIntPredict(const tree* PredNode,
       BinomialCodeSize += log2(f64(B2));
       UniformCodeSize1 += log2(N+1);
       ++Count;
-    } else { // 
+    } else if (N>0) { // N > BinomialCutoff
+      f64 Mean = N * Prob;
+      f64 StdDev = sqrt(N*Prob*(1-Prob));
       f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
       //RangeCodeSize += BitCount;
       //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
@@ -2604,9 +2614,11 @@ BuildTreeIntPredict(const tree* PredNode,
       N = CellCount - N;
       P = CellCountLeft - P;
     }
-    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    NonPredictedCodeSize += log2(N+1);
-    ++NonPredictedNodeCount;
+    if (N > 0) {
+      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+      NonPredictedCodeSize += log2(N+1);
+      ++NonPredictedNodeCount;
+    }
   }
 #endif
 
