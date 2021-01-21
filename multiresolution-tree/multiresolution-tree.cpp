@@ -1227,8 +1227,6 @@ Handler(const doctest::AssertData& ad) {
 
 #include "kdtree.h"
 
-INLINE u64
-Pack3i64(const vec3i& V) { return u64(V.x & 0x1FFFFF) + (u64(V.y & 0x1FFFFF) << 21) + (u64(V.z & 0x1FFFFF) << 42); }
 
 static bool
 CheckSame( 
@@ -2478,7 +2476,6 @@ DecodeTreeIntPredict(const tree* PredNode,
   /* construct the prediction tree */
   tree* Node = nullptr;
   if (Split == ResolutionSplit) {
-    printf("Resolution Split\n");
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
     Node = new (TreePtr++) tree;
@@ -2613,7 +2610,7 @@ BuildTreeIntPredict(const tree* PredNode,
   /* construct the prediction tree */
   tree* Node = nullptr;
   if (Split == ResolutionSplit) {
-    printf("Resolution Split\n");
+    //printf("Resolution Split\n");
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
     Node = new (TreePtr++) tree;
@@ -3494,23 +3491,14 @@ CompressBlockFast() {
   }
 }
 
+INLINE u64
+Pack3i64(const vec3i& V) { return u64(V.x & 0x1FFFFF) + (u64(V.y & 0x1FFFFF) << 21) + (u64(V.z & 0x1FFFFF) << 42); }
 std::vector<particle_int>
 RemoveRepeatedParticles(std::vector<particle_int>& Input) {
   std::vector<particle_int> Output;
   Output.reserve(Input.size());
   std::sort(Input.begin(), Input.end(), [](const auto& P1, const auto& P2) {
-    bool SameZ = P1.Pos.z == P2.Pos.z;
-    if (SameZ) {
-      bool SameY = P1.Pos.y == P2.Pos.y;
-      if (SameY) {
-        return P1.Pos.x < P2.Pos.x;
-      } else {
-        return P1.Pos.y < P2.Pos.y;
-      }
-    } else {
-      return P1.Pos.z < P2.Pos.z;
-    }
-    return true;
+    return Pack3i64(P1.Pos) < Pack3i64(P2.Pos);
   });
   Output.push_back(Input[0]);
   for (i64 I = 1; I < Input.size(); ++I) {
@@ -3614,6 +3602,7 @@ main(int Argc, cstr* Argv) {
   else if (strcmp("decode", Action) == 0) Params.Action = action::Decode;
   else if (strcmp("error", Action) == 0) Params.Action = action::Error;
   else if (strcmp("convert", Action) == 0) Params.Action = action::Convert;
+  else if (strcmp("dedup", Action) == 0) Params.Action = action::Dedup;
   else EXIT_ERROR(ErrorMsg);
 
   if (Params.Action == action::Encode) {
@@ -3637,7 +3626,7 @@ main(int Argc, cstr* Argv) {
 //    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     //if (!OptVal(Argc, Argv, "--block", &Params.BlockBits)) EXIT_ERROR("missing --block");
     ParticlesInt = ReadParticlesInt(Params.InFile);
-    ParticlesInt = RemoveRepeatedParticles(ParticlesInt);
+    //ParticlesInt = RemoveRepeatedParticles(ParticlesInt);
     if (ParticlesInt.size() == 0)
       EXIT_ERROR("No particles read");
     Params.NParticles = ParticlesInt.size();
@@ -3699,7 +3688,7 @@ main(int Argc, cstr* Argv) {
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
-    TreePtr = new tree[Params.NParticles * 10];
+    TreePtr = new tree[Params.NParticles * 20];
     auto TreePtrBackup = TreePtr;
     tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
     delete[] TreePtrBackup;
@@ -3914,6 +3903,12 @@ main(int Argc, cstr* Argv) {
     } else {
       WriteParticles(Params.OutFile, Particles);
     }
+  } else if (Params.Action == action::Dedup) {
+    if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
+    if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
+    auto ParticlesInt = ReadParticlesInt(Params.InFile);
+    ParticlesInt = RemoveRepeatedParticles(ParticlesInt);
+    WriteParticlesInt(Params.OutFile, ParticlesInt);
   }
 
   //RandomLevels(&Particles);

@@ -1875,7 +1875,7 @@ struct grid_int {
 
 enum split_type { ResolutionSplit, SpatialSplit, BalanceSplit };
 enum class side { Left, Right };
-enum class action : int { Encode, Decode, Error, Convert };
+enum class action : int { Encode, Decode, Error, Convert, Dedup };
 
 struct q_item {
   i64 Begin, End;
