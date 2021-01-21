@@ -2355,6 +2355,65 @@ struct debug_prob {
   u32 N = 0;
   u32 L = 0;
 };
+
+static i64
+CountCodeLength(const std::vector<i32> ResidualTree) {
+  f64 CodeLength = 0;
+  for (int I = 1; I < ResidualTree.size(); I += 2) {
+    int P = I / 2;
+    CodeLength += log2(ResidualTree[P]+1);
+  }
+  return i64((CodeLength + 7) / 8);
+}
+
+static vec2i 
+IndexRange(int level, int nlevels, int nleaves) {
+  int begin = pow(2, level) - 1;
+  int end = level+1<nlevels ? begin*2+1 : begin+nleaves;
+  return vec2i{begin, end};
+}
+
+static std::vector<i32>
+BuildBinaryTreeForResiduals(const std::vector<i32>& Residuals) {
+  int n = (int)Residuals.size();
+  int nodes = 0;
+  int k = 1;
+  int nlevels = 1;
+  while (k < n) {
+    nodes += k;
+    k *= 2;
+    ++nlevels;
+  }
+  int nleaves = k>n ? (2*n-k) : k;
+  nodes += nleaves;
+
+  /* allocate the buffer and copy the contents */
+  std::vector<i32> ResidualTree(nodes);
+  for (int I = nodes-nleaves, J=n-nleaves; I < nodes; ++I, ++J) {
+    ResidualTree[I] = Residuals[J]; // copy the nleaves
+  }
+  for (int I = nodes-n, J=0; I < nodes-nleaves; ++I, ++J) {
+    ResidualTree[I] = Residuals[J];
+  }
+  auto be = IndexRange(nlevels-1, nlevels, nleaves);
+  int begin = be[0], end = be[1];
+  while (begin > 0) {
+    assert((end-begin)%2 == 0);
+    for (int i = begin; i < end; i += 2) {
+      int p = (i-1) >> 1;
+      ResidualTree[p] = ResidualTree[i] + ResidualTree[i+1];
+    }
+    end = begin;
+    begin = (begin-1) >> 1;
+  }
+  int Sum = 0;
+  for (int I = 0; I < Residuals.size(); ++I) {
+    Sum += Residuals[I];
+  }
+  assert(Sum == ResidualTree[0]);
+  return ResidualTree;
+}
+
 static std::vector<debug_prob> DebugProbs; 
 static i64 BinomialCodeSize = 0;
 static f64 RangeCodeSize    = 0;
@@ -2363,6 +2422,8 @@ static i64 UniformCodeSize2 = 0;
 static i64 PredictedNodeCount = 0;
 static i64 NonPredictedNodeCount = 0;
 static i64 NonPredictedCodeSize = 0;
+static f64 ResidualCodeLengthNormal = 0;
+static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 #define BINOMIAL 1
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
@@ -2489,6 +2550,8 @@ DecodeTreeIntPredict(const tree* PredNode,
   return Node;
 }
 
+static std::vector<i32> Residuals;
+
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2555,18 +2618,28 @@ BuildTreeIntPredict(const tree* PredNode,
     f64 Prob = EncodeEmptyCells ? 1-ProbBin(M, K) : ProbBin(M, K); // probability of throwing particle onto the left
     u32 L = u32(Prob * (N+1));
     assert(L <= N);
+    PredictedNodeCount++;
+    i32 R = i32(L) - i32(P); // residual
+    R = R<0 ? -(2*R+1) : 2*R;
+    ResidualCodeLengthNormal += log2(N+1);
+    ResidualCodeLengthGamma += 2*floor(log2(R+1))+1;
     if (N<=BinomialCutoff && N>0) {
       const cdf& Cdf = BinomialTables[N][L];
       //DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
       EncodeBinomialSmallRange(N, P, Cdf, &Coder);
+      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     } else if (N > 0) { // N > BinomialCutoff
       f64 Mean = N * Prob;
       f64 StdDev = sqrt(N*Prob*(1-Prob));
-      f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      //f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      int Stop = 0;
       //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+      Residuals.push_back(R);
     }
   } else if (N > 0) { // encode as normal
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    NonPredictedNodeCount++;
+    NonPredictedCodeSize += log2(N+1);
   }
 #endif
 
@@ -3690,6 +3763,14 @@ main(int Argc, cstr* Argv) {
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
+    //for (i64 I = 0; I < Residuals.size(); ++I) {
+    //  printf("%d\n", Residuals[I]);
+    //}
+    auto ResidualTree = BuildBinaryTreeForResiduals(Residuals);
+    i64 ResidualCodeLength = CountCodeLength(ResidualTree);
+    printf("Residual code length        = %lld\n", ResidualCodeLength);
+    printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
+    printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     double dec_time = timer() - start_time;
     printf("Time: %f s\n", dec_time);
     //Rans64EncFlush(&Rans, &RansPtr);
@@ -3713,9 +3794,9 @@ main(int Argc, cstr* Argv) {
     printf("Binomial stream size               = %lld\n", (BinomialCodeSize + 7) / 8);
     //printf("Uniform code size 2                = %lld\n", (UniformCodeSize2 + 7) / 8);
     printf("Range code size                    = %f\n",   (RangeCodeSize + 7) / 8);
-    //printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
-    //printf("predicted node count               = %lld\n", PredictedNodeCount);
-    //printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
+    printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
+    printf("predicted node count               = %lld\n", PredictedNodeCount);
+    printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
     printf("Stream size                        = %lld\n", BlockStreamSize);
     printf("Separation code size (theoretical) = %f\n", (SeparationCodeLength ) / 8);
     printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);

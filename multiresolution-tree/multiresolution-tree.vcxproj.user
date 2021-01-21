@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--action encode --in redandblack_viewdep_vox12.ply --name redandblack_viewdep_vox12 --ndims 3 --accuracy 0 --nlevels 4 --refinement error --start_depth 0                                                      </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action encode --in redandblack_vox10_1479_dedup.ply --name redandblack_vox10_1479 --ndims 3 --accuracy 0 --nlevels 7 --refinement error --start_depth 0          </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
