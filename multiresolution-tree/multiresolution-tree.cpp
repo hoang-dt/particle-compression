@@ -12,6 +12,7 @@
 #include "common.h"
 #include "zfp.h"
 #include "rans64.h"
+#include "platform.h"
 #include <algorithm>
 
 static bbox
@@ -3781,13 +3782,7 @@ main(int Argc, cstr* Argv) {
     fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
     Coder.InitRead();
     InitRead(&BlockStream, BlockStream.Stream);
-    //RansPtr = new u32[(SecondStreamSize+sizeof(u32)-1) / sizeof(u32)]; // TODO: delete this
-    //fread(RansPtr, SecondStreamSize, 1, Fp);
-    //i64 Temp = 0;
-    //fread(&Temp, sizeof(Temp), 1, Fp);
-    //assert(Temp == FirstStreamSize);
     if (Fp) fclose(Fp);
-    //Rans64DecInit(&Rans, &RansPtr);
     printf("bit stream size = %lld\n", Size(BlockStream.Stream));
     i64 N = ReadVarByte(&BlockStream);
     printf("DecodeAccuracy = %f\n", Params.DecodeAccuracy);
@@ -3805,7 +3800,16 @@ main(int Argc, cstr* Argv) {
       fread(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
     }
     fclose(Ff);
+    double start_time = timer();
+    uint64_t dec_start_time = __rdtsc();
+    TreePtr = new tree[N * 10];
+    auto TreePtrBackup = TreePtr;
+    ParticlesInt.reserve(N);
     tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Grid, Split, 0, 0);
+    delete[] TreePtrBackup;
+    uint64_t dec_clocks = __rdtsc() - dec_start_time;
+    double dec_time = timer() - start_time;
+    printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
     FOR_EACH(P, ParticlesInt) {
       P->Pos = P->Pos + Params.BBoxInt.Min;
