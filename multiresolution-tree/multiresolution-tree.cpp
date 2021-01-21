@@ -2378,8 +2378,8 @@ DecodeTreeIntPredict(const tree* PredNode,
 
   /* determine the splitting axis */
   bbox_int ParentBBox {
-    .Min = Grid.From3,
-    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+    .Min = Params.BBoxInt.Min + Grid.From3,
+    .Max = Params.BBoxInt.Min + Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
   };
   i8 D = Params.DimsStr[Depth] - 'x';
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
@@ -2438,7 +2438,7 @@ DecodeTreeIntPredict(const tree* PredNode,
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
-    particle_int Particle{.Pos = GridLeft.From3};
+    particle_int Particle{.Pos = Params.BBoxInt.Min + GridLeft.From3};
     Particles.push_back(Particle);
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
@@ -2457,7 +2457,7 @@ DecodeTreeIntPredict(const tree* PredNode,
     assert(Depth+1 == Params.MaxDepth);
     Right = new (TreePtr++) tree;
     Right->Count = 1;
-    particle_int Particle{.Pos = GridRight.From3};
+    particle_int Particle{.Pos = Params.BBoxInt.Min + GridRight.From3};
     Particles.push_back(Particle);
     ++NParticlesDecoded;
   } else if (Mid < End) { //recurse
@@ -2503,8 +2503,8 @@ BuildTreeIntPredict(const tree* PredNode,
 
   /* determine the splitting axis */
   bbox_int ParentBBox {
-    .Min = Grid.From3,
-    .Max = Grid.From3 + (Grid.Dims3 - 1) * Grid.Stride3
+    .Min = Params.BBoxInt.Min + Grid.From3,
+    .Max = Params.BBoxInt.Min + Grid.From3 + (Grid.Dims3-1) * Grid.Stride3
   };
   i8 D = Params.DimsStr[Depth] - 'x';
 
@@ -2513,14 +2513,14 @@ BuildTreeIntPredict(const tree* PredNode,
   i32 MM = Grid.From3[D]; // the beginning of the right child
   if (Split == ResolutionSplit) {
     auto RPred = [D, &Grid](const particle_int& P) {
-      i32 Bin = P.Pos[D];
-      REQUIRE((Bin-Grid.From3[D]) % Grid.Stride3[D] == 0);
+      i32 Bin = P.Pos[D] - Params.BBoxInt.Min[D];
+      //REQUIRE((Bin-Grid.From3[D]) % Grid.Stride3[D] == 0);
       Bin = (Bin-Grid.From3[D]) / Grid.Stride3[D];
       return IS_EVEN(Bin);
     };
     Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
   } else if (Split == SpatialSplit) {
-    MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
+    MM = Params.BBoxInt.Min[D] + Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
     auto SPred = [MM, D, &Grid](const particle_int& P) {
       return P.Pos[D] <= MM;
     };
@@ -2563,6 +2563,7 @@ BuildTreeIntPredict(const tree* PredNode,
       f64 Mean = N * Prob;
       f64 StdDev = sqrt(N*Prob*(1-Prob));
       f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
+      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     }
   } else if (N > 0) { // encode as normal
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
@@ -3631,6 +3632,7 @@ main(int Argc, cstr* Argv) {
       EXIT_ERROR("No particles read");
     Params.NParticles = ParticlesInt.size();
     printf("number of particles = %zu\n", ParticlesInt.size());
+    double start_time = timer();
     Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
     //Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
     //printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
@@ -3656,8 +3658,8 @@ main(int Argc, cstr* Argv) {
     //CdfTable = CreateBinomialTable(BinomialCutoff);
     BinomialTables = CreateGeneralBinomialTables();
     //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
-    InitWrite(&BlockStream, 100000000); // 100 MB
-    Coder.InitWrite(100000000);
+    InitWrite(&BlockStream, 100 << 20); // 100 MB
+    Coder.InitWrite(100 << 20);
     //Rans64EncInit(&Rans);
     //static size_t OutMaxSize = 32 << 20; // 32 MB
     //static size_t OutMaxElems = OutMaxSize / sizeof(u32);
@@ -3666,17 +3668,10 @@ main(int Argc, cstr* Argv) {
     //RansPtr = OutEnd;
     WriteVarByte(&BlockStream, ParticlesInt.size());
     // TODO: preprocess this
-    FOR_EACH(P, ParticlesInt) {
-      P->Pos = P->Pos - Params.BBoxInt.Min;
-    }
     Params.Dims3 = Params.BBoxInt.Max - Params.BBoxInt.Min + 1; //vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
     Params.Dims3 = EnlargeToPow2(Params.Dims3);
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
     ComputeGrid(Params.Dims3, Params.DimsStr);
-    WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
-    Params.BBoxInt.Max = Params.Dims3 - 1;
-    Params.BBoxInt.Min = vec3i(0);
-    printf("%s\n", Params.DimsStr);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
     //BuildTreeIntBalance(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, SPLIT);
@@ -3695,8 +3690,12 @@ main(int Argc, cstr* Argv) {
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
+    double dec_time = timer() - start_time;
+    printf("Time: %f s\n", dec_time);
     //Rans64EncFlush(&Rans, &RansPtr);
     //printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr) * sizeof(u32));
+    WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
+    printf("%s\n", Params.DimsStr);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
     FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
     i64 FirstStreamSize = Size(BlockStream);
@@ -3727,13 +3726,13 @@ main(int Argc, cstr* Argv) {
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
     /* dump the debug info */
-    FILE* Ff = fopen("debug.dat", "wb");
-    i64 DebugSize = DebugProbs.size();
-    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fwrite(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
-    }
-    fclose(Ff);
+    //FILE* Ff = fopen("debug.dat", "wb");
+    //i64 DebugSize = DebugProbs.size();
+    //fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    //for (i64 I = 0; I < DebugSize; ++I) {
+    //  fwrite(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
+    //}
+    //fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -3758,7 +3757,6 @@ main(int Argc, cstr* Argv) {
     //BlockStreams.resize(Params.NLevels + 1);
     //RefBlockStreams.resize(Params.MaxHeight - Params.BaseHeight);
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
-    BinomialTables = CreateGeneralBinomialTables();
     FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
     FSEEK(Fp, 0, SEEK_END);
     i64 FirstStreamSize = 0, SecondStreamSize = 0;
@@ -3769,9 +3767,12 @@ main(int Argc, cstr* Argv) {
     FSEEK(Fp, 0, SEEK_SET);
     fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
     fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+    if (Fp) fclose(Fp);
+    double start_time = timer();
+    uint64_t dec_start_time = __rdtsc();
+    BinomialTables = CreateGeneralBinomialTables();
     Coder.InitRead();
     InitRead(&BlockStream, BlockStream.Stream);
-    if (Fp) fclose(Fp);
     printf("bit stream size = %lld\n", Size(BlockStream.Stream));
     i64 N = ReadVarByte(&BlockStream);
     printf("DecodeAccuracy = %f\n", Params.DecodeAccuracy);
@@ -3781,16 +3782,14 @@ main(int Argc, cstr* Argv) {
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
     /* read the debug info */
-    FILE* Ff = fopen("debug.dat", "rb");
-    i64 DebugSize = 0;
-    fread(&DebugSize, sizeof(DebugSize), 1, Fp);
-    DebugProbs.resize(DebugSize);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fread(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
-    }
-    fclose(Ff);
-    double start_time = timer();
-    uint64_t dec_start_time = __rdtsc();
+    //FILE* Ff = fopen("debug.dat", "rb");
+    //i64 DebugSize = 0;
+    //fread(&DebugSize, sizeof(DebugSize), 1, Fp);
+    //DebugProbs.resize(DebugSize);
+    //for (i64 I = 0; I < DebugSize; ++I) {
+    //  fread(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
+    //}
+    //fclose(Ff);
     TreePtr = new tree[N * 10];
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
@@ -3800,10 +3799,6 @@ main(int Argc, cstr* Argv) {
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
-    FOR_EACH(P, ParticlesInt) {
-      P->Pos = P->Pos + Params.BBoxInt.Min;
-    }
-    auto MyBBox = ComputeBoundingBox(ParticlesInt);
     WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt);
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
