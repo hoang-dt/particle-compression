@@ -1611,7 +1611,7 @@ pascal_triangle(int n) {
   return triangle;
 }
 
-/* Create a probability table for small N */
+/* Create a probability table for small N, assume P=0.5 */
 inline cdf_table
 CreateBinomialTable(int N) {
   auto table = pascal_triangle(N);
@@ -1630,7 +1630,7 @@ Pow(double X, int K) {
   return R;
 }
 
-constexpr inline int BinomialCutoff = 7; // cannot be bigger than 32 else we will have overflow
+constexpr inline int BinomialCutoff = 30; // cannot be bigger than 30 else we will have overflow
 constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
 
 /* create binomial table for general P (0 < P < 1) */
@@ -1747,8 +1747,8 @@ EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* 
   assert(v>=0 && v<=n);
   u32 lo = v == 0 ? 0 : CdfTable[v-1];
   u32 hi = CdfTable[v];
-  //u32 scale = 1 << n;
-  //REQUIRE(scale == CdfTable[n]);
+  u32 scale = 1 << n;
+  REQUIRE(scale == CdfTable[n]);
   prob<u32> prob{lo, hi, CdfTable[n]};
   Coder->Encode(prob);
 }
