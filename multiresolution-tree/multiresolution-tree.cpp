@@ -2553,6 +2553,7 @@ DecodeTreeIntPredict(const tree* PredNode,
 }
 
 static std::vector<i32> Residuals;
+static std::vector<std::vector<particle_int>> ParticleLevels;
 
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
@@ -2671,6 +2672,7 @@ BuildTreeIntPredict(const tree* PredNode,
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
+    //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Begin].Pos - GridLeft.From3) / GridLeft.Stride3});
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
     //split_type NextSplit = 
@@ -2681,7 +2683,7 @@ BuildTreeIntPredict(const tree* PredNode,
     //else if (Split == ResolutionSplit)
     //  Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);      
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);      
+    Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);      
   }
 
   /* recurse on the right */
@@ -2691,6 +2693,7 @@ BuildTreeIntPredict(const tree* PredNode,
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
+    ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Mid].Pos - GridRight.From3) / GridRight.Stride3});
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     //split_type NextSplit = SpatialSplit;
@@ -2699,7 +2702,7 @@ BuildTreeIntPredict(const tree* PredNode,
     //else if (Split == ResolutionSplit)
     //  Right = BuildTreeIntPredict(Left, Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    Right = BuildTreeIntPredict(nullptr, Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+    //Right = BuildTreeIntPredict(nullptr, Particles, Mid, End, GridRight, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);
   }
 
   //if (Depth < Params.MaxDepth) {
@@ -3783,11 +3786,16 @@ main(int Argc, cstr* Argv) {
       Split = ResolutionSplit;
     TreePtr = new tree[Params.NParticles * 20];
     auto TreePtrBackup = TreePtr;
+    ParticleLevels.resize(Params.MaxDepth+1);
     tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
     delete[] TreePtrBackup;
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
+    for (int I = 0; I < ParticleLevels.size(); ++I) {
+      if (!ParticleLevels[I].empty())
+        WritePLYInt(PRINT("%s-%d.ply", Params.Name, I), ParticleLevels[I]);
+    }
     //for (i64 I = 0; I < Residuals.size(); ++I) {
     //  printf("%d\n", Residuals[I]);
     //}
