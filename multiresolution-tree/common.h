@@ -1836,10 +1836,26 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
       Write(Bs, 0);
       b = floor(mid);
       ++BitCount;
+      //if (b-mid < mid-a) { // c is in the larger half
+      //  u32 beg = (u32)std::ceil(a);
+      //  u32 end = (u32)std::floor(b);
+      //  u32 n = end - beg + 1; // v can be from 0 to n-1
+      //  u32 v = u32(c - beg);
+      //  EncodeCenteredMinimal(v, n, Bs);
+      //  return BitCount + log2(n+1);
+      //}
     } else { // c >= mid
       Write(Bs, 1);
       a = ceil(mid);
       ++BitCount;
+      //if (b-mid > mid-a) { // c is in the larger half
+      //  u32 beg = (u32)std::ceil(a);
+      //  u32 end = (u32)std::floor(b);
+      //  u32 n = end - beg + 1; // v can be from 0 to n-1
+      //  u32 v = u32(c - beg);
+      //  EncodeCenteredMinimal(v, n, Bs);
+      //  return BitCount + log2(n+1);
+      //}
     }
     first = false;
   }
@@ -1909,6 +1925,7 @@ struct params {
   float Accuracy = 0;
   float DecodeAccuracy = 0;
   bbox BBox;
+  vec3i W3 = {};
   bbox_int BBoxInt;
   vec3i LogDims3;
   vec3i BlockDims3; // TODO: compute this
@@ -2286,6 +2303,27 @@ ReadXYZ(cstr FileName) {
 }
 
 template <typename t> inline void
+WriteVTU(cstr FileName, t Begin, t End) {
+  auto Fp = fopen(FileName, "wb");
+  vtu_header Header;
+  constexpr int MagicOffset = 4072;
+  char Temp[MagicOffset] = {};
+  fwrite(Temp, sizeof(Temp), 1, Fp); // write some dummy data for the first MagicOffset bytes
+  Header.size = u32(End - Begin);
+  WritePOD(Fp, Header);
+  i32 A = 0;
+  fwrite(&A, sizeof(A), 1, Fp); // advance 4 more bytes
+  FOR_EACH(P3, Begin, End) {
+    fwrite(&P3->Pos, sizeof(P3->Pos), 1, Fp);
+  }
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.velocity[0]);
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.concentration[0]);
+  fclose(Fp);
+}
+
+template <typename t> inline void
 WriteXYZ(cstr FileName, t Begin, t End) {
   FILE* Fp = fopen(FileName, "w");
   auto NParticles = End - Begin;
@@ -2319,46 +2357,29 @@ WritePLY(cstr FileName, t Begin, t End) {
 }
 
 template <typename t> inline void
-WritePLYInt(cstr FileName, t Begin, t End) {
+WritePLYInt(cstr FileName, t Begin, t End, bool Binary=false) {
   FILE* Fp = fopen(FileName, "w");
   i64 NParticles = End - Begin;
   fprintf(Fp, "ply\n");
-  //fprintf(Fp, "format binary_little_endian 1.0\n");
-  fprintf(Fp, "format ascii 1.0\n");
+  if (Binary)
+    fprintf(Fp, "format binary_little_endian 1.0\n");
+  else
+    fprintf(Fp, "format ascii 1.0\n");
   fprintf(Fp, "element vertex %lld\n", NParticles);
   fprintf(Fp, "property float x\n");
   fprintf(Fp, "property float y\n");
   fprintf(Fp, "property float z\n");
   fprintf(Fp, "end_header\n");
-  for (auto P = Begin; P != End; ++P) {
-    fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);
+  if (!Binary) {
+    for (auto P = Begin; P != End; ++P) {
+      fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);
+    }
+  } else {
+    fflush(Fp);
+    for (auto P = Begin; P != End; ++P) {
+      fwrite(&P->Pos, sizeof(*P), 1, Fp);
+    }
   }
-  //fflush(Fp);
-  //for (auto P = Begin; P != End; ++P) {
-  //  fwrite(&P->Pos, sizeof(*P), 1, Fp);
-  //}
-  fclose(Fp);
-}
-
-inline void
-WritePLYInt(cstr FileName, const std::vector<particle_int>& Particles) {
-  FILE* Fp = fopen(FileName, "w");
-  i64 NParticles = Particles.size();
-  fprintf(Fp, "ply\n");
-  //fprintf(Fp, "format binary_little_endian 1.0\n");
-  fprintf(Fp, "format ascii 1.0\n");
-  fprintf(Fp, "element vertex %lld\n", NParticles);
-  fprintf(Fp, "property float x\n");
-  fprintf(Fp, "property float y\n");
-  fprintf(Fp, "property float z\n");
-  fprintf(Fp, "end_header\n");
-  FOR_EACH(P, Particles) {
-    fprintf(Fp, "%d %d %d\n", P->Pos.x, P->Pos.y, P->Pos.z);
-  }
-  //fflush(Fp);
-  //for (auto P = Begin; P != End; ++P) {
-  //  fwrite(&P->Pos, sizeof(*P), 1, Fp);
-  //}
   fclose(Fp);
 }
 

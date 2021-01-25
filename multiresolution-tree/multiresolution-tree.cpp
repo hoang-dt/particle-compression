@@ -1146,6 +1146,38 @@ ComputeGrid(vec3i BBoxExt3, str DimsStr)
   }
 }
 
+static vec3i
+ComputeGrid(
+  std::vector<particle_int>* Particles, const bbox_int& BBox, 
+  i64 Begin, i64 End, i8 Depth, str DimsStr)
+{
+  REQUIRE(Begin < End); // this cannot be a leaf node
+  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  i8 D;
+  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+    D = 0;
+  else if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+    D = 1;
+  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
+    D = 2;
+  DimsStr[Depth] = 'x' + D; 
+  assert((BBoxExt3[D]&1) == 0);
+  i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
+  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] <= Middle; };
+  i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
+  vec3i LogDims3Left  = MCOPY(vec3i(0), [D]=1);
+  vec3i LogDims3Right = MCOPY(vec3i(0), [D]=1);
+  if (Begin+1 < Mid) {
+    LogDims3Left = ComputeGrid(Particles, MCOPY(BBox, .Max[D]=Middle), Begin, Mid, Depth+1, DimsStr);
+    ++LogDims3Left[D];
+  }
+  if (Mid+1 < End) {
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
+    ++LogDims3Right[D];
+  }
+  return max(LogDims3Left, LogDims3Right);
+}
+
 /* Return the dimensions of the underlying grid (in terms of power of two) */
 static vec3i
 ComputeGrid(
@@ -2644,12 +2676,12 @@ BuildTreeIntPredict(const tree* PredNode,
     //  Residuals.push_back(R);
     //}
   } else if (Split==ResolutionSplit && N>1) {
-    const cdf& Cdf = CdfTable[N];
+    //const cdf& Cdf = CdfTable[N];
     //EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    f64 Mean = f64(N) / 2; // mean
-    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    //f64 Mean = f64(N) / 2; // mean
+    //f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+    //EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
     //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     //i32 R = N/2 - P;
     //R = R<0 ? -(2*R+1) : 2*R;
@@ -2745,6 +2777,99 @@ BuildTreeIntPredict(const tree* PredNode,
   //}
 
   return Node;
+}
+
+static void
+BuildTreeIntGeneral(
+  std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, 
+  split_type Split, i8 ResLvl, i8 Depth) 
+{
+  /* early return if the number of particles is the same as the number of cells */
+  i64 N = End - Begin; // total number of particles
+  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
+  //if (CellCount == N) return;
+
+  i8 D = Params.DimsStr[Depth] - 'x';
+
+  /* split in either resolution or precision */
+  i64 Mid = Begin;
+  i32 MM = Grid.From3[D]; // the beginning of the right child
+  if (Split == ResolutionSplit) {
+    auto RPred = [D, &Grid](const particle_int& P) {
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      Bin = (Bin-Grid.From3[D]) / Grid.Stride3[D];
+      return IS_EVEN(Bin);
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
+  } else if (Split == SpatialSplit) {
+    MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
+    auto SPred = [MM, D, &Grid](const particle_int& P) {
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      return Bin <= MM;
+    };
+    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
+  }
+
+  /* encode */
+  auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
+  auto GridRight = SplitGrid(Grid, D, Split, side::Right);
+  i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+  i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+  REQUIRE(CellCountLeft+CellCountRight == CellCount);
+  i64 P = Mid - Begin;
+  if (CellCount-N < N) {
+    N = CellCount - N;
+    P = CellCountLeft - P;
+  }
+  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
+  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+
+  if (Depth+1 == Params.StartResolutionSplit) { // print the size of the grid where the resolution split first happens
+    static bool Done = false;
+    if (!Done) {
+      printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
+      Done = true;
+    }
+  }
+
+  /* recurse */
+  tree* Left = nullptr; 
+  if (Begin+1==Mid && CellCountLeft==1) {
+    ++NParticlesDecoded;
+    bbox_int BBox; BBox.Min = GridLeft.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    for (int DD = 0; DD < 2; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[D] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+        Write(&BlockStream, Left);
+      }
+    }
+    //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Begin].Pos - GridLeft.From3) / GridLeft.Stride3});
+  } else if (Begin < Mid) { // recurse
+    assert(Depth+1 < Params.MaxDepth);
+    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit && ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
+    BuildTreeIntGeneral(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);      
+  }
+
+  /* recurse on the right */
+  tree* Right = nullptr;
+  if (Mid+1==End && CellCountRight==1) {
+    ++NParticlesDecoded;
+    bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    for (int DD = 0; DD < 2; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[D] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+        Write(&BlockStream, Left);
+      }
+    }
+  } else if (Mid < End) { //recurse
+    assert(Depth+1 < Params.MaxDepth);
+    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit && ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
+    BuildTreeIntGeneral(Particles, Mid, End, GridRight, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);
+  }
 }
 
 /* Split so that the number of particles are approximately equal on both sides 
@@ -3654,14 +3779,16 @@ ReadParticlesInt(cstr FileName) {
 static void
 WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
   if (strstr(FileName, ".xyz"))
-    WriteXYZ(FileName, Particles.begin(), Particles.end());
+    return WriteXYZ(FileName, Particles.begin(), Particles.end());
   if (strstr(FileName, ".ply"))
-    WritePLY(FileName, Particles.begin(), Particles.end());
+    return WritePLY(FileName, Particles.begin(), Particles.end());
+  if (strstr(FileName, ".vtu"))
+    return WriteVTU(FileName, Particles.begin(), Particles.end());
 }
 
 static void
 WriteParticlesInt(cstr FileName, const std::vector<particle_int>& Particles) {
-  WritePLYInt(FileName, Particles);
+  WritePLYInt(FileName, Particles.begin(), Particles.end());
 }
 
 static i8
@@ -3798,7 +3925,7 @@ main(int Argc, cstr* Argv) {
     Flush(&BlockStream);
     for (int I = 0; I < ParticleLevels.size(); ++I) {
       if (!ParticleLevels[I].empty())
-        WritePLYInt(PRINT("%s-%d.ply", Params.Name, I), ParticleLevels[I]);
+        WritePLYInt(PRINT("%s-%d.ply", Params.Name, I), ParticleLevels[I].begin(), ParticleLevels[I].end());
     }
     //for (i64 I = 0; I < Residuals.size(); ++I) {
     //  printf("%d\n", Residuals[I]);
@@ -3927,7 +4054,7 @@ main(int Argc, cstr* Argv) {
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt);
+    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
     //Blocks.resize(Params.NLevels + 1);
