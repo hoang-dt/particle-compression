@@ -2238,6 +2238,28 @@ ReadVtu(cstr FileName) {
   return Particles;
 }
 
+inline std::vector<particle_int>
+ReadVtuInt(cstr FileName) {
+  auto Fp = fopen(FileName, "rb");
+  std::vector<particle_int> Particles;
+  vtu_header Header;
+  int MagicOffset = 4072;
+  fseek(Fp, MagicOffset, SEEK_SET);
+  ReadPOD(Fp, &Header);
+  //auto size = header[0].size;
+  //writeln(header[0].size);
+  Particles.resize(Header.size);
+  fseek(Fp, 4, SEEK_CUR);
+  FOR_EACH(P, Particles) {
+    fread(&P->Pos, sizeof(*P), 1, Fp);
+  }
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.velocity[0]);
+  //fp.seek(4, SEEK_CUR);
+  //fp.rawRead(particles.concentration[0]);
+  return Particles;
+}
+
 inline void
 WriteRawParticles(cstr FileName, const std::vector<particle_int>& ParticlesInt) {
   auto Fp = fopen(FileName, "wb");

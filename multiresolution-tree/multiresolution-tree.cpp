@@ -1172,7 +1172,7 @@ ComputeGrid(
     ++LogDims3Left[D];
   }
   if (Mid+1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -3733,7 +3733,7 @@ RemoveRepeatedParticles(std::vector<particle_int>& Input) {
   });
   Output.push_back(Input[0]);
   for (i64 I = 1; I < Input.size(); ++I) {
-    if (Input[I].Pos != Input[I - 1].Pos) {
+    if (Input[I].Pos != Input[I-1].Pos) {
       Output.push_back(Input[I]);
     }
   }
@@ -3771,8 +3771,10 @@ ReadParticles(cstr FileName) {
 
 static std::vector<particle_int>
 ReadParticlesInt(cstr FileName) {
- if (strstr(FileName, ".ply"))
+  if (strstr(FileName, ".ply"))
     return ReadPlyInt(FileName);
+  if (strstr(FileName, ".vtu"))
+    return ReadVtuInt(FileName);
   return std::vector<particle_int>();
 }
 
@@ -3788,7 +3790,10 @@ WriteParticles(cstr FileName, const std::vector<particle>& Particles) {
 
 static void
 WriteParticlesInt(cstr FileName, const std::vector<particle_int>& Particles) {
-  WritePLYInt(FileName, Particles.begin(), Particles.end());
+  if (strstr(FileName, ".ply"))
+    return WritePLYInt(FileName, Particles.begin(), Particles.end());
+  if (strstr(FileName, ".vtu"))
+    return WriteVTU(FileName, Particles.begin(), Particles.end());
 }
 
 static i8
@@ -3796,6 +3801,7 @@ ComputeMaxDepth(const vec3i& Dims3) {
   i8 Depth = 0;
   i64 S = 1;
   i64 N = i64(Dims3.x) * i64(Dims3.y) * i64(Dims3.z);
+  printf("N = %d %d %d %lld\n", Dims3.x, Dims3.y, Dims3.z, N);
   while (S < N) {
     ++Depth;
     S <<= 1;
@@ -3807,14 +3813,36 @@ ComputeMaxDepth(const vec3i& Dims3) {
 static vec3i
 EnlargeToPow2(const vec3i& Dims3) {
   vec3i NewDims3(1, 1, 1);
-  while (NewDims3.x < Dims3.x) NewDims3.x <<= 1;
-  while (NewDims3.y < Dims3.y) NewDims3.y <<= 1;
-  while (NewDims3.z < Dims3.z) NewDims3.z <<= 1;
+  printf("dimx\n");
+  while (NewDims3.x < Dims3.x) { NewDims3.x <<= 1; printf("%d\n", NewDims3.x); }
+  printf("dimy\n");
+  while (NewDims3.y < Dims3.y) { NewDims3.y <<= 1; printf("%d\n", NewDims3.y); }
+  printf("dimz\n");
+  while (NewDims3.z < Dims3.z) { NewDims3.z <<= 1; printf("%d\n", NewDims3.z); }
   return NewDims3;
+}
+
+/* Process semantic3d data sets, from text to binary */
+static void
+ProcessSemantic3D(cstr FileNameIn, cstr FileNameOut) {
+  std::vector<particle> Particles;
+  Particles.reserve(1000000);
+  char Line[128];
+  FILE* Fp = fopen(FileNameIn, "r");
+  while (fgets(Line, sizeof(Line), Fp)) {
+    vec3f Pos3;
+    vec3f Temp3; // discarding
+    sscanf(Line, "%f %f %f %f %f %f", &Pos3.x, &Pos3.y, &Pos3.z, &Temp3.x, &Temp3.y, &Temp3.z);
+    Particles.push_back(particle{.Pos = Pos3});
+  }
+  fclose(Fp);
+  WriteParticles(FileNameOut, Particles);
 }
 
 int
 main(int Argc, cstr* Argv) {
+  //ProcessSemantic3D("D:/Downloads/sg27_station8_intensity_rgb.txt", "D:/Downloads/sg27_station8_intensity_rgb.vtu");
+  //return 0;
   //{
   //  i32 Prob = 0;
   //  ToInt(Argv[1], &Prob);
@@ -3866,6 +3894,9 @@ main(int Argc, cstr* Argv) {
     printf("number of particles = %zu\n", ParticlesInt.size());
     double start_time = timer();
     Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
+    printf("bbox = (%d %d %d) - (%d %d %d)\n", 
+      Params.BBoxInt.Min[0], Params.BBoxInt.Min[1], Params.BBoxInt.Min[2],
+      Params.BBoxInt.Max[0], Params.BBoxInt.Max[1], Params.BBoxInt.Max[2]);
     //Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
     //printf("log dims 3 = " PRIvec3i "\n", EXPvec3(Params.LogDims3));
     //BlockStreams.resize(Params.NLevels + 1);
@@ -3890,8 +3921,8 @@ main(int Argc, cstr* Argv) {
     CdfTable = CreateBinomialTable(BinomialCutoff);
     //BinomialTables = CreateGeneralBinomialTables();
     //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
-    InitWrite(&BlockStream, 100 << 20); // 100 MB
-    Coder.InitWrite(100 << 20);
+    InitWrite(&BlockStream, 900 << 20); // 900 MB
+    Coder.InitWrite(900 << 20);
     //Rans64EncInit(&Rans);
     //static size_t OutMaxSize = 32 << 20; // 32 MB
     //static size_t OutMaxElems = OutMaxSize / sizeof(u32);
@@ -3901,9 +3932,18 @@ main(int Argc, cstr* Argv) {
     WriteVarByte(&BlockStream, ParticlesInt.size());
     // TODO: preprocess this
     Params.Dims3 = Params.BBoxInt.Max - Params.BBoxInt.Min + 1; //vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
+    printf("dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
     Params.Dims3 = EnlargeToPow2(Params.Dims3);
+    Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
+    printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
-    ComputeGrid(Params.Dims3, Params.DimsStr);
+    //ComputeGrid(Params.Dims3, Params.DimsStr);
+    Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+    Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
+    Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
+    Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
+    printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
+    printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
     //BuildTreeIntBalance(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, SPLIT);
@@ -3915,11 +3955,8 @@ main(int Argc, cstr* Argv) {
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
-    TreePtr = new tree[Params.NParticles * 20];
-    auto TreePtrBackup = TreePtr;
     ParticleLevels.resize(Params.MaxDepth+1);
-    tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
-    delete[] TreePtrBackup;
+    BuildTreeIntGeneral(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
@@ -4133,6 +4170,7 @@ main(int Argc, cstr* Argv) {
     bool Quantize = OptExists(Argc, Argv, "--quantize");
     f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
     Particles = ReadParticles(Params.InFile);
+    fprintf(stderr, "Done reading particles\n");
     ParticlesInt.resize(Particles.size());
     if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
@@ -4142,15 +4180,19 @@ main(int Argc, cstr* Argv) {
       }
       int EMaxX = Exponent(MaxAbsX), EMaxY = Exponent(MaxAbsY), EMaxZ = Exponent(MaxAbsZ);
       /* quantize */
-      int Bits = 10;
-      f64 ScaleX = ldexp(1, Bits - 1 - EMaxX), ScaleY = ldexp(1, Bits - 1 - EMaxY), ScaleZ = ldexp(1, Bits - 1 - EMaxZ);
+      int Bits = 21;
+      f64 ScaleX = ldexp(1, Bits-1-EMaxX), ScaleY = ldexp(1, Bits-1-EMaxY), ScaleZ = ldexp(1, Bits-1-EMaxZ);
       for (i64 I = 0; I < Particles.size() ; ++I) {
         ParticlesInt[I].Pos.x = i32(ScaleX * Particles[I].Pos.x);
         ParticlesInt[I].Pos.y = i32(ScaleY * Particles[I].Pos.y);
         ParticlesInt[I].Pos.z = i32(ScaleZ * Particles[I].Pos.z);
       }
+      fprintf(stderr, "Done quantizing\n");
+      ParticlesInt = RemoveRepeatedParticles(ParticlesInt);
+      fprintf(stderr, "Writing particles\n");
       WriteParticlesInt(Params.OutFile, ParticlesInt);
     } else {
+      fprintf(stderr, "Writing particles\n");
       WriteParticles(Params.OutFile, Particles);
     }
   } else if (Params.Action == action::Dedup) {
