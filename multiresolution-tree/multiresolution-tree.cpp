@@ -1153,10 +1153,8 @@ ComputeGrid(
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
   vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
-  i8 D;
-  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
-    D = 0;
-  else if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+  i8 D = 0;
+  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
     D = 1;
   else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
     D = 2;
@@ -2779,42 +2777,39 @@ BuildTreeIntPredict(const tree* PredNode,
   return Node;
 }
 
+/* we do not do "resolution splits" any more
+* "Grid" refers to the grid made of blocks, not individual cells */
 static void
-BuildTreeIntGeneral(
-  std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth) 
+BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, i8 Depth)
 {
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return;
 
-  i8 D = Params.DimsStr[Depth] - 'x';
+  i8 D = 0;
+  if      (Grid.Dims3.y>=Grid.Dims3.z && Grid.Dims3.y>=Grid.Dims3.x) D = 1;
+  else if (Grid.Dims3.z>=Grid.Dims3.y && Grid.Dims3.z>=Grid.Dims3.x) D = 2;
 
   /* split in either resolution or precision */
-  i64 Mid = Begin;
-  i32 MM = Grid.From3[D]; // the beginning of the right child
-  if (Split == ResolutionSplit) {
-    auto RPred = [D, &Grid](const particle_int& P) {
-      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
-      Bin = (Bin-Grid.From3[D]) / Grid.Stride3[D];
-      return IS_EVEN(Bin);
-    };
-    Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
-  } else if (Split == SpatialSplit) {
-    MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
-    auto SPred = [MM, D, &Grid](const particle_int& P) {
-      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
-      return Bin <= MM;
-    };
-    Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
-  }
+  i32 MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
+  auto SPred = [MM, D, &Grid](const particle_int& P) {
+    i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+    return Bin <= MM;
+  };
+  i64 Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
 
   /* encode */
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+  if (CellCountLeft + CellCountRight != CellCount) {
+    printf("dims = %d, split = %d\n", D, Split);
+    printf("grid = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(Grid.From3), EXPvec3(Grid.Dims3), EXPvec3(Grid.Stride3));
+    printf("grid left = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(GridLeft.From3), EXPvec3(GridLeft.Dims3), EXPvec3(GridLeft.Stride3));
+    printf("grid right = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(GridRight.From3), EXPvec3(GridRight.Dims3), EXPvec3(GridRight.Stride3));
+  }
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
   if (CellCount-N < N) {
@@ -2822,7 +2817,7 @@ BuildTreeIntGeneral(
     P = CellCountLeft - P;
   }
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 
   if (Depth+1 == Params.StartResolutionSplit) { // print the size of the grid where the resolution split first happens
     static bool Done = false;
@@ -2834,17 +2829,17 @@ BuildTreeIntGeneral(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (Begin+1==Mid && CellCountLeft==1) {
+  if (Begin+1==Mid /*&& CellCountLeft==1*/) {
     ++NParticlesDecoded;
     bbox_int BBox; BBox.Min = GridLeft.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
-    for (int DD = 0; DD < 2; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[D] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        Write(&BlockStream, Left);
-      }
-    }
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]) {
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[D] <= M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
     //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Begin].Pos - GridLeft.From3) / GridLeft.Stride3});
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
@@ -2854,17 +2849,17 @@ BuildTreeIntGeneral(
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (Mid+1==End && CellCountRight==1) {
+  if (Mid+1==End /*&& CellCountRight==1*/) {
     ++NParticlesDecoded;
-    bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
-    for (int DD = 0; DD < 2; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[D] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        Write(&BlockStream, Left);
-      }
-    }
+    //bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]) {
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[D] <= M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit && ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;

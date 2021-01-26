@@ -1944,13 +1944,13 @@ inline grid_int
 SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   auto Out = Grid;
   if (SplitType == ResolutionSplit) {
-    Out.From3[D] += (Side == side::Right) * Out.Stride3[D];
-    Out.Dims3[D] = (Out.Dims3[D] + (Side == side::Left)) >> 1;
+    Out.From3[D] += (Side==side::Right) * Out.Stride3[D];
+    Out.Dims3[D] = (Out.Dims3[D] + (Side==side::Left)) >> 1;
     Out.Stride3[D] <<= 1;
   } else { // spatial split
-    i32 LeftDims = (Out.Dims3[D] + 1) >> 1;
-    Out.Dims3[D] = Side == side::Left? LeftDims : Out.Dims3[D] - LeftDims;
-    Out.From3[D] += (Side == side::Right) * Out.Stride3[D] * LeftDims;
+    i32 LeftDims = (Out.Dims3[D]+1) >> 1;
+    Out.Dims3[D] = Side==side::Left? LeftDims : Out.Dims3[D]-LeftDims;
+    Out.From3[D] += (Side==side::Right) * Out.Stride3[D] * LeftDims;
   }
   return Out;
 }
