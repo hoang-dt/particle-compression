@@ -2816,22 +2816,21 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
     P = CellCountLeft - P;
   }
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 
   /* recurse */
   tree* Left = nullptr; 
   if (Begin+1==Mid /*&& CellCountLeft==1*/) {
     ++NParticlesDecoded;
-    //bbox_int BBox; BBox.Min = GridLeft.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
-    //for (int DD = 0; DD < 3; ++DD) {
-    //  while (BBox.Max[DD] > BBox.Min[DD]) {
-    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-    //    bool Left = Particles[Begin].Pos[D] <= M;
-    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-    //    Write(&BlockStream, Left);
-    //  }
-    //}
-    //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Begin].Pos - GridLeft.From3) / GridLeft.Stride3});
+    bbox_int BBox; BBox.Min = GridLeft.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[D] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
     BuildTreeIntGeneral(Particles, Begin, Mid, GridLeft, Depth+1);      
@@ -2841,15 +2840,15 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
   tree* Right = nullptr;
   if (Mid+1==End /*&& CellCountRight==1*/) {
     ++NParticlesDecoded;
-    //bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
-    //for (int DD = 0; DD < 3; ++DD) {
-    //  while (BBox.Max[DD] > BBox.Min[DD]) {
-    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-    //    bool Left = Particles[Begin].Pos[D] <= M;
-    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-    //    Write(&BlockStream, Left);
-    //  }
-    //}
+    bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[D] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     BuildTreeIntGeneral(Particles, Mid, End, GridRight, Depth+1);
