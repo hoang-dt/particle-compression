@@ -1743,6 +1743,18 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
 }
 
 inline void
+EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
+  assert(V>=0 && V<=N);
+  u32 Hi = Context[V];
+  u32 Lo = 0;
+  for (u32 I = 0; I < V; ++I) Lo += Context[I];
+  Hi += Lo;
+  u32 Scale = Hi;
+  for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I]; 
+  Coder->Encode(prob<u32>{Lo, Hi, Scale});
+}
+
+inline void
 EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   assert(v>=0 && v<=n);
   u32 lo = v == 0 ? 0 : CdfTable[v-1];

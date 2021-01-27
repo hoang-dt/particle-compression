@@ -2779,9 +2779,15 @@ BuildTreeIntPredict(const tree* PredNode,
 
 /* we do not do "resolution splits" any more
 * "Grid" refers to the grid made of blocks, not individual cells */
+static u32 Stack[128] = {};
+static i8 StackPtr = 0;
+static constexpr i8 ContextLength = 1;
+static constexpr u32 ContextMax = 128;
+static u32 Context[ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static void
 BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, i8 Depth)
 {
+  ++StackPtr;
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
@@ -2809,8 +2815,24 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
     N = CellCount - N;
     P = CellCountLeft - P;
   }
-  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  // search the context
+  if (N <= ContextMax) {
+    Stack[StackPtr-1] = N;
+    Stack[StackPtr  ] = P;
+    if (Context[N][P] == 0) {
+      // encode the ESC with prob 1
+      Context[N][N+1] = 1;
+      EncodeWithContext(N, N+1, Context[N], &Coder);
+      // encode P without context
+      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    } else { // there is a context
+      EncodeWithContext(N, P, Context[N], &Coder);
+    }
+    ++Context[N][P]; // update the context
+  } else {
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  }
+  //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 
   /* recurse */
   tree* Left = nullptr; 
@@ -2851,6 +2873,8 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
     assert(Depth+1 < Params.MaxDepth);
     BuildTreeIntGeneral(Particles, Mid, End, GridRight, Depth+1);
   }
+
+  --StackPtr;
 }
 
 /* Split so that the number of particles are approximately equal on both sides 
