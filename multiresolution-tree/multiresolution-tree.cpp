@@ -2803,12 +2803,6 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
   auto GridRight = SplitGrid(Grid, D, SpatialSplit, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
-  if (CellCountLeft + CellCountRight != CellCount) {
-    printf("dims = %d\n", D);
-    printf("grid = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(Grid.From3), EXPvec3(Grid.Dims3), EXPvec3(Grid.Stride3));
-    printf("grid left = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(GridLeft.From3), EXPvec3(GridLeft.Dims3), EXPvec3(GridLeft.Stride3));
-    printf("grid right = (%d %d %d) (%d %d %d) (%d %d %d)\n", EXPvec3(GridRight.From3), EXPvec3(GridRight.Dims3), EXPvec3(GridRight.Stride3));
-  }
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
   if (CellCount-N < N) {
@@ -2822,11 +2816,13 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
   tree* Left = nullptr; 
   if (Begin+1==Mid /*&& CellCountLeft==1*/) {
     ++NParticlesDecoded;
-    bbox_int BBox; BBox.Min = GridLeft.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3; BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
+        REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+        REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[D] <= M;
+        bool Left = Particles[Begin].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         Write(&BlockStream, Left);
       }
@@ -2840,11 +2836,13 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
   tree* Right = nullptr;
   if (Mid+1==End /*&& CellCountRight==1*/) {
     ++NParticlesDecoded;
-    bbox_int BBox; BBox.Min = GridRight.From3 * Params.W3; BBox.Max = BBox.Min + Params.W3 - 1;
+    bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
+        REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
+        REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[D] <= M;
+        bool Left = Particles[Mid].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         Write(&BlockStream, Left);
       }

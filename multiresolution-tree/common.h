@@ -2130,7 +2130,7 @@ ReadCosmo(cstr FileName) {
 inline std::vector<particle_int>
 ReadPlyInt(cstr FileName) {
   auto Fp = fopen(FileName, "rb");
-  char Buf[128];
+  char Buf[512];
   fgets(Buf, sizeof Buf, Fp); // "ply"
   fgets(Buf, sizeof Buf, Fp); // "format ascii" or "format binary_little_endian 1.0"
   bool Ascii = strstr(Buf, "ascii");
