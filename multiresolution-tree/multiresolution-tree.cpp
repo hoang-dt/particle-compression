@@ -2782,8 +2782,8 @@ BuildTreeIntPredict(const tree* PredNode,
 static u32 Stack[128] = {};
 static i8 StackPtr = 0;
 static constexpr i8 ContextLength = 1;
-static constexpr u32 ContextMax = 128;
-static u32 Context[ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static constexpr u32 ContextMax = 256;
+static u32 Context[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static void
 BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, i8 Depth)
 {
@@ -2816,20 +2816,37 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
     P = CellCountLeft - P;
   }
   // search the context
-  if (N <= ContextMax) {
-    Stack[StackPtr-1] = N;
-    Stack[StackPtr  ] = P;
-    if (Context[N][P] == 0) {
-      // encode the ESC with prob 1
-      Context[N][N+1] = 1;
-      EncodeWithContext(N, N+1, Context[N], &Coder);
-      // encode P without context
-      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    } else { // there is a context
-      EncodeWithContext(N, P, Context[N], &Coder);
+  if (N>0 && N<=ContextMax) {
+    u32 S1 = N;
+    u32 S0 = P;
+    u32 S2 = 0;
+    if (StackPtr > 1) { // check the 3-context
+      S2 = Stack[StackPtr-2];
+      Stack[StackPtr-1] = N;
+      Stack[StackPtr  ] = P;
+      if (Context[S2][S1][S0] == 0) { // no 3-context
+        Context[S2][S1][S1+1] = 1;
+        EncodeWithContext(S1, S1+1, Context[S2][S1], &Coder); // ESC
+        goto TWO_CONTEXT;
+      } else { // has 3-context
+        EncodeWithContext(S1, S0, Context[S2][S1], &Coder);
+      }
+      ++Context[S2][S1][S0]; // update the context
+      ++Context[0][S1][S0];
+    } else { // 
+TWO_CONTEXT:
+      if (Context[0][S1][S0] == 0) { // no 2-context
+        // encode the ESC with prob 2
+        Context[0][S1][S1+1] = 2;
+        EncodeWithContext(S1, S1+1, Context[0][S1], &Coder);
+        // encode P without context
+        EncodeCenteredMinimal(S0, S1+1, &BlockStream);
+      } else { // has 2-context
+        EncodeWithContext(S1, S0, Context[0][S1], &Coder);
+      }
+      ++Context[0][S1][S0];
     }
-    ++Context[N][P]; // update the context
-  } else {
+  } else if (N > 0) {
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   }
   //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
