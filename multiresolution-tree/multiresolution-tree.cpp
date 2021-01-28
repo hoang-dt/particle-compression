@@ -2782,10 +2782,12 @@ BuildTreeIntPredict(const tree* PredNode,
 static u32 Stack[128] = {};
 static i8 StackPtr = 0;
 static constexpr i8 ContextLength = 1;
-static constexpr u32 ContextMax = 256;
-static u32 Context[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static constexpr u32 ContextMax = 64;
+static u32 ContextS[ContextMax+2][ContextMax+2] = {};
+static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static u32 ContextRR[ContextMax+2][ContextMax+2] = {};
 static void
-BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, i8 Depth)
+BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, i8 Depth)
 {
   ++StackPtr;
   /* early return if the number of particles is the same as the number of cells */
@@ -2811,49 +2813,76 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, co
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
   // search the context
-  if (N>0 && N<=ContextMax) {
-    u32 S1 = N;
-    u32 S0 = P;
-    u32 S2 = 0;
-    if (StackPtr > 1) { // check the 3-context
-      S2 = Stack[StackPtr-2];
-      Stack[StackPtr-1] = N;
-      Stack[StackPtr  ] = P;
-      if (Context[S2][S1][S0] == 0) { // no 3-context
-        Context[S2][S1][S1+1] = 1;
-        EncodeWithContext(S1, S1+1, Context[S2][S1], &Coder); // ESC
-        goto TWO_CONTEXT;
-      } else { // has 3-context
-        EncodeWithContext(S1, S0, Context[S2][S1], &Coder);
-      }
-      ++Context[S2][S1][S0]; // update the context
-      ++Context[0][S1][S0];
-    } else { // 
-TWO_CONTEXT:
-      if (Context[0][S1][S0] == 0) { // no 2-context
-        // encode the ESC with prob 2
-        Context[0][S1][S1+1] = 2;
-        EncodeWithContext(S1, S1+1, Context[0][S1], &Coder);
-        // encode P without context
-        EncodeCenteredMinimal(S0, S1+1, &BlockStream);
-      } else { // has 2-context
-        EncodeWithContext(S1, S0, Context[0][S1], &Coder);
-      }
-      ++Context[0][S1][S0];
+//  if (N>0 && N<=ContextMax) {
+//    u32 S1 = N;
+//    u32 S0 = P;
+//    u32 S2 = 0;
+//    if (StackPtr > 1) { // check the 3-context
+//      S2 = Stack[StackPtr-2];
+//      Stack[StackPtr-1] = N;
+//      Stack[StackPtr  ] = P;
+//      if (Context[S2][S1][S0] == 0) { // no 3-context
+//        Context[S2][S1][S1+1] = 1;
+//        EncodeWithContext(S1, S1+1, Context[S2][S1], &Coder); // ESC
+//        goto TWO_CONTEXT;
+//      } else { // has 3-context
+//        EncodeWithContext(S1, S0, Context[S2][S1], &Coder);
+//      }
+//      ++Context[S2][S1][S0]; // update the context
+//      ++Context[0][S1][S0];
+//    } else { // 
+//TWO_CONTEXT:
+//      if (Context[0][S1][S0] == 0) { // no 2-context
+//        // encode the ESC with prob 2
+//        Context[0][S1][S1+1] = 2;
+//        EncodeWithContext(S1, S1+1, Context[0][S1], &Coder);
+//        // encode P without context
+//        EncodeCenteredMinimal(S0, S1+1, &BlockStream);
+//      } else { // has 2-context
+//        EncodeWithContext(S1, S0, Context[0][S1], &Coder);
+//      }
+//      ++Context[0][S1][S0];
+//    }
+//  } else if (N > 0) {
+//    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+//  }
+  //i8 T = Msb(u32(N)) + 1;
+  i8 S = Msb(u32(P)) + 1; // S is from 0 to T
+  i8 R = Msb(u32(N-P)) + 1; // R is from 0 to T
+  if (T > 0) {
+    /* encode S */
+    if (ContextS[T][S] == 0) {
+      ContextS[T][T+1] = 1;
+      EncodeWithContext(T, T+1, ContextS[T], &Coder);
+      EncodeCenteredMinimal(S, T+1, &BlockStream);
+    } else {
+      EncodeWithContext(T, S, ContextS[T], &Coder);
     }
-  } else if (N > 0) {
-    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    ++ContextS[T][S];
+    /* encode R */
+    if (!(S==1 && T==1)) {
+      if (ContextR[T][S][R] == 0) {
+        ContextR[T][S][T+1] = 1;
+        EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
+        EncodeCenteredMinimal(R, T+1, &BlockStream);
+      } else {
+        EncodeWithContext(T, R, ContextR[T][S], &Coder);
+      }
+      ++ContextR[T][S][R];
+      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+      //EncodeCenteredMinimal(S, T+1, &BlockStream);
+      //EncodeCenteredMinimal(R+1, T+1, &BlockStream);
+    }
   }
+  //if (CellCount-N < N) {
+  //  N = CellCount - N;
+  //  P = CellCountLeft - P;
+  //}
   //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 
   /* recurse */
-  tree* Left = nullptr; 
-  if (Begin+1==Mid /*&& CellCountLeft==1*/) {
+  if (S==1 /*&& CellCountLeft==1*/) {
     ++NParticlesDecoded;
     bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3; BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
@@ -2863,17 +2892,16 @@ TWO_CONTEXT:
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Begin].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
+        //Write(&BlockStream, Left);
       }
     }
-  } else if (Begin < Mid) { // recurse
+  } else if (S > 1) { // recurse
     assert(Depth+1 < Params.MaxDepth);
-    BuildTreeIntGeneral(Particles, Begin, Mid, GridLeft, Depth+1);      
+    BuildTreeIntGeneral(Particles, Begin, Mid, S, GridLeft, Depth+1);      
   }
 
   /* recurse on the right */
-  tree* Right = nullptr;
-  if (Mid+1==End /*&& CellCountRight==1*/) {
+  if (R==1 /*&& CellCountRight==1*/) {
     ++NParticlesDecoded;
     bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
@@ -2883,12 +2911,12 @@ TWO_CONTEXT:
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Mid].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
+        //Write(&BlockStream, Left);
       }
     }
-  } else if (Mid < End) { //recurse
+  } else if (R > 1) { //recurse
     assert(Depth+1 < Params.MaxDepth);
-    BuildTreeIntGeneral(Particles, Mid, End, GridRight, Depth+1);
+    BuildTreeIntGeneral(Particles, Mid, End, R, GridRight, Depth+1);
   }
 
   --StackPtr;
@@ -3972,7 +4000,9 @@ main(int Argc, cstr* Argv) {
     //BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
     //CreateProbTable();
     //BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
-    BuildTreeIntGeneral(ParticlesInt, 0, ParticlesInt.size(), Grid, 0);
+    i64 N = ParticlesInt.size();
+    i8 T = Msb(u64(N)) + 1;
+    BuildTreeIntGeneral(ParticlesInt, 0, ParticlesInt.size(), T, Grid, 0);
     //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
