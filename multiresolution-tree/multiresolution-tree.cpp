@@ -2850,31 +2850,31 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8
   //i8 T = Msb(u32(N)) + 1;
   i8 S = Msb(u32(P)) + 1; // S is from 0 to T
   i8 R = Msb(u32(N-P)) + 1; // R is from 0 to T
-  if (T > 0) {
-    /* encode S */
-    if (ContextS[T][S] == 0) {
-      ContextS[T][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextS[T], &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-    } else {
-      EncodeWithContext(T, S, ContextS[T], &Coder);
-    }
-    ++ContextS[T][S];
-    /* encode R */
-    if (!(S==1 && T==1)) {
-      if (ContextR[T][S][R] == 0) {
-        ContextR[T][S][T+1] = 1;
-        EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
-        EncodeCenteredMinimal(R, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, R, ContextR[T][S], &Coder);
-      }
-      ++ContextR[T][S][R];
-      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-      //EncodeCenteredMinimal(S, T+1, &BlockStream);
-      //EncodeCenteredMinimal(R+1, T+1, &BlockStream);
-    }
-  }
+  //if (T > 0) {
+  //  /* encode S */
+  //  if (ContextS[T][S] == 0) {
+  //    ContextS[T][T+1] = 1;
+  //    EncodeWithContext(T, T+1, ContextS[T], &Coder);
+  //    EncodeCenteredMinimal(S, T+1, &BlockStream);
+  //  } else {
+  //    EncodeWithContext(T, S, ContextS[T], &Coder);
+  //  }
+  //  ++ContextS[T][S];
+  //  /* encode R */
+  //  if (!(S==1 && T==1)) {
+  //    if (ContextR[T][S][R] == 0) {
+  //      ContextR[T][S][T+1] = 1;
+  //      EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
+  //      EncodeCenteredMinimal(R, T+1, &BlockStream);
+  //    } else {
+  //      EncodeWithContext(T, R, ContextR[T][S], &Coder);
+  //    }
+  //    ++ContextR[T][S][R];
+  //    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  //    //EncodeCenteredMinimal(S, T+1, &BlockStream);
+  //    //EncodeCenteredMinimal(R+1, T+1, &BlockStream);
+  //  }
+  //}
   //if (CellCount-N < N) {
   //  N = CellCount - N;
   //  P = CellCountLeft - P;
@@ -2892,7 +2892,7 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Begin].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        //Write(&BlockStream, Left);
+        Write(&BlockStream, Left);
       }
     }
   } else if (S > 1) { // recurse
@@ -2911,7 +2911,7 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Mid].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        //Write(&BlockStream, Left);
+        Write(&BlockStream, Left);
       }
     }
   } else if (R > 1) { //recurse
