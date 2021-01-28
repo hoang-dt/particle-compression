@@ -2589,23 +2589,22 @@ DecodeTreeIntPredict(const tree* PredNode,
 static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
+static constexpr u32 ContextMax = 64;
+static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
 BuildTreeIntPredict(const tree* PredNode,
-  std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth) 
+  std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
+  split_type Split, i8 ResLvl, i8 Depth)
 {
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
+  assert(Msb(N)+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
-
-  /* determine the splitting axis */
-  bbox_int ParentBBox {
-    .Min = Params.BBoxInt.Min + Grid.From3,
-    .Max = Params.BBoxInt.Min + Grid.From3 + (Grid.Dims3-1) * Grid.Stride3
-  };
+  assert(Depth <= Params.MaxDepth);
   i8 D = Params.DimsStr[Depth] - 'x';
 
   /* split in either resolution or precision */
@@ -2613,16 +2612,16 @@ BuildTreeIntPredict(const tree* PredNode,
   i32 MM = Grid.From3[D]; // the beginning of the right child
   if (Split == ResolutionSplit) {
     auto RPred = [D, &Grid](const particle_int& P) {
-      i32 Bin = P.Pos[D] - Params.BBoxInt.Min[D];
-      //REQUIRE((Bin-Grid.From3[D]) % Grid.Stride3[D] == 0);
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
       Bin = (Bin-Grid.From3[D]) / Grid.Stride3[D];
       return IS_EVEN(Bin);
     };
     Mid = std::partition(RANGE(Particles, Begin, End), RPred) - Particles.begin();
   } else if (Split == SpatialSplit) {
-    MM = Params.BBoxInt.Min[D] + Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
+    MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
     auto SPred = [MM, D, &Grid](const particle_int& P) {
-      return P.Pos[D] <= MM;
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      return Bin <= MM;
     };
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
@@ -2644,50 +2643,35 @@ BuildTreeIntPredict(const tree* PredNode,
   BinomialCodeSize += log2(N+1);
 #else
   i64 P = Mid - Begin; // number of particles on the left
-  bool EncodeEmptyCells = CellCount-N < N;
-  if (EncodeEmptyCells) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
-  if (PredNode) { // predict P
+  i8 S = Msb(u32(P)) + 1;
+  i8 R = Msb(u32(N-P)) + 1;
+  if (T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    f64 Prob = EncodeEmptyCells ? 1-ProbBin(M, K) : ProbBin(M, K); // probability of throwing particle onto the left
-    u32 L = u32(Prob * (N+1));
-    assert(L <= N);
-    PredictedNodeCount++;
-    i32 R = i32(L) - i32(P); // residual
-    R = R<0 ? -(2*R+1) : 2*R;
-    ResidualCodeLengthNormal += log2(N+1);
-    ResidualCodeLengthGamma += 2*floor(log2(R+1))+1;
-    if (N<=BinomialCutoff && N>0) {
-      const cdf& Cdf = BinomialTables[N][L];
-      //DebugProbs.push_back(debug_prob{u32(P), u32(N), u32(L)});
-      EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    } else if (N > 0) { // N > BinomialCutoff
-      f64 Mean = N * Prob;
-      f64 StdDev = sqrt(N*Prob*(1-Prob));
-      f64 BitCount = EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), BinomialTables[0], &BlockStream, &Coder);
-      int Stop = 0;
-      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-      //Residuals.push_back(R);
+    //f64 Prob = ProbBin(M, K); // probability of throwing particle onto the left
+    //u32 L = u32(Prob * (N+1));
+    u32 L = u32((f64(K)/M) * N); // TODO: round to the nearest int?    
+    i8 LL = Msb(L) + 1;
+    if (ContextS[T][LL][S] == 0) {
+      ContextS[T][LL][T+1] = 1;
+      EncodeWithContext(T, T+1, ContextS[T][LL], &Coder);
+      EncodeCenteredMinimal(S, T+1, &BlockStream);
+    } else {
+      EncodeWithContext(T, S, ContextS[T][LL], &Coder);
     }
-  } else if (Split==ResolutionSplit && N>1) {
-    //const cdf& Cdf = CdfTable[N];
-    //EncodeBinomialSmallRange(N, P, Cdf, &Coder);
-    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    f64 Mean = f64(N) / 2; // mean
-    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
-    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    //i32 R = N/2 - P;
-    //R = R<0 ? -(2*R+1) : 2*R;
-    //Residuals.push_back(R);
-  } else if (N > 0) { // encode as normal
-    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-    //NonPredictedNodeCount++;
-    //NonPredictedCodeSize += log2(N+1);
+    ++ContextS[T][LL][S];
+  } else if (T > 0) {
+    EncodeCenteredMinimal(S, T+1, &BlockStream); // TODO: use the arithmetic coder
+  }
+  if (S > 1) { // encode R
+    if (ContextR[T][S][R] == 0) {
+      ContextR[T][S][T+1] = 1;
+      EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
+      EncodeCenteredMinimal(R, T+1, &BlockStream); // TODO: use the arithmetic coder
+    } else {
+      EncodeWithContext(T, R, ContextR[T][S], &Coder);
+    }
+    ++ContextR[T][S][R];  
   }
 #endif
 
@@ -2701,42 +2685,62 @@ BuildTreeIntPredict(const tree* PredNode,
 
   /* recurse */
   tree* Left = nullptr; 
-  if (Begin+1==Mid && CellCountLeft==1) {
+  if (S==1 && CellCountLeft==1) {
     assert(Depth+1 == Params.MaxDepth);
+    assert(Begin+1 == Mid);
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
-    //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Begin].Pos - GridLeft.From3) / GridLeft.Stride3});
+    bbox_int BBox;
+    BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+        REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[DD] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
     else if (Split == ResolutionSplit)
-      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);      
-    //split_type NextSplit = (Depth+1>=Params.StartResolutionSplit && ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
-    //Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);      
+      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (Mid+1==End && CellCountRight==1) {
+  if (R==1 && CellCountRight==1) {
+    assert(Mid+1 == End);
     assert(Depth+1 == Params.MaxDepth);
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
-    //ParticleLevels[ResLvl+(Split==ResolutionSplit)].push_back(particle_int{.Pos = (Particles[Mid].Pos - GridRight.From3) / GridRight.Stride3});
+    bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
+        REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Mid].Pos[DD] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = SpatialSplit;
     if (Split == SpatialSplit)
-      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(Left, Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-    //split_type NextSplit = (Depth+1>=Params.StartResolutionSplit && ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
-    //Right = BuildTreeIntPredict(nullptr, Particles, Mid, End, GridRight, NextSplit, ResLvl+(Split==ResolutionSplit), Depth+1);
+      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
   }
 
   //if (Depth < Params.MaxDepth) {
@@ -2746,7 +2750,6 @@ BuildTreeIntPredict(const tree* PredNode,
   /* construct the prediction tree */
   tree* Node = nullptr;
   if (Split == ResolutionSplit) {
-    //printf("Resolution Split\n");
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
     Node = new (TreePtr++) tree;
@@ -2756,23 +2759,6 @@ BuildTreeIntPredict(const tree* PredNode,
     if (Right) Node->Count += Right->Count;
   }
    //TODO: deallocate the two merged trees
-  /* output the trees to test with mpeg */
-  if (Split == ResolutionSplit) {
-    //for (i64 I = Mid; I < End; ++I) {
-    //  Particles[I].Pos = (Particles[I].Pos - GridRight.From3) / GridRight.Stride3;
-    //}
-    //WritePLYInt(PRINT("%s-%d.ply", Params.Name, ResLvl), Particles.begin() + Mid, Particles.begin() + End);
-    //split_type NextSplitLeft = 
-    //  ((Depth+1==Params.StartResolutionSplit) ||
-    //   (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-
-    //if (NextSplitLeft == SpatialSplit) { // last resolution split
-    //  for (i64 I = Begin; I < Mid; ++I) {
-    //    Particles[I].Pos = (Particles[I].Pos - GridLeft.From3) / GridLeft.Stride3;
-    //  }
-    //  WritePLYInt(PRINT("%s-%d.ply", Params.Name, ResLvl+1), Particles.begin() + Begin, Particles.begin() + Mid);
-    //}
-  }
 
   return Node;
 }
@@ -2782,10 +2768,10 @@ BuildTreeIntPredict(const tree* PredNode,
 static u32 Stack[128] = {};
 static i8 StackPtr = 0;
 static constexpr i8 ContextLength = 1;
-static constexpr u32 ContextMax = 64;
-static u32 ContextS[ContextMax+2][ContextMax+2] = {};
-static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
-static u32 ContextRR[ContextMax+2][ContextMax+2] = {};
+//static constexpr u32 ContextMax = 64;
+//static u32 ContextGS[ContextMax+2][ContextMax+2] = {};
+//static u32 ContextGR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+//static u32 ContextGRR[ContextMax+2][ContextMax+2] = {};
 static void
 BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, i8 Depth)
 {
@@ -2850,31 +2836,31 @@ BuildTreeIntGeneral(std::vector<particle_int>& Particles, i64 Begin, i64 End, i8
   //i8 T = Msb(u32(N)) + 1;
   i8 S = Msb(u32(P)) + 1; // S is from 0 to T
   i8 R = Msb(u32(N-P)) + 1; // R is from 0 to T
-  if (T > 0) {
-    /* encode S */
-    if (ContextS[T][S] == 0) {
-      ContextS[T][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextS[T], &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-    } else {
-      EncodeWithContext(T, S, ContextS[T], &Coder);
-    }
-    ++ContextS[T][S];
-    /* encode R */
-    if (!(S==1 && T==1)) {
-      if (ContextR[T][S][R] == 0) {
-        ContextR[T][S][T+1] = 1;
-        EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
-        EncodeCenteredMinimal(R, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, R, ContextR[T][S], &Coder);
-      }
-      ++ContextR[T][S][R];
-      //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-      //EncodeCenteredMinimal(S, T+1, &BlockStream);
-      //EncodeCenteredMinimal(R+1, T+1, &BlockStream);
-    }
-  }
+  //if (T > 0) {
+  //  /* encode S */
+  //  if (ContextS[T][S] == 0) {
+  //    ContextS[T][T+1] = 1;
+  //    EncodeWithContext(T, T+1, ContextS[T], &Coder);
+  //    EncodeCenteredMinimal(S, T+1, &BlockStream);
+  //  } else {
+  //    EncodeWithContext(T, S, ContextS[T], &Coder);
+  //  }
+  //  ++ContextS[T][S];
+  //  /* encode R */
+  //  if (!(S==1 && T==1)) {
+  //    if (ContextR[T][S][R] == 0) {
+  //      ContextR[T][S][T+1] = 1;
+  //      EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
+  //      EncodeCenteredMinimal(R, T+1, &BlockStream);
+  //    } else {
+  //      EncodeWithContext(T, R, ContextR[T][S], &Coder);
+  //    }
+  //    ++ContextR[T][S][R];
+  //    //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  //    //EncodeCenteredMinimal(S, T+1, &BlockStream);
+  //    //EncodeCenteredMinimal(R+1, T+1, &BlockStream);
+  //  }
+  //}
   //if (CellCount-N < N) {
   //  N = CellCount - N;
   //  P = CellCountLeft - P;
@@ -3988,24 +3974,15 @@ main(int Argc, cstr* Argv) {
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
     printf("dims string = %s\n", Params.DimsStr);
-    //BuildTreeIntBalance(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt  , SPLIT);
-    //BuildTreeIntTryBoth(ParticlesInt, 0, ParticlesInt.size(), Params.BBoxInt, 0);
-    //BuildTreeInt(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
-    //BuildTreeIntPass1(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
-    //CreateProbTable();
-    //BuildTreeIntPass2(ParticlesInt, 0, ParticlesInt.size(), Grid, SPLIT, 0);
     i64 N = ParticlesInt.size();
     i8 T = Msb(u64(N)) + 1;
     TreePtr = new tree[Params.NParticles * 20];
     auto TreePtrBackup = TreePtr;
-    ParticleLevels.resize(Params.MaxDepth+1);
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
       Split = ResolutionSplit;
-    tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+    tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
     delete[] TreePtrBackup;
-    //BuildTreeIntGeneral(ParticlesInt, 0, ParticlesInt.size(), T, Grid, 0);
-    //DumpTree(MyNode, true);
     Coder.EncodeFinalize();
     Flush(&BlockStream);
     //for (i64 I = 0; I < Residuals.size(); ++I) {
