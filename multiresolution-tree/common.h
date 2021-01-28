@@ -1750,7 +1750,7 @@ EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
   for (u32 I = 0; I < V; ++I) Lo += Context[I];
   Hi += Lo;
   u32 Scale = Hi;
-  for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I]; 
+  for (u32 I = V+1; I <= N; ++I) Scale += Context[I]; 
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
 }
 

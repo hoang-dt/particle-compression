@@ -2590,6 +2590,7 @@ static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
 static constexpr u32 ContextMax = 64;
+static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
 static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
@@ -2648,28 +2649,28 @@ BuildTreeIntPredict(const tree* PredNode,
   if (T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    //f64 Prob = ProbBin(M, K); // probability of throwing particle onto the left
-    //u32 L = u32(Prob * (N+1));
-    u32 L = u32((f64(K)/M) * N); // TODO: round to the nearest int?    
+    u32 L = u32((f64(K)/M) * N);
     i8 LL = Msb(L) + 1;
-    if (ContextS[T][LL][S] == 0) {
-      ContextS[T][LL][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextS[T][LL], &Coder);
+    if (ContextS[T][LL][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
     } else {
       EncodeWithContext(T, S, ContextS[T][LL], &Coder);
     }
     ++ContextS[T][LL][S];
-  } else if (T > 0) {
-    EncodeCenteredMinimal(S, T+1, &BlockStream); // TODO: use the arithmetic coder
+    ++ContextTS[T][S];
+  } else if (T > 0) { // no prediction, try 1-context
+    if (ContextTS[T][S] == 0) {
+      EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+    } else {
+      EncodeWithContext(T, S, ContextTS[T], &Coder);
+    }
+    ++ContextTS[T][S];
     //EncodeUniform(T, S, &Coder);
   }
   if (S > 1) { // encode R
     if (ContextR[T][S][R] == 0) {
-      ContextR[T][S][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
-      EncodeCenteredMinimal(R, T+1, &BlockStream); // TODO: use the arithmetic coder
+      EncodeCenteredMinimal(R, T+1, &BlockStream);
       //EncodeUniform(T, R, &Coder);
     } else {
       EncodeWithContext(T, R, ContextR[T][S], &Coder);
