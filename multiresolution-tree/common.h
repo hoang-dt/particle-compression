@@ -1755,6 +1755,15 @@ EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
 }
 
 inline void
+EncodeUniform(u32 N, u32 V, arithmetic_coder<>* Coder) {
+  assert(V>=0 && V<=N);
+  u32 Lo = V;
+  u32 Hi = Lo + 1;
+  u32 Scale = N + 1;
+  Coder->Encode(prob<u32>{Lo, Hi, Scale});
+}
+
+inline void
 EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   assert(v>=0 && v<=n);
   u32 lo = v == 0 ? 0 : CdfTable[v-1];

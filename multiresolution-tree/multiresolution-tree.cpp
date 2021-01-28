@@ -2632,19 +2632,19 @@ BuildTreeIntPredict(const tree* PredNode,
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
-#if !defined(BINOMIAL)
-  i64 P = End - Mid;
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountRight - P;
-  }
-  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-  BinomialCodeSize += log2(N+1);
-#else
-  i64 P = Mid - Begin; // number of particles on the left
+  i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
+#if !defined(BINOMIAL)
+  if (CellCount-N < N) {
+    N = CellCount - N;
+    P = CellCountLeft - P;
+  }
+  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
+  //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  EncodeUniform(N, P, &Coder);
+  BinomialCodeSize += log2(N+1);
+#else
   if (T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
@@ -2656,18 +2656,21 @@ BuildTreeIntPredict(const tree* PredNode,
       ContextS[T][LL][T+1] = 1;
       EncodeWithContext(T, T+1, ContextS[T][LL], &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);
+      //EncodeUniform(T, S, &Coder);
     } else {
       EncodeWithContext(T, S, ContextS[T][LL], &Coder);
     }
     ++ContextS[T][LL][S];
   } else if (T > 0) {
     EncodeCenteredMinimal(S, T+1, &BlockStream); // TODO: use the arithmetic coder
+    //EncodeUniform(T, S, &Coder);
   }
   if (S > 1) { // encode R
     if (ContextR[T][S][R] == 0) {
       ContextR[T][S][T+1] = 1;
       EncodeWithContext(T, T+1, ContextR[T][S], &Coder);
       EncodeCenteredMinimal(R, T+1, &BlockStream); // TODO: use the arithmetic coder
+      //EncodeUniform(T, R, &Coder);
     } else {
       EncodeWithContext(T, R, ContextR[T][S], &Coder);
     }
@@ -2723,7 +2726,9 @@ BuildTreeIntPredict(const tree* PredNode,
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
-    bbox_int BBox; BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    bbox_int BBox;
+    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
