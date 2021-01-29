@@ -2646,11 +2646,15 @@ BuildTreeIntPredict(const tree* PredNode,
   EncodeUniform(N, P, &Coder);
   BinomialCodeSize += log2(N+1);
 #else
-  if (T>0 && PredNode) { // predict P
+  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     u32 L = u32((f64(K)/M) * N);
     i8 LL = Msb(L) + 1;
+    //if (CellCountLeft <= 64)
+    //  LL = S;
+    //i8 LL = S;
     if (ContextS[T][LL][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
@@ -2659,7 +2663,7 @@ BuildTreeIntPredict(const tree* PredNode,
     }
     ++ContextS[T][LL][S];
     ++ContextTS[T][S];
-  } else if (T > 0) { // no prediction, try 1-context
+  } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[T][S] == 0) {
       EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
     } else {
@@ -2668,7 +2672,7 @@ BuildTreeIntPredict(const tree* PredNode,
     ++ContextTS[T][S];
     //EncodeUniform(T, S, &Coder);
   }
-  if (S > 1) { // encode R
+  if (!FullGrid && S>1) { // encode R
     if (ContextR[T][S][R] == 0) {
       EncodeCenteredMinimal(R, T+1, &BlockStream);
       //EncodeUniform(T, R, &Coder);
