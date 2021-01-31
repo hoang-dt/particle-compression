@@ -2457,7 +2457,9 @@ static i64 NonPredictedCodeSize = 0;
 static f64 ResidualCodeLengthNormal = 0;
 static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
-#define BINOMIAL 1
+//#define RESOLUTION_ALWAYS 1
+#define PREDICTION  1
+//#define NORMAL 1
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2590,6 +2592,7 @@ static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
 static constexpr u32 ContextMax = 32;
+static u32 ContextTSResolution[ContextMax+2][ContextMax+2] = {};
 static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
 static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
@@ -2636,7 +2639,7 @@ BuildTreeIntPredict(const tree* PredNode,
   i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
-#if !defined(BINOMIAL)
+#if defined(NORMAL)
   if (CellCount-N < N) {
     N = CellCount - N;
     P = CellCountLeft - P;
@@ -2645,7 +2648,46 @@ BuildTreeIntPredict(const tree* PredNode,
   //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   EncodeUniform(N, P, &Coder);
   BinomialCodeSize += log2(N+1);
-#else
+#elif defined(RESOLUTION_ALWAYS)
+  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  if (!FullGrid && T>0) { // predict P
+    if (Split == ResolutionSplit) {
+      if (ContextTSResolution[T][S] == 0) {
+        EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      } else {
+        EncodeWithContext(T, S, ContextTSResolution[T], &Coder);
+      }
+    } else if (Split == SpatialSplit) {
+      if (ContextTS[T][S] == 0) {
+        EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      } else {
+        EncodeWithContext(T, S, ContextTS[T], &Coder);
+      }
+    }
+    if (!FullGrid && S>1) { // encode R
+      if (ContextR[T][S][R] == 0) {
+        EncodeCenteredMinimal(R, T+1, &BlockStream);
+      } else {
+        EncodeWithContext(T, R, ContextR[T][S], &Coder);
+      }
+      ++ContextR[T][S][R];  
+    }
+    //if (ContextTS[T][S] == 0) {
+    //  EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+    //} else {
+    //  EncodeWithContext(T, S, ContextTS[T], &Coder);
+    //}
+    //++ContextTS[T][S];
+    //if (!FullGrid && S>1) { // encode R
+    //  if (ContextR[T][S][R] == 0) {
+    //    EncodeCenteredMinimal(R, T+1, &BlockStream);
+    //  } else {
+    //    EncodeWithContext(T, R, ContextR[T][S], &Coder);
+    //  }
+    //  ++ContextR[T][S][R];  
+    //}
+  }
+#elif defined(PREDICTION)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
@@ -2712,6 +2754,7 @@ BuildTreeIntPredict(const tree* PredNode,
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+    //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
     else if (Split == ResolutionSplit)
@@ -2741,6 +2784,7 @@ BuildTreeIntPredict(const tree* PredNode,
     }
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
+    //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
     split_type NextSplit = SpatialSplit;
     if (Split == SpatialSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
@@ -2754,6 +2798,7 @@ BuildTreeIntPredict(const tree* PredNode,
 
   /* construct the prediction tree */
   tree* Node = nullptr;
+#if defined(PREDICTION)
   if (Split == ResolutionSplit) {
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
@@ -2763,6 +2808,7 @@ BuildTreeIntPredict(const tree* PredNode,
     if (Left ) Node->Count = Left->Count; else Node->Count = 0;
     if (Right) Node->Count += Right->Count;
   }
+#endif
    //TODO: deallocate the two merged trees
 
   return Node;
