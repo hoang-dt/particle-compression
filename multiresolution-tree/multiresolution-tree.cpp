@@ -2589,9 +2589,9 @@ DecodeTreeIntPredict(const tree* PredNode,
 static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
-static constexpr u32 ContextMax = 64;
+static constexpr u32 ContextMax = 32;
 static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
-static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
@@ -2650,18 +2650,15 @@ BuildTreeIntPredict(const tree* PredNode,
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    u32 L = u32((f64(K)/M) * N);
-    i8 LL = Msb(L) + 1;
-    //if (CellCountLeft <= 64)
-    //  LL = S;
-    //i8 LL = S;
-    if (ContextS[T][LL][S] == 0) { // no 2-context
+    i8 MM = Msb(u64(M)) + 1;
+    i8 KK = Msb(u64(K)) + 1;
+    if (ContextS[T][MM][KK][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
     } else {
-      EncodeWithContext(T, S, ContextS[T][LL], &Coder);
+      EncodeWithContext(T, S, ContextS[T][MM][KK], &Coder);
     }
-    ++ContextS[T][LL][S];
+    ++ContextS[T][MM][KK][S];
     ++ContextTS[T][S];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[T][S] == 0) {
@@ -2670,12 +2667,10 @@ BuildTreeIntPredict(const tree* PredNode,
       EncodeWithContext(T, S, ContextTS[T], &Coder);
     }
     ++ContextTS[T][S];
-    //EncodeUniform(T, S, &Coder);
   }
   if (!FullGrid && S>1) { // encode R
     if (ContextR[T][S][R] == 0) {
       EncodeCenteredMinimal(R, T+1, &BlockStream);
-      //EncodeUniform(T, R, &Coder);
     } else {
       EncodeWithContext(T, R, ContextR[T][S], &Coder);
     }
