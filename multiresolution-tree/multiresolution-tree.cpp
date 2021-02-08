@@ -2596,6 +2596,74 @@ static u32 ContextTSResolution[ContextMax+2][ContextMax+2] = {};
 static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
 static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+
+static const vec3i GridDims3 = vec3i(256, 128, 128);
+static std::vector<bool> LeftGrid; // prediction grid // TODO: replace with a more compact array
+static std::vector<bool> RightGrid; 
+static std::vector<i8> CountGrid; // count grid should be half of PredGrid
+struct occupation_count {
+  vec3i Pos3;
+  i8 Count = 0;
+};
+static std::vector<occupation_count> OccCount; 
+
+/* The input Grid is where we do the resolution split */
+static void
+DepositParticles(const tree* Node, const grid_int& Grid, i8 Depth) {
+  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
+  if (CellCount == 1) {
+    const vec3i& F3 = Grid.From3;
+    i32 Idx = F3.z*(GridDims3.x*GridDims3.y) + F3.y*(GridDims3.x) + F3.x;
+    LeftGrid[Idx] = true;
+  } else {
+    i8 D = Params.DimsStr[Depth] - 'x';
+    if (Node->Left) {
+      return DepositParticles(Node->Left, SplitGrid(Grid, D, SpatialSplit, side::Left), Depth+1);
+    }
+    if (Node->Right) {
+      return DepositParticles(Node->Right, SplitGrid(Grid, D, SpatialSplit, side::Right), Depth+1);
+    }
+  }
+}
+
+/* The input grid should be half of PredGrid */
+static void
+FillPredGrid(const grid_int& Grid, i32 Left, i8 T, i8 U) { // U is the parent, Left is left (resolution) child, T is right (resolution) child
+  OccCount.clear();
+  const vec3i& D3 = Grid.Dims3;
+  for (i32 Z = 0; Z < Grid.From3.z; ++Z) {
+  for (i32 Y = 0; Y < Grid.From3.y; ++Y) {
+  for (i32 X = 0; X < Grid.From3.x; ++X) {
+    i32 Idx = Z*D3.x*D3.y + Y*D3.x + X;
+    i8 Count = 0;
+    for (i32 DZ = -1; DZ <= 1; ++DZ) {
+      i32 ZZ = Z + DZ;
+      if (ZZ<0 || ZZ>=GridDims3.z) continue;
+      for (i32 DY = -1; DY <= 1; ++DY) {
+        i32 YY = Y + DY;
+        if (YY<0 || YY>=GridDims3.y) continue;
+        for (i32 DX = -1; DX <= 1; ++DX) {
+          i32 XX = X + DX;
+          if (XX<0 || XX>=GridDims3.x) continue;
+          i32 N = (ZZ)*(GridDims3.x*GridDims3.y) + (YY)*(GridDims3.x) + (XX);
+          Count += LeftGrid[N];
+        }
+      } 
+    }
+    OccCount.push_back(occupation_count{.Pos3=vec3i{X,Y,Z}, .Count=Count});
+  }}}
+  std::sort(OccCount.begin(), OccCount.end(), [](const auto& C1, const auto& C2) {
+    return C1.Count > C2.Count;
+  });
+  i32 MinT = std::max((1<<U)-Left, (1<<T));
+  i32 MaxT = std::min((1<<((U+1)))-Left, (1<<(T+1)));
+  i32 AvgT = (MinT+MaxT) >> 1;
+  assert(AvgT <= OccCount.size());
+  for (i32 I = 0; I < AvgT; ++I) {
+    
+  }
+}
+
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
