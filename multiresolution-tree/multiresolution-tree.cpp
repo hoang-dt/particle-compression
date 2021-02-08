@@ -2597,71 +2597,76 @@ static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
 static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
 
-static const vec3i GridDims3 = vec3i(256, 128, 128);
-static std::vector<bool> LeftGrid; // prediction grid // TODO: replace with a more compact array
-static std::vector<bool> RightGrid; 
+static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
-struct occupation_count {
-  vec3i Pos3;
-  i8 Count = 0;
-};
-static std::vector<occupation_count> OccCount; 
+static grid_int PredGrid;
 
-/* The input Grid is where we do the resolution split */
+/* The input Grid is where we do the resolution split.
+Note that Grid has to be "normalized" (From3 == 0 and Stride3 == 1) before first calling this function */
 static void
 DepositParticles(const tree* Node, const grid_int& Grid, i8 Depth) {
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   if (CellCount == 1) {
     const vec3i& F3 = Grid.From3;
-    i32 Idx = F3.z*(GridDims3.x*GridDims3.y) + F3.y*(GridDims3.x) + F3.x;
-    LeftGrid[Idx] = true;
-  } else {
+    i32 Idx = F3.z*(PredGrid.Dims3.x*PredGrid.Dims3.y) + F3.y*(PredGrid.Dims3.x) + F3.x;
+    PredBuf[Idx] = true;
+  } else { // not yet reach 1 cell
     i8 D = Params.DimsStr[Depth] - 'x';
-    if (Node->Left) {
+    if (Node->Left) 
       return DepositParticles(Node->Left, SplitGrid(Grid, D, SpatialSplit, side::Left), Depth+1);
-    }
-    if (Node->Right) {
+    if (Node->Right) 
       return DepositParticles(Node->Right, SplitGrid(Grid, D, SpatialSplit, side::Right), Depth+1);
-    }
   }
 }
 
-/* The input grid should be half of PredGrid */
-static void
-FillPredGrid(const grid_int& Grid, i32 Left, i8 T, i8 U) { // U is the parent, Left is left (resolution) child, T is right (resolution) child
+struct occupation_count {
+  vec3i Pos3;
+  i8 Count = 0;
+};
+static std::vector<occupation_count> OccCount; 
+/* The input grid should be a subgrid of PredGrid */ 
+// U is the parent MSB, Left is left (resolution) child, T is right (resolution) child
+static i32
+PredictLeftCount(const grid_int& Grid, i32 Left, i8 U, i8 T, i8 Depth) {
   OccCount.clear();
   const vec3i& D3 = Grid.Dims3;
-  for (i32 Z = 0; Z < Grid.From3.z; ++Z) {
-  for (i32 Y = 0; Y < Grid.From3.y; ++Y) {
-  for (i32 X = 0; X < Grid.From3.x; ++X) {
+  vec3i Last3 = Grid.From3 + Grid.Dims3*Grid.Stride3;
+  for (i32 Z = Grid.From3.z; Z < Last3.z; Z+=Grid.Stride3.z) {
+  for (i32 Y = Grid.From3.y; Y < Last3.y; Y+=Grid.Stride3.y) {
+  for (i32 X = Grid.From3.x; X < Last3.x; X+=Grid.Stride3.x) {
     i32 Idx = Z*D3.x*D3.y + Y*D3.x + X;
     i8 Count = 0;
     for (i32 DZ = -1; DZ <= 1; ++DZ) {
       i32 ZZ = Z + DZ;
-      if (ZZ<0 || ZZ>=GridDims3.z) continue;
+      if (ZZ<0 || ZZ>=PredGrid.Dims3.z) continue;
       for (i32 DY = -1; DY <= 1; ++DY) {
         i32 YY = Y + DY;
-        if (YY<0 || YY>=GridDims3.y) continue;
+        if (YY<0 || YY>=PredGrid.Dims3.y) continue;
         for (i32 DX = -1; DX <= 1; ++DX) {
           i32 XX = X + DX;
-          if (XX<0 || XX>=GridDims3.x) continue;
-          i32 N = (ZZ)*(GridDims3.x*GridDims3.y) + (YY)*(GridDims3.x) + (XX);
-          Count += LeftGrid[N];
+          if (XX<0 || XX>=PredGrid.Dims3.x) continue;
+          i32 N = (ZZ)*(PredGrid.Dims3.x*PredGrid.Dims3.y) + (YY)*(PredGrid.Dims3.x) + (XX);
+          Count += PredBuf[N];
         }
-      } 
+      }
     }
     OccCount.push_back(occupation_count{.Pos3=vec3i{X,Y,Z}, .Count=Count});
   }}}
+  // TODO: what if C1.Count == C2.Count?
   std::sort(OccCount.begin(), OccCount.end(), [](const auto& C1, const auto& C2) {
     return C1.Count > C2.Count;
   });
+  i8 D = Params.DimsStr[Depth] - 'x';
+  i32 MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1);
   i32 MinT = std::max((1<<U)-Left, (1<<T));
-  i32 MaxT = std::min((1<<((U+1)))-Left, (1<<(T+1)));
+  i32 MaxT = std::min((1<<(U+1))-1-Left, (1<<(T+1))-1);
   i32 AvgT = (MinT+MaxT) >> 1;
   assert(AvgT <= OccCount.size());
+  i32 LeftCount = 0; // the predicted number of particles on the left
   for (i32 I = 0; I < AvgT; ++I) {
-    
+    LeftCount += (OccCount[I].Count>0) && (OccCount[I].Pos3[D]<=MM);
   }
+  return LeftCount;
 }
 
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
@@ -2673,7 +2678,7 @@ BuildTreeIntPredict(const tree* PredNode,
 {
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
-  assert(Msb(N)+1 == T);
+  assert(Msb(u64(N))+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
   assert(Depth <= Params.MaxDepth);
@@ -2759,7 +2764,14 @@ BuildTreeIntPredict(const tree* PredNode,
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
-    i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    //i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    auto G = GridLeft;
+    G.From3 = (G.From3-PredGrid.From3) / PredGrid.Stride3;
+    assert(G.Stride3.z >= PredGrid.Stride3.z);
+    assert(G.Stride3.y >= PredGrid.Stride3.y);
+    assert(G.Stride3.x >= PredGrid.Stride3.x);
+    G.Stride3 = G.Stride3 / PredGrid.Stride3;
+    i64 K = PredictLeftCount(G, M, Msb(u64(M+N)), T, Depth);
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     if (ContextS[T][MM][KK][S] == 0) { // no 2-context
@@ -2795,6 +2807,13 @@ BuildTreeIntPredict(const tree* PredNode,
       Done = true;
     }
   }
+#if defined(PREDICTION)
+  if (Split==ResolutionSplit && Depth>=Params.StartPredGrid) {
+    PredGrid = Grid; // save this grid
+    PredBuf.clear();
+    PredBuf.resize(i64(PredGrid.Dims3.x)*i64(PredGrid.Dims3.y)*i64(PredGrid.Dims3.z), false);
+  }
+#endif
 
   /* recurse */
   tree* Left = nullptr; 
@@ -2804,6 +2823,10 @@ BuildTreeIntPredict(const tree* PredNode,
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
+    if (Depth >= Params.StartPredGrid) {
+      vec3i F3 = (GridLeft.From3-PredGrid.From3) / PredGrid.Stride3;
+      PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
+    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
     BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
@@ -2837,6 +2860,10 @@ BuildTreeIntPredict(const tree* PredNode,
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
+    if (Depth >= Params.StartPredGrid) {
+      vec3i F3 = (GridRight.From3-PredGrid.From3) / PredGrid.Stride3;
+      PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
+    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
     BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
@@ -4023,6 +4050,9 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
+    if (!OptVal(Argc, Argv, "--start_pred", &Params.StartPredGrid)) EXIT_ERROR("missing --start_pred");
+    if (Params.StartPredGrid < Params.StartResolutionSplit) EXIT_ERROR("--start_pred must be at least --start_depth");
+    if (Params.StartResolutionSplit+ Params.NLevels < Params.StartPredGrid+2) EXIT_ERROR("reduce --start_pred");
     if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
@@ -4070,7 +4100,7 @@ main(int Argc, cstr* Argv) {
 
     ////ParticleCells.resize(PROD(Params.BlockDims3));
     //CdfTable = CreateBinomialTable(BinomialCutoff);
-    BinomialTables = CreateGeneralBinomialTables();
+    //BinomialTables = CreateGeneralBinomialTables();
     //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 900 << 20); // 900 MB
     Coder.InitWrite(900 << 20);

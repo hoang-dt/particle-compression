@@ -1955,6 +1955,7 @@ struct params {
   int MaxNBlocks = INT_MAX;
   i8 MaxLevel = 127;
   i8 StartResolutionSplit = 0;
+  i8 StartPredGrid = 0;
   int MaxParticleSubSampling = 0;
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
