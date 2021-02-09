@@ -2605,8 +2605,7 @@ static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a mor
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 
-static i32 PredCount = 0;
-static i32 CurrReslLvl = 0;
+static i64 BlockCount = -1;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2696,6 +2695,8 @@ BuildTreeIntPredict(const tree* PredNode,
 #endif
 
   if (Depth == Params.StartResolutionSplit) {
+    ++BlockCount;
+    //REQUIRE(Split == ResolutionSplit);
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
@@ -2726,6 +2727,7 @@ BuildTreeIntPredict(const tree* PredNode,
     }
   } else if (Begin < Mid) { // recurse
     assert(Depth+1 < Params.MaxDepth);
+    //split_type NextSplit = SpatialSplit;
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
@@ -2760,11 +2762,12 @@ BuildTreeIntPredict(const tree* PredNode,
   } else if (Mid < End) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
-    split_type NextSplit = SpatialSplit;
+    //split_type NextSplit = SpatialSplit;
+    split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
 
   /* construct the prediction tree */
@@ -3999,7 +4002,7 @@ main(int Argc, cstr* Argv) {
     printf("dims string = %s\n", Params.DimsStr);
     i64 N = ParticlesInt.size();
     i8 T = Msb(u64(N)) + 1;
-    TreePtr = new tree[Params.NParticles * 20];
+    TreePtr = new tree[Params.NParticles * 60]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
@@ -4008,6 +4011,7 @@ main(int Argc, cstr* Argv) {
     delete[] TreePtrBackup;
     Coder.EncodeFinalize();
     Flush(&BlockStream);
+    printf("block count = %lld\n", BlockCount);
     //for (i64 I = 0; I < Residuals.size(); ++I) {
     //  printf("%d\n", Residuals[I]);
     //}
