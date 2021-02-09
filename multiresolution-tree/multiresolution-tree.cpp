@@ -2699,15 +2699,9 @@ BuildTreeIntPredict(const tree* PredNode,
   if (Depth == Params.StartResolutionSplit) {
     ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
-    FOR_EACH(Context, ContextS) {
-      Context->clear();
-    }
-    FOR_EACH(Context, ContextTS) {
-      Context->clear();
-    }
-    FOR_EACH(Context, ContextR) {
-      Context->clear();
-    }
+    FOR_EACH(Context, ContextS ) { Context->clear(); }
+    FOR_EACH(Context, ContextTS) { Context->clear(); }
+    FOR_EACH(Context, ContextR ) { Context->clear(); }
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
@@ -2794,6 +2788,7 @@ BuildTreeIntPredict(const tree* PredNode,
     if (Right) Node->Count += Right->Count;
   }
 #endif
+
    //TODO: deallocate the two merged trees
 
   return Node;
