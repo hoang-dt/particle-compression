@@ -2623,6 +2623,7 @@ struct occupation_count {
   vec3i Pos3;
   i8 Count = 0;
 };
+static i32 PredCount = 0;
 static std::vector<occupation_count> OccCount; 
 /* The input grid should be a subgrid of PredGrid */ 
 // U is the parent MSB, Left is left (resolution) child, T is right (resolution) child
@@ -2650,7 +2651,8 @@ PredictLeftCount(const grid_int& Grid, i32 Left, i8 U, i8 T, i8 Depth) {
         }
       }
     }
-    OccCount.push_back(occupation_count{.Pos3=vec3i{X,Y,Z}, .Count=Count});
+    if (Count > 0)
+      OccCount.push_back(occupation_count{.Pos3=vec3i{X,Y,Z}, .Count=Count});
   }}}
   // TODO: what if C1.Count == C2.Count?
   std::sort(OccCount.begin(), OccCount.end(), [](const auto& C1, const auto& C2) {
@@ -2661,9 +2663,8 @@ PredictLeftCount(const grid_int& Grid, i32 Left, i8 U, i8 T, i8 Depth) {
   i32 MinT = std::max((1<<U)-Left, (1<<T));
   i32 MaxT = std::min((1<<(U+1))-1-Left, (1<<(T+1))-1);
   i32 AvgT = (MinT+MaxT) >> 1;
-  assert(AvgT <= OccCount.size());
   i32 LeftCount = 0; // the predicted number of particles on the left
-  for (i32 I = 0; I < AvgT; ++I) {
+  for (i32 I = 0; I<AvgT && I<OccCount.size(); ++I) {
     LeftCount += (OccCount[I].Count>0) && (OccCount[I].Pos3[D]<=MM);
   }
   return LeftCount;
@@ -2676,6 +2677,7 @@ BuildTreeIntPredict(const tree* PredNode,
   std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
   split_type Split, i8 ResLvl, i8 Depth)
 {
+  assert(ResLvl < Params.NLevels);
   /* early return if the number of particles is the same as the number of cells */
   i64 N = End - Begin; // total number of particles
   assert(Msb(u64(N))+1 == T);
@@ -2800,7 +2802,7 @@ BuildTreeIntPredict(const tree* PredNode,
   }
 #endif
 
-  if (Depth+1 == Params.StartResolutionSplit) {
+  if (Depth == Params.StartResolutionSplit) {
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
@@ -2808,10 +2810,11 @@ BuildTreeIntPredict(const tree* PredNode,
     }
   }
 #if defined(PREDICTION)
-  if (Split==ResolutionSplit && Depth>=Params.StartPredGrid) {
+  if (Split==ResolutionSplit && Depth==Params.StartPredGrid) {
     PredGrid = Grid; // save this grid
     PredBuf.clear();
     PredBuf.resize(i64(PredGrid.Dims3.x)*i64(PredGrid.Dims3.y)*i64(PredGrid.Dims3.z), false);
+    PredCount = 0;
   }
 #endif
 
@@ -2823,9 +2826,11 @@ BuildTreeIntPredict(const tree* PredNode,
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
-    if (Depth >= Params.StartPredGrid) {
+    if (ResLvl>0 && Depth>=Params.StartPredGrid) {
       vec3i F3 = (GridLeft.From3-PredGrid.From3) / PredGrid.Stride3;
       PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
+      ++PredCount;
+      printf("%d %d %d, %d %d %d\n", GridLeft.From3.x, GridLeft.From3.y, GridLeft.From3.z, F3.x, F3.y, F3.z);
     }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
@@ -2847,7 +2852,7 @@ BuildTreeIntPredict(const tree* PredNode,
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
@@ -2860,9 +2865,11 @@ BuildTreeIntPredict(const tree* PredNode,
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
-    if (Depth >= Params.StartPredGrid) {
+    if (ResLvl>0 && Depth>=Params.StartPredGrid) {
       vec3i F3 = (GridRight.From3-PredGrid.From3) / PredGrid.Stride3;
       PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
+      printf("%d %d %d %d %d %d\n", GridRight.From3.x, GridRight.From3.y, GridRight.From3.z, F3.x, F3.y, F3.z);
+      ++PredCount;
     }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
