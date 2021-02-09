@@ -2667,7 +2667,7 @@ BuildTreeIntPredict(const tree* PredNode,
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
-    u32 CIdx = ResLvl*Params.NLevels + Depth;
+    u32 CIdx = ResLvl*Params.NLevels + Depth;    
     if (ContextS[CIdx][C][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
@@ -2697,6 +2697,9 @@ BuildTreeIntPredict(const tree* PredNode,
   if (Depth == Params.StartResolutionSplit) {
     ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
+    FOR_EACH(Context, ContextS) {
+      Context->clear();
+    }
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
