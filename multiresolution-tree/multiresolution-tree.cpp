@@ -2592,91 +2592,21 @@ static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
 static constexpr u32 ContextMax = 32;
-static u32 ContextTSResolution[ContextMax+2][ContextMax+2] = {};
-static u32 ContextTS[ContextMax+2][ContextMax+2] = {};
-static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
-static u32 ContextR[ContextMax+2][ContextMax+2][ContextMax+2] = {}; // [N+1] is the ESC symbol
+static u32 ContextTSResolution[ContextMax][ContextMax] = {};
+static u32 ContextTS[ContextMax][ContextMax] = {};
+// [T][MM][KK][S]
+using one_context_type = std::array<u32, ContextMax>;
+using context_type = std::vector<std::unordered_map<u32, one_context_type>>; // one context for each resolution level
+//static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {};
+static context_type ContextS;
+static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
 
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 
 static i32 PredCount = 0;
-/* The input Grid is where we do the resolution split.
-Note that Grid has to be "normalized" (From3 == 0 and Stride3 == 1) before first calling this function */
-static i32
-DepositParticles(const tree* Node, const grid_int& Grid, i8 Depth) {
-  if (Node == nullptr) return 0;
-  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
-  i32 PCount = 0;
-  if (CellCount == 1) {
-    const vec3i& F3 = (Grid.From3-PredGrid.From3) / PredGrid.Stride3;
-    i32 Idx = F3.z*(PredGrid.Dims3.x*PredGrid.Dims3.y) + F3.y*(PredGrid.Dims3.x) + F3.x;
-    PredBuf[Idx] = true;
-    ++PredCount;
-    return 1;
-  } else { // not yet reach 1 cell
-    i8 D = Params.DimsStr[Depth] - 'x';
-    if (Node->Left) 
-      PCount += DepositParticles(Node->Left, SplitGrid(Grid, D, SpatialSplit, side::Left), Depth+1);
-    if (Node->Right) 
-      PCount += DepositParticles(Node->Right, SplitGrid(Grid, D, SpatialSplit, side::Right), Depth+1);
-  }
-  return PCount;
-}
-
-struct occupation_count {
-  vec3i Pos3;
-  i8 Count = 0;
-};
-static std::vector<occupation_count> OccCount; 
-/* The input grid should be a subgrid of PredGrid */ 
-// U is the parent MSB, Left is left (resolution) child, T is right (resolution) child
-static i32
-PredictLeftCount(const grid_int& Grid, i8 T, i8 Depth) {
-  OccCount.clear();
-  const vec3i& D3 = Grid.Dims3;
-  vec3i Last3 = Grid.From3 + Grid.Dims3*Grid.Stride3;
-  for (i32 Z = Grid.From3.z; Z < Last3.z; Z+=Grid.Stride3.z) {
-  for (i32 Y = Grid.From3.y; Y < Last3.y; Y+=Grid.Stride3.y) {
-  for (i32 X = Grid.From3.x; X < Last3.x; X+=Grid.Stride3.x) {
-    i32 Idx = Z*D3.x*D3.y + Y*D3.x + X;
-    i8 Count = 0;
-    for (i32 DZ = -1; DZ <= 1; ++DZ) {
-      i32 ZZ = Z + DZ;
-      if (ZZ<0 || ZZ>=PredGrid.Dims3.z) continue;
-      for (i32 DY = -1; DY <= 1; ++DY) {
-        i32 YY = Y + DY;
-        if (YY<0 || YY>=PredGrid.Dims3.y) continue;
-        for (i32 DX = -1; DX <= 1; ++DX) {
-          i32 XX = X + DX;
-          if (XX<0 || XX>=PredGrid.Dims3.x) continue;
-          i32 N = (ZZ)*(PredGrid.Dims3.x*PredGrid.Dims3.y) + (YY)*(PredGrid.Dims3.x) + (XX);
-          Count += PredBuf[N];
-        }
-      }
-    }
-    if (Count > 0)
-      OccCount.push_back(occupation_count{.Pos3=vec3i{X,Y,Z}, .Count=Count});
-  }}}
-  // TODO: what if C1.Count == C2.Count?
-  std::sort(OccCount.begin(), OccCount.end(), [](const auto& C1, const auto& C2) {
-    return C1.Count > C2.Count;
-  });
-  i8 D = Params.DimsStr[Depth] - 'x';
-  i32 MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1);
-  i32 LeftCount = 0; // the predicted number of particles on the left
-  //for (i32 I = 0; I<Left && I<OccCount.size(); ++I) {
-  //  LeftCount += (OccCount[I].Count>0) && (OccCount[I].Pos3[D]<=MM);
-  //}
-  while (LeftCount+1 < OccCount.size()) {
-    if (OccCount[LeftCount].Count!=OccCount[LeftCount+1].Count)
-      break;
-    ++LeftCount;
-  }
-  return LeftCount+1;
-}
-
+static i32 CurrReslLvl = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2737,13 +2667,14 @@ BuildTreeIntPredict(const tree* PredNode,
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
-    if (ContextS[T][MM][KK][S] == 0) { // no 2-context
+    u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
+    if (ContextS[Depth][C][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
     } else {
-      EncodeWithContext(T, S, ContextS[T][MM][KK], &Coder);
+      EncodeWithContext(T, S, ContextS[Depth][C].data(), &Coder);
     }
-    ++ContextS[T][MM][KK][S];
+    ++ContextS[Depth][C][S];
     ++ContextTS[T][S];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[T][S] == 0) {
@@ -4060,6 +3991,7 @@ main(int Argc, cstr* Argv) {
     printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
     Params.Dims3 = Params.Dims3 / Params.W3;
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
+    ContextS.resize(Params.MaxDepth+1);
     printf("max depth = %d\n", Params.MaxDepth);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
