@@ -2596,7 +2596,6 @@ static u32 ContextTSResolution[ContextMax][ContextMax] = {};
 // [T][MM][KK][S]
 using one_context_type = std::array<u32, ContextMax>;
 using context_type = std::vector<std::unordered_map<u32, one_context_type>>; // one context for each resolution level
-//static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {};
 static context_type ContextS;
 static context_type ContextTS;
 static context_type ContextR;
@@ -2696,7 +2695,9 @@ BuildTreeIntPredict(const tree* PredNode,
   }
 #endif
 
-  if (Depth == Params.StartResolutionSplit) {
+  tree* SaveTreePtr = nullptr;
+  if (Depth == Params.StartResolutionSplit) { // beginning of block
+    SaveTreePtr = TreePtr;
     ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     FOR_EACH(Context, ContextS ) { Context->clear(); }
@@ -2781,11 +2782,18 @@ BuildTreeIntPredict(const tree* PredNode,
   if (Split == ResolutionSplit) {
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
-    Node = new (TreePtr++) tree;
-    Node->Left  = Left;
-    Node->Right = Right;
-    if (Left ) Node->Count = Left->Count; else Node->Count = 0;
-    if (Right) Node->Count += Right->Count;
+    if (Depth > Params.StartResolutionSplit) {
+      Node = new (TreePtr++) tree;
+      Node->Left  = Left;
+      Node->Right = Right;
+      if (Left ) Node->Count = Left->Count; else Node->Count = 0;
+      if (Right) Node->Count += Right->Count;
+    }
+  }
+  if (Depth==Params.StartResolutionSplit && Node!=nullptr) {
+    TreePtr = SaveTreePtr; // free memory
+    *TreePtr = *Node;
+    Node = TreePtr++;
   }
 #endif
 
@@ -4004,13 +4012,16 @@ main(int Argc, cstr* Argv) {
     ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextR.resize((Params.MaxDepth+1)*Params.NLevels);
+    FOR_EACH (C, ContextS) { C->reserve(512); }
+    FOR_EACH (C, ContextTS) { C->reserve(512); }
+    FOR_EACH (C, ContextR) { C->reserve(512); }
     printf("max depth = %d\n", Params.MaxDepth);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
     printf("dims string = %s\n", Params.DimsStr);
     i64 N = ParticlesInt.size();
     i8 T = Msb(u64(N)) + 1;
-    TreePtr = new tree[Params.NParticles * 60]; // TODO: avoid this
+    TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     split_type Split = SpatialSplit;
     if (Params.NLevels > 1 && Params.StartResolutionSplit == 0)
