@@ -2599,7 +2599,8 @@ using context_type = std::vector<std::unordered_map<u32, one_context_type>>; // 
 //static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {};
 static context_type ContextS;
 static context_type ContextTS;
-static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
+static context_type ContextR;
+//static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
 
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
@@ -2685,12 +2686,13 @@ BuildTreeIntPredict(const tree* PredNode,
     ++ContextTS[CIdx][T][S];
   }
   if (!FullGrid && S>1) { // encode R
-    if (ContextR[T][S][R] == 0) {
+    u32 CR = T*ContextMax + S;
+    if (ContextR[CIdx][CR][R] == 0) {
       EncodeCenteredMinimal(R, T+1, &BlockStream);
     } else {
-      EncodeWithContext(T, R, ContextR[T][S], &Coder);
+      EncodeWithContext(T, R, ContextR[CIdx][CR].data(), &Coder);
     }
-    ++ContextR[T][S][R];  
+    ++ContextR[CIdx][CR][R];
   }
 #endif
 
@@ -2701,6 +2703,9 @@ BuildTreeIntPredict(const tree* PredNode,
       Context->clear();
     }
     FOR_EACH(Context, ContextTS) {
+      Context->clear();
+    }
+    FOR_EACH(Context, ContextR) {
       Context->clear();
     }
     static bool Done = false;
@@ -4003,6 +4008,7 @@ main(int Argc, cstr* Argv) {
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
     ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
+    ContextR.resize((Params.MaxDepth+1)*Params.NLevels);
     printf("max depth = %d\n", Params.MaxDepth);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
