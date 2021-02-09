@@ -2661,6 +2661,14 @@ BuildTreeIntPredict(const tree* PredNode,
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  //if ((1<<T) >= CellCount) { // more particles than empty cells
+  //  T = Msb(u64(CellCount));
+  //  REQUIRE(T > 0);
+  //  S = Msb(u64(CellCountLeft-P)) + 1;
+  //  R = Msb(u64(CellCountRight+P-N)) + 1;
+  //  REQUIRE(T >= S);
+  //  REQUIRE(T >= R);
+  //}
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
@@ -2712,7 +2720,7 @@ BuildTreeIntPredict(const tree* PredNode,
 
   /* recurse */
   tree* Left = nullptr; 
-  if (S==1 && CellCountLeft==1) {
+  if (Begin+1==Mid && CellCountLeft==1) { // one particle per cell
     assert(Depth+1 == Params.MaxDepth);
     assert(Begin+1 == Mid);
     Left = new (TreePtr++) tree;
@@ -2746,7 +2754,7 @@ BuildTreeIntPredict(const tree* PredNode,
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (R==1 && CellCountRight==1) {
+  if (Mid+1==End && CellCountRight==1) {
     assert(Mid+1 == End);
     assert(Depth+1 == Params.MaxDepth);
     Right = new (TreePtr++) tree;
