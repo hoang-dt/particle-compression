@@ -2668,13 +2668,14 @@ BuildTreeIntPredict(const tree* PredNode,
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
-    if (ContextS[Depth][C][S] == 0) { // no 2-context
+    u32 CIdx = ResLvl*Params.NLevels + Depth;
+    if (ContextS[CIdx][C][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
     } else {
-      EncodeWithContext(T, S, ContextS[Depth][C].data(), &Coder);
+      EncodeWithContext(T, S, ContextS[CIdx][C].data(), &Coder);
     }
-    ++ContextS[Depth][C][S];
+    ++ContextS[CIdx][C][S];
     ++ContextTS[T][S];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[T][S] == 0) {
@@ -3991,7 +3992,7 @@ main(int Argc, cstr* Argv) {
     printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
     Params.Dims3 = Params.Dims3 / Params.W3;
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
-    ContextS.resize(Params.MaxDepth+1);
+    ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
     printf("max depth = %d\n", Params.MaxDepth);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
