@@ -2601,34 +2601,39 @@ static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a mor
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 
+static i32 PredCount = 0;
 /* The input Grid is where we do the resolution split.
 Note that Grid has to be "normalized" (From3 == 0 and Stride3 == 1) before first calling this function */
-static void
+static i32
 DepositParticles(const tree* Node, const grid_int& Grid, i8 Depth) {
+  if (Node == nullptr) return 0;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
+  i32 PCount = 0;
   if (CellCount == 1) {
-    const vec3i& F3 = Grid.From3;
+    const vec3i& F3 = (Grid.From3-PredGrid.From3) / PredGrid.Stride3;
     i32 Idx = F3.z*(PredGrid.Dims3.x*PredGrid.Dims3.y) + F3.y*(PredGrid.Dims3.x) + F3.x;
     PredBuf[Idx] = true;
+    ++PredCount;
+    return 1;
   } else { // not yet reach 1 cell
     i8 D = Params.DimsStr[Depth] - 'x';
     if (Node->Left) 
-      return DepositParticles(Node->Left, SplitGrid(Grid, D, SpatialSplit, side::Left), Depth+1);
+      PCount += DepositParticles(Node->Left, SplitGrid(Grid, D, SpatialSplit, side::Left), Depth+1);
     if (Node->Right) 
-      return DepositParticles(Node->Right, SplitGrid(Grid, D, SpatialSplit, side::Right), Depth+1);
+      PCount += DepositParticles(Node->Right, SplitGrid(Grid, D, SpatialSplit, side::Right), Depth+1);
   }
+  return PCount;
 }
 
 struct occupation_count {
   vec3i Pos3;
   i8 Count = 0;
 };
-static i32 PredCount = 0;
 static std::vector<occupation_count> OccCount; 
 /* The input grid should be a subgrid of PredGrid */ 
 // U is the parent MSB, Left is left (resolution) child, T is right (resolution) child
 static i32
-PredictLeftCount(const grid_int& Grid, i32 Left, i8 U, i8 T, i8 Depth) {
+PredictLeftCount(const grid_int& Grid, i8 T, i8 Depth) {
   OccCount.clear();
   const vec3i& D3 = Grid.Dims3;
   vec3i Last3 = Grid.From3 + Grid.Dims3*Grid.Stride3;
@@ -2660,14 +2665,16 @@ PredictLeftCount(const grid_int& Grid, i32 Left, i8 U, i8 T, i8 Depth) {
   });
   i8 D = Params.DimsStr[Depth] - 'x';
   i32 MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1);
-  i32 MinT = std::max((1<<U)-Left, (1<<T));
-  i32 MaxT = std::min((1<<(U+1))-1-Left, (1<<(T+1))-1);
-  i32 AvgT = (MinT+MaxT) >> 1;
   i32 LeftCount = 0; // the predicted number of particles on the left
-  for (i32 I = 0; I<AvgT && I<OccCount.size(); ++I) {
-    LeftCount += (OccCount[I].Count>0) && (OccCount[I].Pos3[D]<=MM);
+  //for (i32 I = 0; I<Left && I<OccCount.size(); ++I) {
+  //  LeftCount += (OccCount[I].Count>0) && (OccCount[I].Pos3[D]<=MM);
+  //}
+  while (LeftCount+1 < OccCount.size()) {
+    if (OccCount[LeftCount].Count!=OccCount[LeftCount+1].Count)
+      break;
+    ++LeftCount;
   }
-  return LeftCount;
+  return LeftCount+1;
 }
 
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
@@ -2675,7 +2682,7 @@ low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
 BuildTreeIntPredict(const tree* PredNode,
   std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth)
+  split_type Split, i8 ResLvl, i8 Depth, bool HasPredGrid=false)
 {
   assert(ResLvl < Params.NLevels);
   /* early return if the number of particles is the same as the number of cells */
@@ -2766,14 +2773,15 @@ BuildTreeIntPredict(const tree* PredNode,
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
-    //i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    auto G = GridLeft;
+    i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    auto G = GridRight;
     G.From3 = (G.From3-PredGrid.From3) / PredGrid.Stride3;
     assert(G.Stride3.z >= PredGrid.Stride3.z);
     assert(G.Stride3.y >= PredGrid.Stride3.y);
     assert(G.Stride3.x >= PredGrid.Stride3.x);
     G.Stride3 = G.Stride3 / PredGrid.Stride3;
-    i64 K = PredictLeftCount(G, M, Msb(u64(M+N)), T, Depth);
+    if (K>0 && HasPredGrid) 
+      K = PredictLeftCount(G, T, Depth);
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     if (ContextS[T][MM][KK][S] == 0) { // no 2-context
@@ -2809,15 +2817,10 @@ BuildTreeIntPredict(const tree* PredNode,
       Done = true;
     }
   }
-#if defined(PREDICTION)
-  if (Split==ResolutionSplit && Depth==Params.StartPredGrid) {
-    PredGrid = Grid; // save this grid
-    PredBuf.clear();
-    PredBuf.resize(i64(PredGrid.Dims3.x)*i64(PredGrid.Dims3.y)*i64(PredGrid.Dims3.z), false);
-    PredCount = 0;
-  }
-#endif
 
+  if (Split==ResolutionSplit && Depth==Params.StartPredGrid) {
+    HasPredGrid = true;
+  }
   /* recurse */
   tree* Left = nullptr; 
   if (S==1 && CellCountLeft==1) {
@@ -2826,12 +2829,6 @@ BuildTreeIntPredict(const tree* PredNode,
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NParticlesDecoded;
-    if (ResLvl>0 && Depth>=Params.StartPredGrid) {
-      vec3i F3 = (GridLeft.From3-PredGrid.From3) / PredGrid.Stride3;
-      PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
-      ++PredCount;
-      printf("%d %d %d, %d %d %d\n", GridLeft.From3.x, GridLeft.From3.y, GridLeft.From3.z, F3.x, F3.y, F3.z);
-    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
     BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
@@ -2852,10 +2849,20 @@ BuildTreeIntPredict(const tree* PredNode,
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
+      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1, HasPredGrid);
     else if (Split == ResolutionSplit)
-      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1, HasPredGrid);
   }
+
+#if defined(PREDICTION)
+  if (Split==ResolutionSplit && Depth>=Params.StartPredGrid) {
+    PredGrid = Grid; // save this grid
+    PredBuf.clear();
+    PredBuf.resize(i64(PredGrid.Dims3.x)*i64(PredGrid.Dims3.y)*i64(PredGrid.Dims3.z), false);
+    PredCount = 0;
+    DepositParticles(Left, GridLeft, Depth+1);
+  }
+#endif
 
   /* recurse on the right */
   tree* Right = nullptr;
@@ -2865,12 +2872,6 @@ BuildTreeIntPredict(const tree* PredNode,
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NParticlesDecoded;
-    if (ResLvl>0 && Depth>=Params.StartPredGrid) {
-      vec3i F3 = (GridRight.From3-PredGrid.From3) / PredGrid.Stride3;
-      PredBuf[F3.z*PredGrid.Dims3.x*PredGrid.Dims3.y+F3.y*PredGrid.Dims3.x+F3.x] = true;
-      printf("%d %d %d %d %d %d\n", GridRight.From3.x, GridRight.From3.y, GridRight.From3.z, F3.x, F3.y, F3.z);
-      ++PredCount;
-    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
     BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
@@ -2889,14 +2890,10 @@ BuildTreeIntPredict(const tree* PredNode,
     //split_type NextSplit = Depth+1>=Params.StartResolutionSplit ? ResolutionSplit : SpatialSplit;
     split_type NextSplit = SpatialSplit;
     if (Split == SpatialSplit)
-      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, HasPredGrid);
     else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, HasPredGrid);
   }
-
-  //if (Depth < Params.MaxDepth) {
-  //  assert(Left || Right);
-  //}
 
   /* construct the prediction tree */
   tree* Node = nullptr;
