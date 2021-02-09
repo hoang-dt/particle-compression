@@ -2593,12 +2593,12 @@ static std::vector<std::vector<particle_int>> ParticleLevels;
 
 static constexpr u32 ContextMax = 32;
 static u32 ContextTSResolution[ContextMax][ContextMax] = {};
-static u32 ContextTS[ContextMax][ContextMax] = {};
 // [T][MM][KK][S]
 using one_context_type = std::array<u32, ContextMax>;
 using context_type = std::vector<std::unordered_map<u32, one_context_type>>; // one context for each resolution level
 //static u32 ContextS[ContextMax+2][ContextMax+2][ContextMax+2][ContextMax+2] = {};
 static context_type ContextS;
+static context_type ContextTS;
 static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
 
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
@@ -2661,13 +2661,13 @@ BuildTreeIntPredict(const tree* PredNode,
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  u32 CIdx = ResLvl*Params.NLevels + Depth;    
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
-    u32 CIdx = ResLvl*Params.NLevels + Depth;    
     if (ContextS[CIdx][C][S] == 0) { // no 2-context
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeUniform(T, S, &Coder);
@@ -2675,14 +2675,14 @@ BuildTreeIntPredict(const tree* PredNode,
       EncodeWithContext(T, S, ContextS[CIdx][C].data(), &Coder);
     }
     ++ContextS[CIdx][C][S];
-    ++ContextTS[T][S];
+    ++ContextTS[CIdx][T][S];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
-    if (ContextTS[T][S] == 0) {
+    if (ContextTS[CIdx][T][S] == 0) {
       EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
     } else {
-      EncodeWithContext(T, S, ContextTS[T], &Coder);
+      EncodeWithContext(T, S, ContextTS[CIdx][T].data(), &Coder);
     }
-    ++ContextTS[T][S];
+    ++ContextTS[CIdx][T][S];
   }
   if (!FullGrid && S>1) { // encode R
     if (ContextR[T][S][R] == 0) {
@@ -2698,6 +2698,9 @@ BuildTreeIntPredict(const tree* PredNode,
     ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     FOR_EACH(Context, ContextS) {
+      Context->clear();
+    }
+    FOR_EACH(Context, ContextTS) {
       Context->clear();
     }
     static bool Done = false;
@@ -3999,6 +4002,7 @@ main(int Argc, cstr* Argv) {
     Params.Dims3 = Params.Dims3 / Params.W3;
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
     ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
+    ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
     printf("max depth = %d\n", Params.MaxDepth);
     grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
     printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
