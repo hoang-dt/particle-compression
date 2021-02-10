@@ -2661,18 +2661,21 @@ BuildTreeIntPredict(const tree* PredNode,
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
-  //if ((1<<T) >= CellCount) { // more particles than empty cells
-  //  T = Msb(u64(CellCount));
-  //  REQUIRE(T > 0);
-  //  S = Msb(u64(CellCountLeft-P)) + 1;
-  //  R = Msb(u64(CellCountRight+P-N)) + 1;
-  //  REQUIRE(T >= S);
-  //  REQUIRE(T >= R);
-  //}
+  bool EncodeEmptyCells = false;
+  if ((1<<T) >= CellCount) { // more particles than empty cells
+    EncodeEmptyCells= true;
+    T = Msb(u64(CellCount));
+    REQUIRE(T > 0);
+    S = Msb(u64(CellCountLeft-P)) + 1;
+    R = Msb(u64(CellCountRight+P-N)) + 1;
+    REQUIRE(T >= S);
+    REQUIRE(T >= R);
+  }
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    if (EncodeEmptyCells)  { K= CellCountLeft - K; M = CellCount - M; }
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
