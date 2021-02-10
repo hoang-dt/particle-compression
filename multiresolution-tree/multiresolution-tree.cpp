@@ -2686,8 +2686,8 @@ BuildTreeIntPredict(
     if (ContextS[CIdx][C][S] == 0) { // no 2-context
       ContextS[CIdx][C][T+1] = 1;
       EncodeWithContext(T, T+1, ContextS[CIdx][C].data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-      //EncodeUniform(T, S, &Coder);
+      //EncodeCenteredMinimal(S, T+1, &BlockStream);
+      EncodeGeometric(T, S, &Coder);
     } else {
       EncodeWithContext(T, S, ContextS[CIdx][C].data(), &Coder);
     }
@@ -2697,7 +2697,8 @@ BuildTreeIntPredict(
     if (ContextTS[CIdx][T][S] == 0) {
       ContextTS[CIdx][T][T+1] = 1;
       EncodeWithContext(T, T+1, ContextTS[CIdx][T].data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      //EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      EncodeGeometric(T, S, &Coder);
     } else {
       EncodeWithContext(T, S, ContextTS[CIdx][T].data(), &Coder);
     }
@@ -2708,7 +2709,8 @@ BuildTreeIntPredict(
     if (ContextR[CIdx][CR][R] == 0) {
       ContextR[CIdx][CR][T+1] = 1;
       EncodeWithContext(T, T+1, ContextR[CIdx][CR].data(), &Coder);
-      EncodeCenteredMinimal(R, T+1, &BlockStream);
+      //EncodeCenteredMinimal(R, T+1, &BlockStream);
+      EncodeGeometric(T, R, &Coder);
     } else {
       EncodeWithContext(T, R, ContextR[CIdx][CR].data(), &Coder);
     }

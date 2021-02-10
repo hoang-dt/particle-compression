@@ -1744,7 +1744,7 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
 
 inline void
 EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
-  assert(V>=0 && V<=N);
+  //assert(V>=0 && V<=N);
   u32 Hi = Context[V];
   u32 Lo = 0;
   for (u32 I = 0; I < V; ++I) Lo += Context[I];
@@ -1752,6 +1752,20 @@ EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
   u32 Scale = Hi;
   for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I]; 
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
+}
+
+/* assume value V<=N have probability 2^(V-1) */
+inline void
+EncodeGeometric(u32 N, u32 V, arithmetic_coder<>* Coder) {
+  assert(V>=0 && V<=N);
+  if (N >= 2) {
+    u32 Lo = (1<<V) >> 1;
+    u32 Hi = (1<<V) - (V==N)*(1<<(N-2));
+    u32 Scale = (1<<N) - 1 - (1<<(N-2));
+    Coder->Encode(prob<u32>{Lo, Hi, Scale});
+  } else {
+    Coder->Encode(prob<u32>{V, V+1, 2});
+  }
 }
 
 inline void
