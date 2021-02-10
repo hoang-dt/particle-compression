@@ -1351,6 +1351,8 @@ struct arithmetic_coder {
     code_t Range = CodeHigh - CodeLow + 1;
     CodeHigh = CodeLow + (Range * P.High / P.Count) - 1; // the -1 makes sure new m_code_high <= old m_code_high (== happens when p.high==p.count)
     CodeLow = CodeLow + (Range * P.Low / P.Count);
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
     /* renormalization */
     while (true) {
       if (CodeHigh < CodeOneHalf) {
@@ -1379,6 +1381,52 @@ struct arithmetic_coder {
     Write(&BitStream, Bit); // TODO: optimize?
     RepeatedWrite(&BitStream, !Bit, PendingBits);
     PendingBits = 0;
+  }
+
+  size_t
+  Decode(const count_t* CdfTable, int Size, count_t Count) {
+    assert(Size > 0);
+    //count_t Count = CdfTable[Size-1];
+    assert(Count > 0);
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+    code_t Range = CodeHigh - CodeLow + 1;
+    code_t V = ((CodeVal-CodeLow+1)*Count - 1) / Range;
+    size_t S = 0;
+    size_t Sum = 0;
+    for (; S<Size && Sum <= V; ++S) { Sum += CdfTable[S]; } // after the loop S is one after the right value
+    count_t Low = Sum-CdfTable[--S];
+    count_t High = Sum;
+    CodeHigh = CodeLow + (Range*High) / Count - 1;
+    CodeLow = CodeLow + (Range*Low) / Count;
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+
+    /* renormalization */
+    while (true) {
+      if (CodeHigh < CodeOneHalf) {
+        // do nothing
+      } else if (CodeLow >= CodeOneHalf) {
+        CodeVal -= CodeOneHalf;
+        CodeLow -= CodeOneHalf;
+        CodeHigh -= CodeOneHalf;
+      } else if (CodeLow>=CodeOneFourth && CodeHigh<CodeThreeFourths) {
+        CodeVal -= CodeOneFourth;
+        CodeLow -= CodeOneFourth;
+        CodeHigh -= CodeOneFourth;
+      } else
+        break;
+      CodeLow <<= 1;
+      CodeHigh <<= 1;
+      ++CodeHigh;
+      //CodeHigh &= CodeMax; // remove the already shifted bits on the left
+      //CodeLow &= CodeMax;
+      CodeVal <<= 1;
+      CodeVal += Read(&BitStream);
+    }
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+    return S;
   }
 
   /* Decode a single symbol and return its index in the CDF table */
@@ -1752,6 +1800,14 @@ EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
   u32 Scale = Hi;
   for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I]; 
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
+}
+
+inline u32
+DecodeWithContext(u32 N, u32* Context, arithmetic_coder<>* Coder) {
+  u32 Count = 0;
+  for (u32 I = 0; I <= N+1; ++I) Count += Context[I]; 
+  size_t v = Coder->Decode(Context, N+2, Count);
+  return (u32)v;
 }
 
 /* assume value V<=N have probability 2^(V-1) */
