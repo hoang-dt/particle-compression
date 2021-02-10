@@ -2676,6 +2676,7 @@ BuildTreeIntPredict(
     REQUIRE(T >= R);
   }
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  //u32 CIdx = Depth;
   if (!FullGrid && T>0 && PredNode) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
@@ -2683,6 +2684,7 @@ BuildTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*ContextMax*ContextMax + MM*ContextMax + KK;
+    //u32 C = ;
     if (ContextS[CIdx][C][S] == 0) { // no 2-context
       ContextS[CIdx][C][T+1] = 1;
       EncodeWithContext(T, T+1, ContextS[CIdx][C].data(), &Coder);
@@ -2704,7 +2706,7 @@ BuildTreeIntPredict(
     }
     ++ContextTS[CIdx][T][S];
   }
-  if (!FullGrid && S>1) { // encode R
+  if (!FullGrid && S>0) { // encode R
     u32 CR = T*ContextMax + S;
     if (ContextR[CIdx][CR][R] == 0) {
       ContextR[CIdx][CR][T+1] = 1;
@@ -2723,9 +2725,9 @@ BuildTreeIntPredict(
     SaveTreePtr = TreePtr;
     ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
-    FOR_EACH(Context, ContextS ) { Context->clear(); }
-    FOR_EACH(Context, ContextTS) { Context->clear(); }
-    FOR_EACH(Context, ContextR ) { Context->clear(); }
+    //FOR_EACH(Context, ContextS ) { Context->clear(); }
+    //FOR_EACH(Context, ContextTS) { Context->clear(); }
+    //FOR_EACH(Context, ContextR ) { Context->clear(); }
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
