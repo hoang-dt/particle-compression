@@ -2551,7 +2551,14 @@ DecodeTreeIntPredict(
     S = 0;
     //++ContextTS[CIdx][T][S+1];
   }
-  if (!FullGrid && S>0) { // encode R
+
+  if (FullGrid) {
+    R = T - 1;
+  } else if (T==1 && S==1) {
+    R = 0;
+  } else if (S == 0) {
+    R = T;
+  } else {
     u32 CR = T*(ContextMax+2) + S;
     ContextR[CIdx][CR][0] = 1;
     R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
@@ -2561,10 +2568,7 @@ DecodeTreeIntPredict(
       --R;
     }
     ++ContextR[CIdx][CR][R+1];
-  } else { // FullGrid or S==0
-    R = FullGrid ? (T-1) : T;
-    //++ContextR[CIdx][CR][R+1];
-  } 
+  }
 #endif
 
   tree* SaveTreePtr = nullptr;
@@ -2761,7 +2765,13 @@ BuildTreeIntPredict(
     }
     ++ContextTS[CIdx][T][S+1];
   }
-  if (!FullGrid && S>0) { // encode R
+  if (FullGrid) {
+    assert(R == T-1);
+  } else if (T==1 && S==1) {
+    assert(R == 0);
+  } else if (S == 0) {
+    assert(R == T);
+  } else {
     u32 CR = T*(ContextMax+2) + S;
     if (ContextR[CIdx][CR][R+1] == 0) {
       ContextR[CIdx][CR][0] = 1;
