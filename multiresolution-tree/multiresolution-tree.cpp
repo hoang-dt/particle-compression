@@ -2514,7 +2514,7 @@ DecodeTreeIntPredict(
   }
   Mid = End - P;
 #elif defined(PREDICTION)
-  static int SRCounter = 0;
+  //static int SRCounter = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
@@ -2572,9 +2572,9 @@ DecodeTreeIntPredict(
       Done = true;
     }
   }
-  const vec2i& SR = SRList[SRCounter++];
-  assert(S == SR.x);
-  assert(R == SR.y);
+  //const vec2i& SR = SRList[SRCounter++];
+  //assert(S == SR.x);
+  //assert(R == SR.y);
 
   /* recurse */
   tree* Left = nullptr; 
@@ -2708,7 +2708,7 @@ BuildTreeIntPredict(
   EncodeUniform(N, P, &Coder);
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
-  static int SRCounter = 0;
+  //static int SRCounter = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   //if ((1<<T) >= CellCount) { // more particles than empty cells
@@ -2778,8 +2778,8 @@ BuildTreeIntPredict(
     }
   }
 #endif
-  SRList.push_back(vec2i{S, R});
-  ++SRCounter;
+  //SRList.push_back(vec2i{S, R});
+  //++SRCounter;
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
@@ -2809,8 +2809,8 @@ BuildTreeIntPredict(
     BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
-        REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Begin].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
@@ -2841,8 +2841,8 @@ BuildTreeIntPredict(
     BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
-        REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
-        REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
+        //REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
+        //REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Mid].Pos[DD] <= M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
@@ -4169,14 +4169,14 @@ main(int Argc, cstr* Argv) {
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
-    /* dump the debug info */
-    FILE* Ff = fopen("debug.dat", "wb");
-    i64 DebugSize = SRList.size();
-    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
-    }
-    fclose(Ff);
+    ///* dump the debug info */
+    //FILE* Ff = fopen("debug.dat", "wb");
+    //i64 DebugSize = SRList.size();
+    //fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    //for (i64 I = 0; I < DebugSize; ++I) {
+    //  fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
+    //}
+    //fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -4230,14 +4230,14 @@ main(int Argc, cstr* Argv) {
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
     /* read the debug info */
-    FILE* Ff = fopen("debug.dat", "rb");
-    i64 DebugSize = 0;
-    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
-    SRList.resize(DebugSize);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
-    }
-    fclose(Ff);
+    //FILE* Ff = fopen("debug.dat", "rb");
+    //i64 DebugSize = 0;
+    //fread(&DebugSize, sizeof(DebugSize), 1, Ff);
+    //SRList.resize(DebugSize);
+    //for (i64 I = 0; I < DebugSize; ++I) {
+    //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
+    //}
+    //fclose(Ff);
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);

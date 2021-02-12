@@ -1327,14 +1327,10 @@ struct arithmetic_coder {
     CodeLow = CodeVal = PendingBits = 0;
     CodeHigh = CodeMax;
     ::InitRead(&BitStream, BitStream.Stream);
-    printf("read first\n");
     for (int I = 0; I < CodeBits; ++I) { // TODO: what if we read past the stream?
       CodeVal <<= 1;
-      auto Bit = Read(&BitStream);
-      CodeVal += Bit;
-      printf("%d", Bit);
+      CodeVal += Read(&BitStream);
     }
-    printf("\n");
   }
 
   /* Make sure low <= val <= high at the end of the stream */
@@ -1387,8 +1383,8 @@ struct arithmetic_coder {
     PendingBits = 0;
   }
 
-  size_t
-  Decode(const count_t* CdfTable, int Size, count_t Count) {
+  u32
+  Decode(const count_t* CdfTable, u32 Size, count_t Count) {
     //if (Counter < 200) printf("%d begin ", Counter);
     assert(Size > 0);
     //count_t Count = CdfTable[Size-1];
@@ -1400,15 +1396,15 @@ struct arithmetic_coder {
     //if (Count < 200) printf("CodeLow CodeHigh %lld %lld\n", CodeLow, CodeHigh);
     code_t V = ((CodeVal-CodeLow+1)*Count - 1) / Range;
     assert(V < Count);
-    size_t Sum = 0;
-    size_t S = 0;
+    count_t Sum = 0;
+    u32 S = 0;
     do {
       Sum += CdfTable[S];
       if (Sum > V) break;
       ++S;
     } while (S < Size); // after the loop S is one after the right value
-    count_t Low = Sum - CdfTable[S];
-    count_t High = Sum;
+    auto Low = Sum - CdfTable[S];
+    auto High = Sum;
     assert(Low < High);
     CodeHigh = CodeLow + (Range*High) / Count - 1;
     CodeLow = CodeLow + (Range*Low) / Count;
