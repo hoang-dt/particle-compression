@@ -2477,12 +2477,9 @@ static context_type ContextR;
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
-static int SCount = 0;
 std::vector<vec2i> SRList;
 
 static i64 BlockCount = -1;
-static std::vector<int> StepsDebug;
-static int StepsCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2518,9 +2515,6 @@ DecodeTreeIntPredict(
   Mid = End - P;
 #elif defined(PREDICTION)
   static int SRCounter = 0;
-  if (SRCounter < 200) printf("SRCounter %d\n", SRCounter);
-  if (SRCounter == 2853)
-    int Stop = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
@@ -2533,13 +2527,6 @@ DecodeTreeIntPredict(
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
     ContextS[CIdx][C][0] = 1;
-    if (SRCounter == 2222) {
-      printf("context ");
-      for (int I = 0; I <= T+1; ++I) {
-        printf("%d ", ContextS[CIdx][C][I]);
-      }
-      printf("\n");
-    }
     S = DecodeWithContext(T, ContextS[CIdx][C].data(), &Coder);
     if (S == 0) {
       S = DecodeCenteredMinimal(T+1, &BlockStream);
@@ -2731,9 +2718,6 @@ BuildTreeIntPredict(
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
   static int SRCounter = 0;
-  if (SRCounter < 200) printf("SRCounter %d\n", SRCounter);
-  if (SRCounter == 2854)
-    int Stop = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   //if ((1<<T) >= CellCount) { // more particles than empty cells
@@ -2756,41 +2740,24 @@ BuildTreeIntPredict(
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
     if (ContextS[CIdx][C][S+1] == 0) { // no 2-context
       ContextS[CIdx][C][0] = 1;
-      if (SRCounter == 2222) {
-        printf("0 context ");
-        for (int I = 0; I <= T+1; ++I) {
-          printf("%d ", ContextS[CIdx][C][I]);
-        }
-        printf("\n");
-      }
       EncodeWithContext(T, 0, ContextS[CIdx][C].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeGeometric(T, S, &Coder);
     } else {
       ContextS[CIdx][C][0] = 1;
-      if (SRCounter == 2222) {
-        printf("1 context ");
-        for (int I = 0; I <= T+1; ++I) {
-          printf("%d ", ContextS[CIdx][C][I]);
-        }
-        printf("\n");
-      }
       EncodeWithContext(T, S+1, ContextS[CIdx][C].data(), &Coder);
     }
     ++ContextS[CIdx][C][S+1];
     ++ContextTS[CIdx][T][S+1];
-      StepsDebug.push_back(0);
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[CIdx][T][S+1] == 0) {
       ContextTS[CIdx][T][0] = 1;
       EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
       //EncodeGeometric(T, S, &Coder);
-      StepsDebug.push_back(1);
     } else {
       ContextTS[CIdx][T][0] = 1;
       EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
-      StepsDebug.push_back(2);
     }
     ++ContextTS[CIdx][T][S+1];
   }
@@ -2800,12 +2767,10 @@ BuildTreeIntPredict(
       ContextR[CIdx][CR][0] = 1;
       EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
       EncodeCenteredMinimal(R, T+1, &BlockStream);
-      StepsDebug.push_back(3);
       //EncodeGeometric(T, R, &Coder);
     } else { // there is a context
       ContextR[CIdx][CR][0] = 1;
       EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
-      StepsDebug.push_back(4);
     }
     ++ContextR[CIdx][CR][R+1];
   }
@@ -4209,20 +4174,6 @@ main(int Argc, cstr* Argv) {
       fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
     }
     fclose(Ff);
-    Ff = fopen("arithdebug.dat", "wb");
-    DebugSize = ArithDebug.size();
-    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fwrite(&ArithDebug[I], sizeof(ArithDebug[I]), 1, Fp);
-    }
-    fclose(Ff);
-    Ff = fopen("stepsdebug.dat", "wb");
-    DebugSize = StepsDebug.size();
-    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fwrite(&StepsDebug[I], sizeof(StepsDebug[I]), 1, Fp);
-    }
-    fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -4282,22 +4233,6 @@ main(int Argc, cstr* Argv) {
     SRList.resize(DebugSize);
     for (i64 I = 0; I < DebugSize; ++I) {
       fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
-    }
-    fclose(Ff);
-    Ff = fopen("arithdebug.dat", "rb");
-    DebugSize = 0;
-    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
-    ArithDebug.resize(DebugSize);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fread(&ArithDebug[I], sizeof(ArithDebug[I]), 1, Ff);
-    }
-    fclose(Ff);
-    Ff = fopen("stepsdebug.dat", "rb");
-    DebugSize = 0;
-    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
-    StepsDebug.resize(DebugSize);
-    for (i64 I = 0; I < DebugSize; ++I) {
-      fread(&StepsDebug[I], sizeof(StepsDebug[I]), 1, Ff);
     }
     fclose(Ff);
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this

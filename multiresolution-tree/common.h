@@ -1300,8 +1300,6 @@ struct prob {
   count_t Count;
 };
 
-inline std::vector<u64> ArithDebug;
-
 /* Arithmetic coder */
 /* Condition: CodeValBits >= CountBits + 2 TODO : enforce this condition */
 template <typename code_t = u64, typename count_t = u32, int CodeBits = 33>
@@ -1353,43 +1351,23 @@ struct arithmetic_coder {
   /* Encode a single symbol */
   void
   Encode(const prob<count_t>& P) {
-    static int Count = 0;
     assert(P.Count > 0);
-    //if (Count < 200) printf("%d begin ", Count);
     code_t Range = CodeHigh - CodeLow + 1;
-    //if (Count < 200) printf("CodeLow CodeHigh %lld %lld\n", CodeLow, CodeHigh);
-    ArithDebug.push_back(CodeLow);
-    ArithDebug.push_back(CodeHigh);
     CodeHigh = CodeLow + (Range*P.High/P.Count) - 1; // the -1 makes sure new m_code_high <= old m_code_high (== happens when p.high==p.count)
     CodeLow = CodeLow + (Range*P.Low/P.Count);
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
-    //if (Count < 200) printf("Low High Count CodeLow CodeHigh\n");
-    //if (Count < 200) printf("%lld %lld %lld %lld %lld\n", P.Low, P.High, P.Count, CodeLow, CodeHigh);
-    ArithDebug.push_back(P.Count);
-    ArithDebug.push_back(P.Low);
-    ArithDebug.push_back(P.High);
-    ArithDebug.push_back(CodeLow);
-    ArithDebug.push_back(CodeHigh);
     /* renormalization */
-    u64 L = 0, G = 0, PP = 0;
     while (true) {
       if (CodeHigh < CodeOneHalf) {
         PutBitsPlusPending(0);
-        //if (Count < 200) printf("L");
-        ++L;
       } else if (CodeLow >= CodeOneHalf) {
         PutBitsPlusPending(1);
-        //if (Count < 200) printf("G");
-        ++G;
       } else if (CodeLow >= CodeOneFourth && CodeHigh < CodeThreeFourths) {
-        //if (Count < 200) printf("P");
-        ++PP;
         ++PendingBits;
         CodeLow -= CodeOneFourth;
         CodeHigh -= CodeOneFourth;
       } else {
-        if (Count < 200) printf(" ");
         break;
       }
       CodeHigh <<= 1;
@@ -1398,11 +1376,6 @@ struct arithmetic_coder {
       CodeLow <<= 1;
       CodeLow &= CodeMax;
     }
-    ArithDebug.push_back(L);
-    ArithDebug.push_back(G);
-    ArithDebug.push_back(PP);
-    if (Count < 200) printf("end\n");
-    ++Count;
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
   }
@@ -1416,8 +1389,6 @@ struct arithmetic_coder {
 
   size_t
   Decode(const count_t* CdfTable, int Size, count_t Count) {
-    static int Counter = 0;
-    static int ArithCounter = 0;
     //if (Counter < 200) printf("%d begin ", Counter);
     assert(Size > 0);
     //count_t Count = CdfTable[Size-1];
@@ -1427,8 +1398,6 @@ struct arithmetic_coder {
     code_t Range = CodeHigh - CodeLow + 1;
 
     //if (Count < 200) printf("CodeLow CodeHigh %lld %lld\n", CodeLow, CodeHigh);
-    assert(ArithDebug[ArithCounter++] == CodeLow);
-    assert(ArithDebug[ArithCounter++] == CodeHigh);
     code_t V = ((CodeVal-CodeLow+1)*Count - 1) / Range;
     assert(V < Count);
     size_t Sum = 0;
@@ -1446,50 +1415,28 @@ struct arithmetic_coder {
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
     assert(CodeLow<=CodeVal && CodeVal<=CodeHigh);
-    //if (Count < 200) printf("Low High Count CodeLow CodeHigh\n");
-    //if (Count < 200) printf("%lld %lld %lld %lld %lld\n", Low, High, Count, CodeLow, CodeHigh);
-    assert(ArithDebug[ArithCounter++] == Count);
-    assert(ArithDebug[ArithCounter++] == Low);
-    assert(ArithDebug[ArithCounter++] == High);
-    assert(ArithDebug[ArithCounter++] == CodeLow);
-    assert(ArithDebug[ArithCounter++] == CodeHigh);
 
     /* renormalization */
-    u64 L = 0, G = 0, P = 0;
     while (true) {
       if (CodeHigh < CodeOneHalf) {
-        //if (Counter < 200) printf("L");
         // do nothing
-        ++L;
       } else if (CodeLow >= CodeOneHalf) {
         CodeVal -= CodeOneHalf;
         CodeLow -= CodeOneHalf;
         CodeHigh -= CodeOneHalf;
-        //if (Counter < 200) printf("G");
-        ++G;
       } else if (CodeLow>=CodeOneFourth && CodeHigh<CodeThreeFourths) {
         CodeVal -= CodeOneFourth;
         CodeLow -= CodeOneFourth;
         CodeHigh -= CodeOneFourth;
-        //if (Counter < 200) printf("P");
-        ++P;
       } else {
-        if (Counter < 200) printf(" ");
         break;
       }
       CodeLow <<= 1;
-      //CodeLow &= CodeMax;
       CodeHigh <<= 1;
-      //CodeHigh &= CodeMax;
       ++CodeHigh;
       CodeVal <<= 1;
       CodeVal += Read(&BitStream);
     }
-    assert(ArithDebug[ArithCounter++] == L);
-    assert(ArithDebug[ArithCounter++] == G);
-    assert(ArithDebug[ArithCounter++] == P);
-    if (Counter < 200) printf("end\n");
-    ++Counter;
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
     return S;
