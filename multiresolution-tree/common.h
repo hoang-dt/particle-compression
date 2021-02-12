@@ -1936,26 +1936,10 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
       Write(Bs, 0);
       b = floor(mid);
       ++BitCount;
-      //if (b-mid < mid-a) { // c is in the larger half
-      //  u32 beg = (u32)std::ceil(a);
-      //  u32 end = (u32)std::floor(b);
-      //  u32 n = end - beg + 1; // v can be from 0 to n-1
-      //  u32 v = u32(c - beg);
-      //  EncodeCenteredMinimal(v, n, Bs);
-      //  return BitCount + log2(n+1);
-      //}
     } else { // c >= mid
       Write(Bs, 1);
       a = ceil(mid);
       ++BitCount;
-      //if (b-mid > mid-a) { // c is in the larger half
-      //  u32 beg = (u32)std::ceil(a);
-      //  u32 end = (u32)std::floor(b);
-      //  u32 n = end - beg + 1; // v can be from 0 to n-1
-      //  u32 v = u32(c - beg);
-      //  EncodeCenteredMinimal(v, n, Bs);
-      //  return BitCount + log2(n+1);
-      //}
     }
     first = false;
   }

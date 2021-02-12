@@ -2471,7 +2471,8 @@ static f64 ResidualCodeLengthNormal = 0;
 static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
-#define PREDICTION  1
+#define BINOMIAL 1
+//#define PREDICTION  1
 //#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
@@ -2513,7 +2514,12 @@ DecodeTreeIntPredict(
   assert(CellCountLeft+CellCountRight == CellCount);
 
   /* decode to find Mid */
-#if defined(SOTA)
+#if defined(BINOMIAL)
+  i64 N = End - Begin;
+  i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+  i64 Mid = P + Begin;
+  i8 S = 0, R = 0;
+#elif defined(SOTA)
   i64 N = End - Begin;
   i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
   i64 Mid = P + Begin;
@@ -2635,7 +2641,7 @@ DecodeTreeIntPredict(
   if (S == 1) {
 #elif defined(PREDICTION)
   if (S==1 && CellCountLeft==1) {
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Begin+1 == Mid) {
 #endif
     assert(Depth+1 == Params.MaxDepth);
@@ -2654,7 +2660,7 @@ DecodeTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Begin < Mid) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -2673,7 +2679,7 @@ DecodeTreeIntPredict(
   if (R == 1) {
 #elif defined(PREDICTION)
   if (R==1 && CellCountRight==1) {
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Mid+1 == End) {
 #endif
     assert(Depth+1 == Params.MaxDepth);
@@ -2692,7 +2698,7 @@ DecodeTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (R >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Mid < End) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -2771,7 +2777,11 @@ BuildTreeIntPredict(
   i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
-#if defined(SOTA)
+#if defined(BINOMIAL)
+  f64 Mean = f64(N) / 2; // mean
+  f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+  EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+#elif defined(SOTA)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 #elif defined(NORMAL)
   if (CellCount-N < N) {
@@ -2918,7 +2928,7 @@ BuildTreeIntPredict(
   if (S == 1) {
 #elif defined(PREDICTION)
   if (S==1 && CellCountLeft==1) {
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Begin+1 == Mid) {
 #endif
     assert(Depth+1 == Params.MaxDepth);
@@ -2941,7 +2951,7 @@ BuildTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Begin < Mid) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -2960,7 +2970,7 @@ BuildTreeIntPredict(
   if (R == 1) {
 #elif defined(PREDICTION)
   if (R==1 && CellCountRight==1) {
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Mid+1 == End) {
 #endif
     assert(Mid+1 == End);
@@ -2983,7 +2993,7 @@ BuildTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (R >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Mid < End) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -4205,7 +4215,7 @@ main(int Argc, cstr* Argv) {
     //                          .Height = 0 }, Params.Accuracy);
 
     ////ParticleCells.resize(PROD(Params.BlockDims3));
-    //CdfTable = CreateBinomialTable(BinomialCutoff);
+    CdfTable = CreateBinomialTable(BinomialCutoff);
     //BinomialTables = CreateGeneralBinomialTables();
     //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 900 << 20); // 900 MB
