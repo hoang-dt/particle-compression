@@ -1660,6 +1660,7 @@ static cdf_table CdfTable;
 static std::vector<cdf_table> BinomialTables;
 static std::vector<std::vector<std::vector<f64>>> BinomialTablesF64;
 static arithmetic_coder<> Coder;
+//static arithmetic_coder<> Coder2;
 static Rans64State Rans;
 
 INLINE static void
@@ -2477,8 +2478,11 @@ static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a mor
 static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 static int SCount = 0;
+std::vector<vec2i> SRList;
 
 static i64 BlockCount = -1;
+static std::vector<int> StepsDebug;
+static int StepsCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2513,6 +2517,10 @@ DecodeTreeIntPredict(
   }
   Mid = End - P;
 #elif defined(PREDICTION)
+  static int SRCounter = 0;
+  if (SRCounter < 200) printf("SRCounter %d\n", SRCounter);
+  if (SRCounter == 2853)
+    int Stop = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
@@ -2524,36 +2532,53 @@ DecodeTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
-    ContextS[CIdx][C][T+1] = 1;
+    ContextS[CIdx][C][0] = 1;
+    if (SRCounter == 2222) {
+      printf("context ");
+      for (int I = 0; I <= T+1; ++I) {
+        printf("%d ", ContextS[CIdx][C][I]);
+      }
+      printf("\n");
+    }
     S = DecodeWithContext(T, ContextS[CIdx][C].data(), &Coder);
-    if (S == T+1) {
+    if (S == 0) {
       S = DecodeCenteredMinimal(T+1, &BlockStream);
+    } else {
+      --S;
     }
-    ++ContextS[CIdx][C][S];
-    ++ContextTS[CIdx][T][S];
+    ++ContextS[CIdx][C][S+1];
+    ++ContextTS[CIdx][T][S+1];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
-    ContextTS[CIdx][T][T+1] = 1;
+    ContextTS[CIdx][T][0] = 1;
     S = DecodeWithContext(T, ContextTS[CIdx][T].data(), &Coder);
-    if (S == T+1) {
+    if (S == 0) {
       S = DecodeCenteredMinimal(T+1, &BlockStream);
+      assert(ContextTS[CIdx][T][S+1] == 0);
+    } else {
+      --S;
     }
-    ++ContextTS[CIdx][T][S];
+    ++ContextTS[CIdx][T][S+1];
+  } else if (FullGrid) {
+    S = T - 1;
+  } else { // if S == 0
+    S = 0;
+    //++ContextTS[CIdx][T][S+1];
   }
-  u32 CR = T*(ContextMax+2) + S;
   if (!FullGrid && S>0) { // encode R
-    ContextR[CIdx][CR][T+1] = 1;
+    u32 CR = T*(ContextMax+2) + S;
+    ContextR[CIdx][CR][0] = 1;
     R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
-    if (R == T+1) {
+    if (R == 0) {
       R = DecodeCenteredMinimal(T+1, &BlockStream);
+    } else {
+      --R;
     }
-    ++ContextR[CIdx][CR][R];
-  } else {
-    //++ContextR[CIdx][CR][R];
+    ++ContextR[CIdx][CR][R+1];
+  } else { // FullGrid or S==0
     R = FullGrid ? (T-1) : T;
+    //++ContextR[CIdx][CR][R+1];
   } 
 #endif
-  if (SCount++ < 120)
-    printf("scount = %d S = %d R = %d\n", SCount, S, R);
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
@@ -2569,6 +2594,9 @@ DecodeTreeIntPredict(
       Done = true;
     }
   }
+  const vec2i& SR = SRList[SRCounter++];
+  assert(S == SR.x);
+  assert(R == SR.y);
 
   /* recurse */
   tree* Left = nullptr; 
@@ -2702,6 +2730,10 @@ BuildTreeIntPredict(
   EncodeUniform(N, P, &Coder);
   BinomialCodeSize += log2(N+1);
 #elif defined(PREDICTION)
+  static int SRCounter = 0;
+  if (SRCounter < 200) printf("SRCounter %d\n", SRCounter);
+  if (SRCounter == 2854)
+    int Stop = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   //if ((1<<T) >= CellCount) { // more particles than empty cells
@@ -2722,45 +2754,64 @@ BuildTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
-    //u32 C = ;
-    if (ContextS[CIdx][C][S] == 0) { // no 2-context
-      ContextS[CIdx][C][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextS[CIdx][C].data(), &Coder);
+    if (ContextS[CIdx][C][S+1] == 0) { // no 2-context
+      ContextS[CIdx][C][0] = 1;
+      if (SRCounter == 2222) {
+        printf("0 context ");
+        for (int I = 0; I <= T+1; ++I) {
+          printf("%d ", ContextS[CIdx][C][I]);
+        }
+        printf("\n");
+      }
+      EncodeWithContext(T, 0, ContextS[CIdx][C].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeGeometric(T, S, &Coder);
     } else {
-      EncodeWithContext(T, S, ContextS[CIdx][C].data(), &Coder);
+      ContextS[CIdx][C][0] = 1;
+      if (SRCounter == 2222) {
+        printf("1 context ");
+        for (int I = 0; I <= T+1; ++I) {
+          printf("%d ", ContextS[CIdx][C][I]);
+        }
+        printf("\n");
+      }
+      EncodeWithContext(T, S+1, ContextS[CIdx][C].data(), &Coder);
     }
-    ++ContextS[CIdx][C][S];
-    ++ContextTS[CIdx][T][S];
+    ++ContextS[CIdx][C][S+1];
+    ++ContextTS[CIdx][T][S+1];
+      StepsDebug.push_back(0);
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
-    if (ContextTS[CIdx][T][S] == 0) {
-      ContextTS[CIdx][T][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextTS[CIdx][T].data(), &Coder);
+    if (ContextTS[CIdx][T][S+1] == 0) {
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
       //EncodeGeometric(T, S, &Coder);
+      StepsDebug.push_back(1);
     } else {
-      EncodeWithContext(T, S, ContextTS[CIdx][T].data(), &Coder);
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
+      StepsDebug.push_back(2);
     }
-    ++ContextTS[CIdx][T][S];
+    ++ContextTS[CIdx][T][S+1];
   }
   if (!FullGrid && S>0) { // encode R
     u32 CR = T*(ContextMax+2) + S;
-    if (SCount == 98)
-      int Stop = 0;
-    if (ContextR[CIdx][CR][R] == 0) {
-      ContextR[CIdx][CR][T+1] = 1;
-      EncodeWithContext(T, T+1, ContextR[CIdx][CR].data(), &Coder);
+    if (ContextR[CIdx][CR][R+1] == 0) {
+      ContextR[CIdx][CR][0] = 1;
+      EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
       EncodeCenteredMinimal(R, T+1, &BlockStream);
+      StepsDebug.push_back(3);
       //EncodeGeometric(T, R, &Coder);
-    } else {
-      EncodeWithContext(T, R, ContextR[CIdx][CR].data(), &Coder);
+    } else { // there is a context
+      ContextR[CIdx][CR][0] = 1;
+      EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
+      StepsDebug.push_back(4);
     }
-    ++ContextR[CIdx][CR][R];
+    ++ContextR[CIdx][CR][R+1];
   }
 #endif
-  if (SCount++ < 120)
-    printf("SCount = %d S = %d R = %d\n", SCount, S, R);
+  SRList.push_back(vec2i{S, R});
+  ++SRCounter;
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
@@ -4055,6 +4106,7 @@ main(int Argc, cstr* Argv) {
     //BinomialTablesF64 = CreateGeneralBinomialTablesF64();
     InitWrite(&BlockStream, 900 << 20); // 900 MB
     Coder.InitWrite(900 << 20);
+    //Coder2.InitWrite(500 << 20);
     WriteVarByte(&BlockStream, ParticlesInt.size());
     // TODO: preprocess this
     Params.Dims3 = Params.BBoxInt.Max - Params.BBoxInt.Min + 1; //vec3i(1 << Params.LogDims3.x, 1 << Params.LogDims3.y, 1 << Params.LogDims3.z);
@@ -4090,6 +4142,7 @@ main(int Argc, cstr* Argv) {
     tree* MyNode = BuildTreeIntPredict(nullptr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
     delete[] TreePtrBackup;
     Coder.EncodeFinalize();
+    //Coder2.EncodeFinalize();
     Flush(&BlockStream);
     printf("block count = %lld\n", BlockCount);
     //for (i64 I = 0; I < Residuals.size(); ++I) {
@@ -4120,12 +4173,15 @@ main(int Argc, cstr* Argv) {
     i64 FirstStreamSize = Size(BlockStream);
     //i64 SecondStreamSize = (OutEnd - RansPtr) * sizeof(u32);
     i64 SecondStreamSize = Size(Coder.BitStream);
+    //i64 ThirdStreamSize = Size(Coder2.BitStream);
     fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
     fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+    //fwrite(Coder2.BitStream.Stream.Data, ThirdStreamSize, 1, Fp);
     //fwrite(RansPtr, SecondStreamSize, 1, Fp);
     fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
     //i64 SecondStreamSize = Size(Coder.BitStream);
     fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+    //fwrite(&ThirdStreamSize, sizeof(Third), 1, Fp);
     //printf("%lld %lld\n", FirstStreamSize, SecondStreamSize);
     fclose(Fp);
     //printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
@@ -4146,13 +4202,27 @@ main(int Argc, cstr* Argv) {
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
     /* dump the debug info */
-    //FILE* Ff = fopen("debug.dat", "wb");
-    //i64 DebugSize = DebugProbs.size();
-    //fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fwrite(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
-    //}
-    //fclose(Ff);
+    FILE* Ff = fopen("debug.dat", "wb");
+    i64 DebugSize = SRList.size();
+    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
+    }
+    fclose(Ff);
+    Ff = fopen("arithdebug.dat", "wb");
+    DebugSize = ArithDebug.size();
+    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fwrite(&ArithDebug[I], sizeof(ArithDebug[I]), 1, Fp);
+    }
+    fclose(Ff);
+    Ff = fopen("stepsdebug.dat", "wb");
+    DebugSize = StepsDebug.size();
+    fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fwrite(&StepsDebug[I], sizeof(StepsDebug[I]), 1, Fp);
+    }
+    fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -4181,11 +4251,13 @@ main(int Argc, cstr* Argv) {
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
     FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
     FSEEK(Fp, 0, SEEK_END);
-    i64 FirstStreamSize = 0, SecondStreamSize = 0;
+    i64 FirstStreamSize = 0, SecondStreamSize = 0, ThirdStreamSize = 0;
+    //ReadBackwardPOD(Fp, &ThirdStreamSize);
     ReadBackwardPOD(Fp, &SecondStreamSize);
     ReadBackwardPOD(Fp, &FirstStreamSize);
     AllocBuf(&BlockStream.Stream, FirstStreamSize);
-    AllocBuf(&Coder.BitStream.Stream, FirstStreamSize);
+    AllocBuf(&Coder.BitStream.Stream, SecondStreamSize);
+    //AllocBuf(&Coder2.BitStream.Stream, T);
     FSEEK(Fp, 0, SEEK_SET);
     fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
     fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
@@ -4204,14 +4276,30 @@ main(int Argc, cstr* Argv) {
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
     /* read the debug info */
-    //FILE* Ff = fopen("debug.dat", "rb");
-    //i64 DebugSize = 0;
-    //fread(&DebugSize, sizeof(DebugSize), 1, Fp);
-    //DebugProbs.resize(DebugSize);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fread(&DebugProbs[I], sizeof(DebugProbs[I]), 1, Fp);
-    //}
-    //fclose(Ff);
+    FILE* Ff = fopen("debug.dat", "rb");
+    i64 DebugSize = 0;
+    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
+    SRList.resize(DebugSize);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
+    }
+    fclose(Ff);
+    Ff = fopen("arithdebug.dat", "rb");
+    DebugSize = 0;
+    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
+    ArithDebug.resize(DebugSize);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fread(&ArithDebug[I], sizeof(ArithDebug[I]), 1, Ff);
+    }
+    fclose(Ff);
+    Ff = fopen("stepsdebug.dat", "rb");
+    DebugSize = 0;
+    fread(&DebugSize, sizeof(DebugSize), 1, Ff);
+    StepsDebug.resize(DebugSize);
+    for (i64 I = 0; I < DebugSize; ++I) {
+      fread(&StepsDebug[I], sizeof(StepsDebug[I]), 1, Ff);
+    }
+    fclose(Ff);
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
