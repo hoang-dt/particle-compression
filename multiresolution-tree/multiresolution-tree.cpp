@@ -141,6 +141,18 @@ ReadMetaFile(cstr FileName) {
           Params.LogDims3.y = LOG2_FLOOR(Params.Dims3.y);
           Params.LogDims3.z = LOG2_FLOOR(Params.Dims3.z);
           Params.BaseHeight = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z;
+        } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "w3")) {
+          REQUIRE(Expr->type == SE_INT);
+          Params.W3.x = Expr->i;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          REQUIRE(Expr->type == SE_INT);
+          Params.W3.y = Expr->i;
+          REQUIRE(Expr->next);
+          Expr = Expr->next;
+          REQUIRE(Expr->type == SE_INT);
+          Params.W3.z = Expr->i;
+          printf("W3 = %d %d %d\n", EXPvec3(Params.W3));
         } else if (SExprStringEqual((cstr)Buf.Data, &(LastExpr->s), "accuracy")) {
           REQUIRE(Expr->type == SE_FLOAT);
           Params.Accuracy = Expr->f;
@@ -2461,6 +2473,8 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 #define PREDICTION  1
 //#define NORMAL 1
+//#define SOTA 1
+//#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
 static std::vector<std::vector<particle_int>> ParticleLevels;
 
@@ -2484,7 +2498,7 @@ static i64 BlockCount = -1;
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
 DecodeTreeIntPredict(
-  const tree* PredNode, std::vector<particle_int>& Particles, i8 T, const grid_int& Grid, 
+  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
   split_type Split, i8 ResLvl, i8 Depth) 
 {
   assert(ResLvl < Params.NLevels);
@@ -2499,9 +2513,15 @@ DecodeTreeIntPredict(
   assert(CellCountLeft+CellCountRight == CellCount);
 
   /* decode to find Mid */
-#if defined(NORMAL)
+#if defined(SOTA)
+  i64 N = End - Begin;
+  i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+  i64 Mid = P + Begin;
+  i8 S = 0, R = 0;
+#elif defined(NORMAL)
+  i64 N = End - Begin;
   i64 Mid = Begin;
-  i64 P = End - Mid;
+  i64 P = 0;
   bool Flip = false;
   if (CellCount-N < N) {
     Flip = true;
@@ -2510,11 +2530,44 @@ DecodeTreeIntPredict(
   //N = MIN(N, CellCountRight);
   P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
   if (Flip) {
-    P = CellCountRight - P;
+    P = CellCountLeft - P;
   }
-  Mid = End - P;
+  Mid = P + Begin;
+  i8 S = 0, R = 0;
+#elif defined(LIGHT_PREDICT)
+  i64 Mid = Begin;
+  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  bool EncodeEmptyCells = false;
+  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  i8 S = 0, R = 0;
+  if (!FullGrid && T>0) { // no prediction, try 1-context
+    ContextTS[CIdx][T][0] = 1;
+    S = DecodeWithContext(T, ContextTS[CIdx][T].data(), &Coder);
+    S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
+    ++ContextTS[CIdx][T][S+1];
+  } else if (FullGrid) {
+    S = T - 1;
+  } else { // if S == 0
+    S = 0;
+    //++ContextTS[CIdx][T][S+1];
+  }
+
+  if (FullGrid) {
+    R = T - 1;
+  } else if (T==1 && S==1) {
+    R = 0;
+  } else if (S == 0) {
+    R = T;
+  } else {
+    u32 CR = T*(ContextMax+2) + S;
+    ContextR[CIdx][CR][0] = 1;
+    R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
+    R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
+    ++ContextR[CIdx][CR][R+1];
+  }
 #elif defined(PREDICTION)
   //static int SRCounter = 0;
+  i64 Mid = Begin;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
@@ -2578,7 +2631,13 @@ DecodeTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (S==1 && CellCountLeft==1) { // one particle per cell
+#if defined(LIGHT_PREDICT)
+  if (S == 1) {
+#elif defined(PREDICTION)
+  if (S==1 && CellCountLeft==1) {
+#elif defined(NORMAL) || defined(SOTA)
+  if (Begin+1 == Mid) {
+#endif
     assert(Depth+1 == Params.MaxDepth);
     Left = new (TreePtr++) tree;
     Left->Count = 1;
@@ -2593,20 +2652,30 @@ DecodeTreeIntPredict(
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
       }
     }
-  } else if (S >= 1) { // recurse
+#if defined(PREDICTION) || defined(LIGHT_PREDICT)
+  } else if (S >= 1) { //recurse
+#elif defined(NORMAL) || defined(SOTA)
+  } else if (Begin < Mid) {
+#endif
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = DecodeTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, S, GridLeft, NextSplit, ResLvl, Depth+1);
+      Left = DecodeTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Left = DecodeTreeIntPredict(nullptr, Particles, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      Left = DecodeTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
 
   /* recurse on the right */
   tree* Right = nullptr;
+#if defined(LIGHT_PREDICT)
+  if (R == 1) {
+#elif defined(PREDICTION)
   if (R==1 && CellCountRight==1) {
+#elif defined(NORMAL) || defined(SOTA)
+  if (Mid+1 == End) {
+#endif
     assert(Depth+1 == Params.MaxDepth);
     Right = new (TreePtr++) tree;
     Right->Count = 1;
@@ -2621,13 +2690,17 @@ DecodeTreeIntPredict(
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
       }
     }
+#if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (R >= 1) { //recurse
+#elif defined(NORMAL) || defined(SOTA)
+  } else if (Mid < End) {
+#endif
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Right = DecodeTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, R, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = DecodeTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Right = DecodeTreeIntPredict(Left, Particles, R, GridRight, NextSplit, ResLvl+1, Depth+1);
+      Right = DecodeTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
 
   /* construct the prediction tree */
@@ -2698,15 +2771,58 @@ BuildTreeIntPredict(
   i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
-#if defined(NORMAL)
+#if defined(SOTA)
+  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+#elif defined(NORMAL)
   if (CellCount-N < N) {
     N = CellCount - N;
     P = CellCountLeft - P;
   }
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  //EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-  EncodeUniform(N, P, &Coder);
+  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  //EncodeUniform(N, P, &Coder);
   BinomialCodeSize += log2(N+1);
+#elif defined(LIGHT_PREDICT)
+  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  bool EncodeEmptyCells = false;
+  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  //u32 CIdx = Depth;
+  if (!FullGrid && T>0) { // no prediction, try 1-context
+    if (ContextTS[CIdx][T][S+1] == 0) {
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder);
+      EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      //EncodeGeometric(T, S, &Coder);
+      //EncodeUniform(T, S, &Coder);
+    } else {
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
+    }
+    ++ContextTS[CIdx][T][S+1];
+  }
+
+  if (T > 0) {
+    u32 CR = T*(ContextMax+2) + S;
+    if (FullGrid) {
+      assert(R == T-1);
+    } else if (T==1 && S==1) {
+      assert(R == 0);
+    } else if (S == 0) {
+      assert(R == T);
+    } else {
+      if (ContextR[CIdx][CR][R+1] == 0) {
+        ContextR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
+        EncodeCenteredMinimal(R, T+1, &BlockStream);
+        //EncodeUniform(T, S, &Coder);
+        //EncodeGeometric(T, R, &Coder);
+      } else { // there is a context
+        ContextR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
+      }
+      ++ContextR[CIdx][CR][R+1];
+    }
+  }
 #elif defined(PREDICTION)
   //static int SRCounter = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
@@ -2798,7 +2914,13 @@ BuildTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (S==1 && CellCountLeft==1) { // one particle per cell
+#if defined(LIGHT_PREDICT)
+  if (S == 1) {
+#elif defined(PREDICTION)
+  if (S==1 && CellCountLeft==1) {
+#elif defined(NORMAL) || defined(SOTA)
+  if (Begin+1 == Mid) {
+#endif
     assert(Depth+1 == Params.MaxDepth);
     assert(Begin+1 == Mid);
     Left = new (TreePtr++) tree;
@@ -2817,7 +2939,11 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
-  } else if (S >= 1) { // recurse
+#if defined(PREDICTION) || defined(LIGHT_PREDICT)
+  } else if (S >= 1) { //recurse
+#elif defined(NORMAL) || defined(SOTA)
+  } else if (Begin < Mid) {
+#endif
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
@@ -2830,7 +2956,13 @@ BuildTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
+#if defined(LIGHT_PREDICT)
+  if (R == 1) {
+#elif defined(PREDICTION)
   if (R==1 && CellCountRight==1) {
+#elif defined(NORMAL) || defined(SOTA)
+  if (Mid+1 == End) {
+#endif
     assert(Mid+1 == End);
     assert(Depth+1 == Params.MaxDepth);
     Right = new (TreePtr++) tree;
@@ -2849,7 +2981,11 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
+#if defined(PREDICTION) || defined(LIGHT_PREDICT)
   } else if (R >= 1) { //recurse
+#elif defined(NORMAL) || defined(SOTA)
+  } else if (Mid < End) {
+#endif
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
@@ -4241,7 +4377,7 @@ main(int Argc, cstr* Argv) {
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
-    tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, Msb(u64(N))+1, Grid, Split, 0, 0);
+    tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
     delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;

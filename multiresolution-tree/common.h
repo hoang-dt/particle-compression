@@ -2147,6 +2147,7 @@ WriteMetaFile(const params& Params, cstr FileName) {
   fprintf(Fp, "    (particles %lld)\n", Params.NParticles);
   fprintf(Fp, "    (dimensions %d)\n", Params.NDims);
   fprintf(Fp, "    (grid %d %d %d)\n", EXPvec3(Params.Dims3));
+  fprintf(Fp, "    (w3 %d %d %d)\n", EXPvec3(Params.W3));
   fprintf(Fp, "    (dims-string %s)\n", Params.DimsStr);
   //fprintf(Fp, "    (bounding-box %.10f %.10f %.10f %.10f %.10f %.10f)\n", EXPvec3(Params.BBox.Min), EXPvec3(Params.BBox.Max));
   fprintf(Fp, "    (bounding-box %d %d %d %d %d %d)\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
