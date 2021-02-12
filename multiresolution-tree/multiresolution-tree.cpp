@@ -2528,22 +2528,13 @@ DecodeTreeIntPredict(
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
     ContextS[CIdx][C][0] = 1;
     S = DecodeWithContext(T, ContextS[CIdx][C].data(), &Coder);
-    if (S == 0) {
-      S = DecodeCenteredMinimal(T+1, &BlockStream);
-    } else {
-      --S;
-    }
+    S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
     ++ContextS[CIdx][C][S+1];
-    ++ContextTS[CIdx][T][S+1];
+    //++ContextTS[CIdx][T][S+1];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     ContextTS[CIdx][T][0] = 1;
     S = DecodeWithContext(T, ContextTS[CIdx][T].data(), &Coder);
-    if (S == 0) {
-      S = DecodeCenteredMinimal(T+1, &BlockStream);
-      assert(ContextTS[CIdx][T][S+1] == 0);
-    } else {
-      --S;
-    }
+    S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
     ++ContextTS[CIdx][T][S+1];
   } else if (FullGrid) {
     S = T - 1;
@@ -2562,11 +2553,7 @@ DecodeTreeIntPredict(
     u32 CR = T*(ContextMax+2) + S;
     ContextR[CIdx][CR][0] = 1;
     R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
-    if (R == 0) {
-      R = DecodeCenteredMinimal(T+1, &BlockStream);
-    } else {
-      --R;
-    }
+    R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
     ++ContextR[CIdx][CR][R+1];
   }
 #endif
@@ -2747,42 +2734,48 @@ BuildTreeIntPredict(
       EncodeWithContext(T, 0, ContextS[CIdx][C].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);
       //EncodeGeometric(T, S, &Coder);
+      //EncodeUniform(T, S, &Coder);
     } else {
       ContextS[CIdx][C][0] = 1;
       EncodeWithContext(T, S+1, ContextS[CIdx][C].data(), &Coder);
     }
     ++ContextS[CIdx][C][S+1];
-    ++ContextTS[CIdx][T][S+1];
+    //++ContextTS[CIdx][T][S+1];
   } else if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[CIdx][T][S+1] == 0) {
       ContextTS[CIdx][T][0] = 1;
       EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder);
       EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
       //EncodeGeometric(T, S, &Coder);
+      //EncodeUniform(T, S, &Coder);
     } else {
       ContextTS[CIdx][T][0] = 1;
       EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
     }
     ++ContextTS[CIdx][T][S+1];
   }
-  if (FullGrid) {
-    assert(R == T-1);
-  } else if (T==1 && S==1) {
-    assert(R == 0);
-  } else if (S == 0) {
-    assert(R == T);
-  } else {
+
+  if (T > 0) {
     u32 CR = T*(ContextMax+2) + S;
-    if (ContextR[CIdx][CR][R+1] == 0) {
-      ContextR[CIdx][CR][0] = 1;
-      EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
-      EncodeCenteredMinimal(R, T+1, &BlockStream);
-      //EncodeGeometric(T, R, &Coder);
-    } else { // there is a context
-      ContextR[CIdx][CR][0] = 1;
-      EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
+    if (FullGrid) {
+      assert(R == T-1);
+    } else if (T==1 && S==1) {
+      assert(R == 0);
+    } else if (S == 0) {
+      assert(R == T);
+    } else {
+      if (ContextR[CIdx][CR][R+1] == 0) {
+        ContextR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
+        EncodeCenteredMinimal(R, T+1, &BlockStream);
+        //EncodeUniform(T, S, &Coder);
+        //EncodeGeometric(T, R, &Coder);
+      } else { // there is a context
+        ContextR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
+      }
+      ++ContextR[CIdx][CR][R+1];
     }
-    ++ContextR[CIdx][CR][R+1];
   }
 #endif
   SRList.push_back(vec2i{S, R});
