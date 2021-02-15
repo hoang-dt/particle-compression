@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments> --action encode --in Sitescape_flowers-ascii_dedup.ply --name Sitescape_flowers-ascii --ndims 3 --accuracy 0 --nlevels 1 --refinement error --start_depth 0                                                               </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action encode --series --in redandblack_vox10.txt --name redandblack_vox10 --ndims 3 --accuracy 0 --nlevels 1 --refinement error --start_depth 0  </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>

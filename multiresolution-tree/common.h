@@ -1800,7 +1800,7 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
 }
 
 inline void
-EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
+EncodeWithContext(u32 N, u32 V, const u32* Context, arithmetic_coder<>* Coder) {
   //assert(V>=0 && V<=N);
   u32 Hi = Context[V];
   u32 Lo = 0;
@@ -1812,7 +1812,7 @@ EncodeWithContext(u32 N, u32 V, u32* Context, arithmetic_coder<>* Coder) {
 }
 
 inline u32
-DecodeWithContext(u32 N, u32* Context, arithmetic_coder<>* Coder) {
+DecodeWithContext(u32 N, const u32* Context, arithmetic_coder<>* Coder) {
   u32 Count = 0;
   for (u32 I = 0; I <= N+1; ++I) Count += Context[I]; 
   size_t v = Coder->Decode(Context, N+2, Count);
@@ -2493,7 +2493,10 @@ WritePLYInt(cstr FileName, t Begin, t End, bool Binary=false) {
 
 struct tree {
   tree* Left = nullptr;
-  tree* Right = nullptr;
+  union {
+    tree* Right = nullptr;
+    u32 RefinementBits; // at a leaf node, Count == 1 and Left is nullptr, we use Right to store the refinement bits
+  };
   i64 Count = 0;
 };
 
