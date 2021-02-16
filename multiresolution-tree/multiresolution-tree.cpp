@@ -2471,9 +2471,10 @@ static i64 NonPredictedCodeSize = 0;
 static f64 ResidualCodeLengthNormal = 0;
 static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
-//#define RESOLUTION_ALWAYS 1
+#define RESOLUTION_ALWAYS 1
+#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-#define PREDICTION  1
+//#define PREDICTION  1
 //#define TIME_PREDICT 1
 //#define NORMAL 1
 //#define SOTA 1
@@ -2587,7 +2588,7 @@ DecodeTreeIntPredict(
     R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
     ++ContextTSR[CIdx][CR][R+1];
   }
-#elif defined(PREDICTION) || defined(TIME_PREDICT)
+#elif defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   //static int SRCounter = 0;
   i64 Mid = Begin;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
@@ -2655,7 +2656,7 @@ DecodeTreeIntPredict(
   tree* Left = nullptr; 
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (S == 1) {
-#elif defined(PREDICTION)
+#elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (S==1 && CellCountLeft==1) {
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Begin+1 == Mid) {
@@ -2674,7 +2675,7 @@ DecodeTreeIntPredict(
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (S >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Begin < Mid) {
@@ -2693,7 +2694,7 @@ DecodeTreeIntPredict(
   tree* Right = nullptr;
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (R == 1) {
-#elif defined(PREDICTION)
+#elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (R==1 && CellCountRight==1) {
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   if (Mid+1 == End) {
@@ -2712,7 +2713,7 @@ DecodeTreeIntPredict(
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) ||defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(LIGHT_PREDICT) ||defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (R >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Mid < End) {
@@ -2850,7 +2851,7 @@ BuildTreeIntPredict(
       ++ContextTSR[CIdx][CR][R+1];
     }
   }
-#elif defined(PREDICTION) || defined(TIME_PREDICT)
+#elif defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   //static int SRCounter = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
@@ -2995,7 +2996,7 @@ BuildTreeIntPredict(
   tree* Left = nullptr; 
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (S == 1) {
-#elif defined(PREDICTION)
+#elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (S==1 && CellCountLeft==1) {
     assert(Depth+1 == Params.MaxDepth);
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
@@ -3021,7 +3022,7 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (S >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Begin < Mid) {
@@ -3034,7 +3035,7 @@ BuildTreeIntPredict(
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
 #endif
-#if defined(TIME_PREDICT)
+#if defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
     if (Split == SpatialSplit)
       Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
@@ -3051,7 +3052,7 @@ BuildTreeIntPredict(
   tree* Right = nullptr;
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (R == 1) {
-#elif defined(PREDICTION)
+#elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (R==1 && CellCountRight==1) {
     assert(Depth+1 == Params.MaxDepth);
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
@@ -3077,7 +3078,7 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (R >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
   } else if (Mid < End) {
@@ -3093,6 +3094,11 @@ BuildTreeIntPredict(
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
+#elif defined(RESOLUTION_PREDICT)
+    if (Split == SpatialSplit)
+      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
+    else if (Split == ResolutionSplit)
+      Right = BuildTreeIntPredict(PredNode?PredNode->Right:Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
 #else
     if (Split == SpatialSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
@@ -3120,10 +3126,9 @@ BuildTreeIntPredict(
     *TreePtr = *Node;
     Node = TreePtr++;
   }
-#elif defined(TIME_PREDICT)
+#elif defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   if (Left || Right) {
     Node = new (TreePtr++) tree;
-    ++NumNodeAllocated;
     Node->Left = Left;
     Node->Right = Right;
     if (Left ) Node->Count = Left->Count; else Node->Count = 0;
