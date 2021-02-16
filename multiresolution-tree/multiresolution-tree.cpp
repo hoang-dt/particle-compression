@@ -2500,8 +2500,9 @@ using context_elem_type = std::unordered_map<u32, one_context_type>;
 //using context_type_1 = std::vector<context_elem_type_1>; // one context for each resolution level
 using context_type = std::vector<context_elem_type>; // one context for each resolution level
 static context_type ContextS;
-static context_type ContextTS;
 static context_type ContextR;
+static context_type ContextTS;
+static context_type ContextTSR;
 //static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
 
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
@@ -2581,10 +2582,10 @@ DecodeTreeIntPredict(
     R = T;
   } else {
     u32 CR = T*(ContextMax+2) + S;
-    ContextR[CIdx][CR][0] = 1;
-    R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
+    ContextTSR[CIdx][CR][0] = 1;
+    R = DecodeWithContext(T, ContextTSR[CIdx][CR].data(), &Coder);
     R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
-    ++ContextR[CIdx][CR][R+1];
+    ++ContextTSR[CIdx][CR][R+1];
   }
 #elif defined(PREDICTION) || defined(TIME_PREDICT)
   //static int SRCounter = 0;
@@ -2836,17 +2837,17 @@ BuildTreeIntPredict(
     } else if (S == 0) {
       assert(R == T);
     } else {
-      if (ContextR[CIdx][CR][R+1] == 0) {
-        ContextR[CIdx][CR][0] = 1;
-        EncodeWithContext(T, 0, ContextR[CIdx][CR].data(), &Coder);
+      if (ContextTSR[CIdx][CR][R+1] == 0) {
+        ContextTSR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, 0, ContextTSR[CIdx][CR].data(), &Coder);
         EncodeCenteredMinimal(R, T+1, &BlockStream);
         //EncodeUniform(T, S, &Coder);
         //EncodeGeometric(T, R, &Coder);
       } else { // there is a context
-        ContextR[CIdx][CR][0] = 1;
-        EncodeWithContext(T, R+1, ContextR[CIdx][CR].data(), &Coder);
+        ContextTSR[CIdx][CR][0] = 1;
+        EncodeWithContext(T, R+1, ContextTSR[CIdx][CR].data(), &Coder);
       }
-      ++ContextR[CIdx][CR][R+1];
+      ++ContextTSR[CIdx][CR][R+1];
     }
   }
 #elif defined(PREDICTION) || defined(TIME_PREDICT)
@@ -2867,76 +2868,110 @@ BuildTreeIntPredict(
   if (!FullGrid && T>0 && PredNode /*&& (PredNode->Count > 1)*/) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    i64 L = M - K;
     if (EncodeEmptyCells)  { K= CellCountLeft - K; M = CellCount - M; }
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
-    u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
-    auto It = ContextS[CIdx].find(C);
-    if (It == ContextS[CIdx].end()) {
-      auto Pair = ContextS[CIdx].insert({C, one_context_type()});
-      Pair.first->second[0] = 1;
-      EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-      ++Pair.first->second[S+1];
-    } else {
-      It->second[0] = 1;
-      if (It->second[S+1] == 0) {
-        EncodeWithContext(T, 0, It->second.data(), &Coder);
-        EncodeCenteredMinimal(S, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, S+1, It->second.data(), &Coder);
-      }
-      ++It->second[S+1];
-    }
-  } else 
-  if (!FullGrid && T>0) { // no prediction, try 1-context
-    auto It = ContextTS[CIdx].find(T);
-    if (It == ContextTS[CIdx].end()) {
-      auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
-      Pair.first->second[0] = 1;
-      EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-      ++Pair.first->second[S+1];
-    } else {
-      It->second[0] = 1;
-      if (It->second[S+1] == 0) {
-        EncodeWithContext(T, 0, It->second.data(), &Coder);
-        EncodeCenteredMinimal(S, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, S+1, It->second.data(), &Coder);
-      }
-      ++It->second[S+1];
-    }
-  }
-
-  if (T > 0) {
-    u32 CR = T*(ContextMax+2) + S;
-    if (FullGrid) {
-      assert(R == T-1);
-    } else if (T==1 && S==1) {
-      assert(R == 0);
-    } else if (S == 0) {
-      assert(R == T);
-    } else {
-      auto It = ContextR[CIdx].find(CR);
-      if (It == ContextR[CIdx].end()) {
-        auto Pair = ContextR[CIdx].insert({CR, one_context_type()});
+    i8 LL = Msb(u64(L)) + 1;
+    u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
+    {
+      auto It = ContextS[CIdx].find(C);
+      if (It == ContextS[CIdx].end()) {
+        auto Pair = ContextS[CIdx].insert({C, one_context_type()});
         Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
-        EncodeCenteredMinimal(R, T+1, &BlockStream);
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(S, T+1, &BlockStream);
+        EncodeUniform(T, S, &Coder);
+        ++Pair.first->second[S+1];
+      } else {
+        It->second[0] = 1;
+        if (It->second[S+1] == 0) {
+          EncodeWithContext(T, 0, It->second.data(), &Coder);
+          //EncodeCenteredMinimal(S, T+1, &BlockStream);
+          EncodeUniform(T, S, &Coder);
+        } else {
+          EncodeWithContext(T, S+1, It->second.data(), &Coder);
+        }
+        ++It->second[S+1];
+      }
+    }
+    C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
+    {
+      auto It = ContextR[CIdx].find(C);
+      if (It == ContextR[CIdx].end()) {
+        auto Pair = ContextR[CIdx].insert({C, one_context_type()});
+        Pair.first->second[0] = 1;
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(R, T+1, &BlockStream);
+        EncodeUniform(T, R, &Coder);
         ++Pair.first->second[R+1];
       } else {
         It->second[0] = 1;
         if (It->second[R+1] == 0) {
           EncodeWithContext(T, 0, It->second.data(), &Coder);
-          EncodeCenteredMinimal(R, T+1, &BlockStream);
+          //EncodeCenteredMinimal(R, T+1, &BlockStream);
+          EncodeUniform(T, R, &Coder);
         } else {
           EncodeWithContext(T, R+1, It->second.data(), &Coder);
         }
         ++It->second[R+1];
       }
     }
+  } else 
+  if (!FullGrid && T>0) { // no prediction, try 1-context
+    {
+      auto It = ContextTS[CIdx].find(T);
+      if (It == ContextTS[CIdx].end()) {
+        auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
+        Pair.first->second[0] = 1;
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(S, T+1, &BlockStream);
+        EncodeUniform(T, R, &Coder);
+        ++Pair.first->second[S+1];
+      } else {
+        It->second[0] = 1;
+        if (It->second[S+1] == 0) {
+          EncodeWithContext(T, 0, It->second.data(), &Coder);
+          //EncodeCenteredMinimal(S, T+1, &BlockStream);
+          EncodeUniform(T, S, &Coder);
+        } else {
+          EncodeWithContext(T, S+1, It->second.data(), &Coder);
+        }
+        ++It->second[S+1];
+      }
+    }
+    {
+      u32 CR = T*(ContextMax+2) + S;
+      if (FullGrid) {
+        assert(R == T-1);
+      } else if (T==1 && S==1) {
+        assert(R == 0);
+      } else if (S == 0) {
+        assert(R == T);
+      } else {
+        auto It = ContextTSR[CIdx].find(CR);
+        if (It == ContextTSR[CIdx].end()) {
+          auto Pair = ContextTSR[CIdx].insert({CR, one_context_type()});
+          Pair.first->second[0] = 1;
+          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
+          //EncodeCenteredMinimal(R, T+1, &BlockStream);
+          EncodeUniform(T, R, &Coder);
+          ++Pair.first->second[R+1];
+        } else {
+          It->second[0] = 1;
+          if (It->second[R+1] == 0) {
+            EncodeWithContext(T, 0, It->second.data(), &Coder);
+            //EncodeCenteredMinimal(R, T+1, &BlockStream);
+            EncodeUniform(T, R, &Coder);
+          } else {
+            EncodeWithContext(T, R+1, It->second.data(), &Coder);
+          }
+          ++It->second[R+1];
+        }
+      }
+    }
   }
+
 #endif
   //SRList.push_back(vec2i{S, R});
   //++SRCounter;
@@ -4306,11 +4341,13 @@ START:
       Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
       // TODO: maybe not clear the context at the end of each time step?
       /*ContextS .clear();*/ ContextS .resize((Params.MaxDepth+1)*Params.NLevels);
+      /*ContextS .clear();*/ ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
       /*ContextTS.clear();*/ ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
-      /*ContextR .clear();*/ ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
+      /*ContextR .clear();*/ ContextTSR .resize((Params.MaxDepth+1)*Params.NLevels);
       FOR_EACH (C, ContextS ) { C->reserve(512); }
-      FOR_EACH (C, ContextTS) { C->reserve(512); }
       FOR_EACH (C, ContextR ) { C->reserve(512); }
+      FOR_EACH (C, ContextTS) { C->reserve(512); }
+      FOR_EACH (C, ContextTSR ) { C->reserve(512); }
       printf("max depth = %d\n", Params.MaxDepth);
       grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
       printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
@@ -4414,10 +4451,10 @@ START:
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
     ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
-    ContextR.resize((Params.MaxDepth+1)*Params.NLevels);
+    ContextTSR.resize((Params.MaxDepth+1)*Params.NLevels);
     FOR_EACH (C, ContextS) { C->reserve(512); }
     FOR_EACH (C, ContextTS) { C->reserve(512); }
-    FOR_EACH (C, ContextR) { C->reserve(512); }
+    FOR_EACH (C, ContextTSR) { C->reserve(512); }
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
     FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
     FSEEK(Fp, 0, SEEK_END);
