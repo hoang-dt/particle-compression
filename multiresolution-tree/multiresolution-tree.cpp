@@ -2796,6 +2796,10 @@ BuildTreeIntPredict(
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
 #if defined(BINOMIAL)
+  if (CellCount-N < N) {
+    N = CellCount - N;
+    P = CellCountLeft - P;
+  }
   f64 Mean = f64(N) / 2; // mean
   f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
   EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
@@ -2866,7 +2870,20 @@ BuildTreeIntPredict(
   //}
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
   //u32 CIdx = Depth;
-  if (!FullGrid && T>0 && PredNode /*&& (PredNode->Count > 1)*/) { // predict P
+  if (!FullGrid && N>2) {
+    if (CellCount-N < N) {
+      N = CellCount - N;
+      P = CellCountLeft - P;
+    }
+    if (Split == ResolutionSplit) {
+      f64 Mean = f64(N) / 2; // mean
+      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+      EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+    } else {
+      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    }
+  } else
+  if (!FullGrid && T>0 && PredNode && (PredNode->Left||PredNode->Right)) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
     i64 L = M - K;
@@ -2874,8 +2891,8 @@ BuildTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     i8 LL = Msb(u64(L)) + 1;
-    u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
     {
+      u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
       auto It = ContextS[CIdx].find(C);
       if (It == ContextS[CIdx].end()) {
         auto Pair = ContextS[CIdx].insert({C, one_context_type()});
@@ -2896,31 +2913,39 @@ BuildTreeIntPredict(
         ++It->second[S+1];
       }
     }
-    C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
-    {
-      auto It = ContextR[CIdx].find(C);
-      if (It == ContextR[CIdx].end()) {
-        auto Pair = ContextR[CIdx].insert({C, one_context_type()});
-        Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-        //EncodeCenteredMinimal(R, T+1, &BlockStream);
-        EncodeUniform(T, R, &Coder);
-        ++Pair.first->second[R+1];
+    { // encode R if necessary
+       if (FullGrid) {
+        assert(R == T-1);
+      } else if (T==1 && S==1) {
+        assert(R == 0);
+      } else if (S == 0) {
+        assert(R == T);
       } else {
-        It->second[0] = 1;
-        if (It->second[R+1] == 0) {
-          EncodeWithContext(T, 0, It->second.data(), &Coder);
+        u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
+        auto It = ContextR[CIdx].find(C);
+        if (It == ContextR[CIdx].end()) {
+          auto Pair = ContextR[CIdx].insert({C, one_context_type()});
+          Pair.first->second[0] = 1;
+          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
           //EncodeCenteredMinimal(R, T+1, &BlockStream);
           EncodeUniform(T, R, &Coder);
+          ++Pair.first->second[R+1];
         } else {
-          EncodeWithContext(T, R+1, It->second.data(), &Coder);
+          It->second[0] = 1;
+          if (It->second[R+1] == 0) {
+            EncodeWithContext(T, 0, It->second.data(), &Coder);
+            //EncodeCenteredMinimal(R, T+1, &BlockStream);
+            EncodeUniform(T, R, &Coder);
+          } else {
+            EncodeWithContext(T, R+1, It->second.data(), &Coder);
+          }
+          ++It->second[R+1];
         }
-        ++It->second[R+1];
       }
     }
   } else 
   if (!FullGrid && T>0) { // no prediction, try 1-context
-    {
+    { // encode S
       auto It = ContextTS[CIdx].find(T);
       if (It == ContextTS[CIdx].end()) {
         auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
@@ -2941,7 +2966,7 @@ BuildTreeIntPredict(
         ++It->second[S+1];
       }
     }
-    {
+    { // encode R if necessary
       u32 CR = T*(ContextMax+2) + S;
       if (FullGrid) {
         assert(R == T-1);
@@ -3003,7 +3028,7 @@ BuildTreeIntPredict(
   if (Begin+1 == Mid) {
 #endif
     assert(Begin+1 == Mid);
-#if defined(PREDICTION) || defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NumNodeAllocated;
@@ -3059,7 +3084,7 @@ BuildTreeIntPredict(
   if (Mid+1 == End) {
 #endif
     assert(Mid+1 == End);
-#if defined(PREDICTION) || defined(TIME_PREDICT)
+#if defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NumNodeAllocated;
@@ -3133,6 +3158,11 @@ BuildTreeIntPredict(
     Node->Right = Right;
     if (Left ) Node->Count = Left->Count; else Node->Count = 0;
     if (Right) Node->Count += Right->Count;
+  }
+  if (Depth==Params.StartResolutionSplit && Node!=nullptr) {
+    TreePtr = SaveTreePtr; // free memory
+    *TreePtr = *Node;
+    Node = TreePtr++;
   }
 #endif
 
