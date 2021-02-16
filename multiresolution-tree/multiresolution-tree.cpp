@@ -2492,16 +2492,17 @@ static u32 ContextTSResolution[ContextMax][ContextMax] = {};
 using one_context_type = std::array<u32, ContextMax+2>;
 //using one_context_type = std::vector<u32>;
 using context_elem_type = std::unordered_map<u32, one_context_type>;
-//using context_elem_type_3 = std::array<std::array<std::array<one_context_type, ContextMax+2>, ContextMax+2>, ContextMax+2>;
-//using context_elem_type_2 = std::array<std::array<one_context_type, ContextMax+2>, ContextMax+2>;
-//using context_elem_type_1 = std::array<one_context_type, ContextMax+2>;
-//using context_type_3 = std::vector<context_elem_type_3>; // one context for each resolution level
-//using context_type_2 = std::vector<context_elem_type_2>; // one context for each resolution level
-//using context_type_1 = std::vector<context_elem_type_1>; // one context for each resolution level
+using context_elem_type_3 = std::array<std::array<std::array<one_context_type, ContextMax+2>, ContextMax+2>, ContextMax+2>;
+using context_elem_type_2 = std::array<std::array<one_context_type, ContextMax+2>, ContextMax+2>;
+using context_elem_type_1 = std::array<one_context_type, ContextMax+2>;
+using context_type_3 = std::vector<context_elem_type_3>; // one context for each resolution level
+using context_type_2 = std::vector<context_elem_type_2>; // one context for each resolution level
+using context_type_1 = std::vector<context_elem_type_1>; // one context for each resolution level
 using context_type = std::vector<context_elem_type>; // one context for each resolution level
-static context_type ContextS;
-static context_type ContextTS;
-static context_type ContextR;
+static context_type_3 ContextS;
+static context_type_1 ContextTS;
+static context_type_1 ContextTS2;
+static context_type_2 ContextR;
 //static u32 ContextR[ContextMax][ContextMax][ContextMax] = {};
 
 static std::vector<bool> PredBuf; // prediction grid // TODO: replace with a more compact array
@@ -2871,42 +2872,32 @@ BuildTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
-    auto It = ContextS[CIdx].find(C);
-    if (It == ContextS[CIdx].end()) {
-      auto Pair = ContextS[CIdx].insert({C, one_context_type()});
-      Pair.first->second[0] = 1;
-      EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-      ++Pair.first->second[S+1];
+    if (ContextS[CIdx][T][MM][KK][S+1] == 0) { // no 2-context
+      //ContextS[CIdx][C][0] = 1;
+      ContextS[CIdx][T][MM][KK][0] = 1;
+      EncodeWithContext(T, 0, ContextS[CIdx][T][MM][KK].data(), &Coder);
+      //EncodeCenteredMinimal(S, T+1, &BlockStream);
+      //EncodeGeometric(T, S, &Coder);
+      EncodeUniform(T, S, &Coder);
     } else {
-      It->second[0] = 1;
-      if (It->second[S+1] == 0) {
-        EncodeWithContext(T, 0, It->second.data(), &Coder);
-        EncodeCenteredMinimal(S, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, S+1, It->second.data(), &Coder);
-      }
-      ++It->second[S+1];
+      ContextS[CIdx][T][MM][KK][0] = 1;
+      EncodeWithContext(T, S+1, ContextS[CIdx][T][MM][KK].data(), &Coder);
     }
+    ++ContextS[CIdx][T][MM][KK][S+1];
+    //++ContextTS[CIdx][T][S+1];
   } else 
   if (!FullGrid && T>0) { // no prediction, try 1-context
-    auto It = ContextTS[CIdx].find(T);
-    if (It == ContextTS[CIdx].end()) {
-      auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
-      Pair.first->second[0] = 1;
-      EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);
-      ++Pair.first->second[S+1];
+    if (ContextTS[CIdx][T][S+1] == 0) {
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder); // TODO: make faster
+      //EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
+      //EncodeGeometric(T, S, &Coder);
+      EncodeUniform(T, S, &Coder);
     } else {
-      It->second[0] = 1;
-      if (It->second[S+1] == 0) {
-        EncodeWithContext(T, 0, It->second.data(), &Coder);
-        EncodeCenteredMinimal(S, T+1, &BlockStream);
-      } else {
-        EncodeWithContext(T, S+1, It->second.data(), &Coder);
-      }
-      ++It->second[S+1];
+      ContextTS[CIdx][T][0] = 1;
+      EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
     }
+    ++ContextTS[CIdx][T][S+1];
   }
 
   if (T > 0) {
@@ -2918,24 +2909,18 @@ BuildTreeIntPredict(
     } else if (S == 0) {
       assert(R == T);
     } else {
-      auto It = ContextR[CIdx].find(CR);
-      if (It == ContextR[CIdx].end()) {
-        auto Pair = ContextR[CIdx].insert({CR, one_context_type()});
-        Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
-        EncodeCenteredMinimal(R, T+1, &BlockStream);
-        ++Pair.first->second[R+1];
-      } else {
-        It->second[0] = 1;
-        if (It->second[R+1] == 0) {
-          EncodeWithContext(T, 0, It->second.data(), &Coder);
-          EncodeCenteredMinimal(R, T+1, &BlockStream);
-        } else {
-          EncodeWithContext(T, R+1, It->second.data(), &Coder);
-        }
-        ++It->second[R+1];
+      if (ContextR[CIdx][T][S][R+1] == 0) {
+        ContextR[CIdx][T][S][0] = 1;
+        EncodeWithContext(T, 0, ContextR[CIdx][T][S].data(), &Coder); // TODO: make faster
+        //EncodeCenteredMinimal(R, T+1, &BlockStream);
+        EncodeUniform(T, S, &Coder);
+        //EncodeGeometric(T, R, &Coder);
+      } else { // there is a context
+        ContextR[CIdx][T][S][0] = 1;
+        EncodeWithContext(T, R+1, ContextR[CIdx][T][S].data(), &Coder);
       }
-    }
+      ++ContextR[CIdx][T][S][R+1];
+    }    
   }
 #endif
   //SRList.push_back(vec2i{S, R});
@@ -4307,10 +4292,11 @@ START:
       // TODO: maybe not clear the context at the end of each time step?
       /*ContextS .clear();*/ ContextS .resize((Params.MaxDepth+1)*Params.NLevels);
       /*ContextTS.clear();*/ ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
+      /*ContextTS.clear();*/ ContextTS2.resize((Params.MaxDepth+1)*Params.NLevels);
       /*ContextR .clear();*/ ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
-      FOR_EACH (C, ContextS ) { C->reserve(512); }
-      FOR_EACH (C, ContextTS) { C->reserve(512); }
-      FOR_EACH (C, ContextR ) { C->reserve(512); }
+      //FOR_EACH (C, ContextS ) { C->reserve(512); }
+      //FOR_EACH (C, ContextTS) { C->reserve(512); }
+      //FOR_EACH (C, ContextR ) { C->reserve(512); }
       printf("max depth = %d\n", Params.MaxDepth);
       grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
       printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
@@ -4415,9 +4401,9 @@ START:
     ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
     ContextR.resize((Params.MaxDepth+1)*Params.NLevels);
-    FOR_EACH (C, ContextS) { C->reserve(512); }
-    FOR_EACH (C, ContextTS) { C->reserve(512); }
-    FOR_EACH (C, ContextR) { C->reserve(512); }
+    //FOR_EACH (C, ContextS) { C->reserve(512); }
+    //FOR_EACH (C, ContextTS) { C->reserve(512); }
+    //FOR_EACH (C, ContextR) { C->reserve(512); }
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
     FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
     FSEEK(Fp, 0, SEEK_END);
