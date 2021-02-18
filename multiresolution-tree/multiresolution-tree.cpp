@@ -3982,20 +3982,17 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 //  return N;
 //}
 
-static void
+static i64
 DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   i64 Mid = Begin;
-  bool Stop = Size(BlockStream) >= Params.DecodeBudget;
-  if (!Stop) {
+  bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+  if (InTheCut) {
     Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Begin;
   } else { // stop going down in this branch
-    GenerateParticlesPerNode(N, Grid, &OutputParticles);
-    NParticlesDecoded += N;
-    NParticlesGenerated += N;
-    return;
+    return 0;
   }
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
@@ -4003,7 +4000,8 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
-  if (Begin+1 == Mid) {
+  i64 NParticlesLeft = 0;
+  if (InTheCut && Begin+1==Mid) { // one particle on the left
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
     BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
@@ -4014,25 +4012,26 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         } else {
-          OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
-          ++NParticlesGenerated;
-          ++NParticlesDecoded;
-          goto END_LOOP1; // TODO: just return?
+          goto GENERATE_PARTICLE_LEFT;
         }
       }
     }
-  END_LOOP1:
-    ;
-  } else if (Begin < Mid) {
+  GENERATE_PARTICLE_LEFT:
+    OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+    ++NParticlesGenerated;
+    ++NParticlesDecoded;
+    ++NParticlesLeft;
+  } else if (InTheCut && Begin<Mid) {
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+      NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
-  if (Mid+1 == End) {
+  i64 NParticlesRight = 0;
+  if (InTheCut && Mid+1==End) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
     BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
@@ -4043,22 +4042,25 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         } else {
-          OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
-          ++NParticlesGenerated;
-          ++NParticlesDecoded;
-          goto END_LOOP2; // TODO: just return?
+          goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
         }
       }
     }
-  END_LOOP2:
-    ;
+  GENERATE_PARTICLE_RIGHT:
+    OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+    ++NParticlesGenerated;
+    ++NParticlesDecoded;
+    ++NParticlesRight;
   } else if (Mid < End) {
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+      NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+      NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
+  
+  // TODO: here we can let the parent
+  return NParticlesLeft + NParticlesRight;
 }
 
 /* we divide the particles into three trees, one for each x/y/z splits 
