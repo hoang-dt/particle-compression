@@ -2022,6 +2022,7 @@ struct params {
   int MaxParticleSubSampling = 0;
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
+  int DecodeBudget = INT_MAX;
 };
 
 /* the left side is favored if the dimension is odd */
@@ -2439,6 +2440,19 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   fprintf(Fp, "dummy\n");
   FOR_EACH (P3, Begin, End) {
     fprintf(Fp, "C %f %f %f\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
+  }
+  fclose(Fp);
+}
+template <typename t> inline void
+WriteXYZInt(cstr FileName, t Begin, t End) {
+  FILE* Fp = fopen(FileName, "w");
+  auto NParticles = End - Begin;
+  fprintf(Fp, "%zu\n", NParticles);
+  fprintf(Fp, "dummy\n");
+  FOR_EACH (P3, Begin, End) {
+    if (P3->Pos.x > 10000)
+      int Stop = 0;
+    fprintf(Fp, "C %d %d %d\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
   }
   fclose(Fp);
 }

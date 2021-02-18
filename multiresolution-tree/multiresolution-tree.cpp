@@ -15,6 +15,8 @@
 #include "platform.h"
 #include <algorithm>
 
+static std::vector<particle_int> OutputParticles;
+
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
   REQUIRE(!Particles.empty());
@@ -726,6 +728,12 @@ RefineByLevel() {
   return true;
 }
 
+INLINE static vec3i
+GenerateOneParticle(const bbox_int& BBox) {
+  vec3i P3 = (BBox.Max + BBox.Min) / 2;
+  return P3;
+}
+
 INLINE static void
 GenerateOneParticle(const bbox& BBox) {
   //f32 Rx = f32(rand()) / f32(RAND_MAX);
@@ -737,6 +745,42 @@ GenerateOneParticle(const bbox& BBox) {
 }
 
 static i64 NCount2 = 0;
+
+static void
+GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>* Output) {
+  if (N == 0) return;
+  assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
+  static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
+  GridPoints.resize(N);
+  vec3i Dims3 = Grid.Dims3;
+  
+  i64 NElems = N;
+  i64 I = 0;
+  FOR(i32, Z, 0, Dims3.z) {
+  FOR(i32, Y, 0, Dims3.y) {
+  FOR(i32, X, 0, Dims3.x) {
+    if (I < N) {
+      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+    } else {
+      ++NElems;
+      i64 J = rand() % NElems; // exclusive
+      if (J < N)
+        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+    }
+    ++I;
+  }}}
+  FOR_EACH(P, GridPoints) {
+    bbox_int BBox{
+      .Min = /*Params.BBoxInt.Min +*/ (*P)/* * Params.W3*/,
+      .Max = /*Params.BBoxInt.Min +*/ ((*P) + 1)/* * Params.W3*/ // TODO -1
+    };
+    vec3i P3 = GenerateOneParticle(BBox);
+    Output->push_back(particle_int{.Pos=P3});
+    if (P3.x > 10000)
+      int Stop = 0;
+  }
+  NCount2 += GridPoints.size();
+}
 
 /* Generate N random particles inside Grid */
 static void
@@ -1721,6 +1765,94 @@ i64 RatioCount = 0;
 i64 NodesWithMoreEmptyCellsCount = 0;
 i64 NodesWithMoreParticlesCount = 0;
 
+//static void
+//BuildTreeBFS(q_item Q) {
+//  std::queue<q_item> Queue;
+//  Queue.push(Q);
+//  while (!Queue.empty()) {
+//    Q = Queue.front();
+//    Queue.pop();
+//    REQUIRE(Q.Height <= Params.MaxHeight);
+//    i64 N = Q.End - Q.Begin;
+//    assert((N == 1) || IS_EVEN(int(Q.Grid.Dims3[Q.D])));
+//    i64 Mid = Q.Begin;
+//    vec3f Error3 = (W3 * Q.Grid.Dims3) / f64(N);
+//    bool Stop = Error3.x <= Accuracy && Error3.y <= Accuracy;
+//    if (Params.NDims > 2) Stop = Stop && Error3.z <= Accuracy;
+//    if (Stop) continue;
+//    //if (N <= 1) continue; // enable this to stop the tree construction after the base height
+//    if (Q.SplitType == ResolutionSplit) { // resolution split
+//      auto Pred = [W3, &Q](const particle& P) {
+//        int Bin = MIN(Params.Dims3[Q.D] - 1, int((P.Pos[Q.D] - Params.BBox.Min[Q.D]) / W3[Q.D]));
+//        assert(IS_INT(Q.Grid.From3[Q.D]) && IS_INT(Q.Grid.Stride3[Q.D]) && IS_INT(Q.Grid.Dims3[Q.D]));
+//        REQUIRE((Bin - int(Q.Grid.From3[Q.D])) % int(Q.Grid.Stride3[Q.D]) == 0);
+//        Bin = (Bin - int(Q.Grid.From3[Q.D])) / int(Q.Grid.Stride3[Q.D]);
+//        return IS_EVEN(Bin);
+////        float S = rand() * 1.0 / RAND_MAX;
+////        return S < 0.5f;
+//      };
+//      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
+//    } else { // spatial split
+//      float S = (Q.Grid.Dims3[Q.D] > 1.5f) * (Q.Grid.Stride3[Q.D] - 1) + 1;
+//      float M = Params.BBox.Min[Q.D] + W3[Q.D] * (Q.Grid.From3[Q.D] + Q.Grid.Dims3[Q.D] * 0.5f * S);
+//      auto Pred = [M, &Q](const particle& P) { return P.Pos[Q.D] < M; };
+//      Mid = partition(RANGE(Particles, Q.Begin, Q.End), Pred) - Particles.begin();
+//    }
+//    if (Q.Height < Params.BaseHeight) {
+//      /* encoding the children (left child in particular) */
+//      if (Q.SplitType == ResolutionSplit) {
+//        EncodeResNode(Q.End - Q.Begin, Mid - Q.Begin);
+//      } else {
+//        EncodeNode(Q.Level - (Q.SplitType == ResolutionSplit), Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2, Q.End - Q.Begin, Mid - Q.Begin);
+//        //printf("%lld\n", Mid - Q.Begin);
+//        //printf("%lld\n", Q.End - Mid);
+//      }
+//      /* enqueue children */
+//      //Print(Q.Level - Q.RSplit, Q.TreeIdx * 2 + 1, Q.RSplit ? Q.ResIdx * 2 + 1 : Q.ResIdx, Q.RSplit ? Q.LvlIdx : Q.LvlIdx * 2 + 1, Q.ParIdx, Mid - Q.Begin); // encode only the left child
+//      if (Q.Begin < Mid) {
+//        Queue.push(q_item{
+//          .Begin = Q.Begin,
+//          .End = Mid,
+//          .TreeIdx = Q.TreeIdx * 2,
+//          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 2 : Q.ResIdx,
+//          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2,
+//          .ParIdx = Q.ParIdx,
+//          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, side::Left),
+//          .D = i8((Q.D + 1) % Params.NDims),
+//          .Level = i8(Q.Level - (Q.SplitType == ResolutionSplit)),
+//          .Height = u8(Q.Height + 1),
+//          .SplitType = (N > 1 && (Q.SplitType == ResolutionSplit) && Q.Level > 1) ? ResolutionSplit : SpatialSplit
+//        });
+//      }
+//      if (Mid < Q.End) {
+//        Queue.push(q_item{
+//          .Begin = Mid,
+//          .End = Q.End,
+//          .TreeIdx = Q.TreeIdx * 2 + 1,
+//          .ResIdx = Q.SplitType == ResolutionSplit ? Q.ResIdx + 1 : Q.ResIdx,
+//          .NodeIdx = Q.SplitType == ResolutionSplit ? Q.NodeIdx : Q.NodeIdx * 2 + 1,
+//          .ParIdx = Q.ParIdx + Mid - Q.Begin,
+//          .Grid = SplitGrid(Q.Grid, Q.D, Q.SplitType, side::Right),
+//          .D = i8((Q.D + 1) % Params.NDims),
+//          .Level = Q.Level,
+//          .Height = u8(Q.Height + 1),
+//          .SplitType = SpatialSplit
+//        });
+//      }
+//    } else if (Params.RefinementMode != refinement_mode::SEPARATION_ONLY) { // Q.Height == Params.BaseHeight
+//      /* encoding the refinement bits */
+//      REQUIRE(N == 1);
+//      assert(Q.Grid.Dims3.x <= 1 && Q.Grid.Dims3.y <= 1 && Q.Grid.Dims3.z <= 1);
+//      // TODO: sometimes there are numerical issues where the particle is outside of BBox
+//      bbox BBox{
+//        .Min = Params.BBox.Min + Q.Grid.From3 * W3,
+//        .Max = Params.BBox.Min + (Q.Grid.From3 + Q.Grid.Dims3) * W3
+//      };
+//      EncodeParticle(Q.Level, Q.NodeIdx, Particles[Q.Begin].Pos, BBox);
+//    }
+//  }
+//}
+
 static void
 BuildTreeInt(std::vector<particle_int>& Particles, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -2471,12 +2603,12 @@ static i64 NonPredictedCodeSize = 0;
 static f64 ResidualCodeLengthNormal = 0;
 static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
-#define RESOLUTION_ALWAYS 1
-#define RESOLUTION_PREDICT 1
+//#define RESOLUTION_ALWAYS 1
+//#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -2795,6 +2927,7 @@ BuildTreeIntPredict(
   i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
+
 #if defined(BINOMIAL)
   if (CellCount-N < N) {
     N = CellCount - N;
@@ -2802,7 +2935,14 @@ BuildTreeIntPredict(
   }
   f64 Mean = f64(N) / 2; // mean
   f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-  EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+  //EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+  if (Split == ResolutionSplit) {
+    f64 Mean = f64(N) / 2; // mean
+    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+  } else {
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  }
 #elif defined(SOTA)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 #elif defined(NORMAL)
@@ -2813,7 +2953,6 @@ BuildTreeIntPredict(
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   //EncodeUniform(N, P, &Coder);
-  BinomialCodeSize += log2(N+1);
 #elif defined(LIGHT_PREDICT)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
@@ -4314,6 +4453,10 @@ main(int Argc, cstr* Argv) {
       if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
         EXIT_ERROR("missing --height and --accuracy");
     }
+    bool Budget = OptExists(Argc, Argv, "--budget");
+    if (Budget) {
+      OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);
+    }
     //Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
     char Temp[32];
     cstr Str = Temp;
@@ -4410,6 +4553,8 @@ START:
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
     printf("block count = %lld\n", BlockCount);
+    if (Budget)
+      WriteXYZInt(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     //for (i64 I = 0; I < Residuals.size(); ++I) {
     //  printf("%d\n", Residuals[I]);
     //}
