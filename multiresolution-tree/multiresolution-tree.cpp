@@ -774,7 +774,7 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
       .Min = Params.BBoxInt.Min + (*P) * Params.W3,
       .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
     };
-    vec3i P3 = GenerateOneParticle(BBox);
+    //vec3i P3 = GenerateOneParticle(BBox);
     Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
   }
   NCount2 += GridPoints.size();
@@ -2601,7 +2601,7 @@ static i64 NonPredictedCodeSize = 0;
 static f64 ResidualCodeLengthNormal = 0;
 static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
-#define RESOLUTION_ALWAYS 1
+//#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
 //#define PREDICTION  1
@@ -4128,6 +4128,17 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
         Write(&BlockStream, Left);
       }
     }
+    bbox_int BBox;
+    BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+    BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[DD] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Begin < Mid) {
 #if defined(RESOLUTION_ALWAYS)
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
@@ -4155,8 +4166,18 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
         Write(&BlockStream, Left);
       }
     }
+    bbox_int BBox;
+    BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+    BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Mid].Pos[DD] <= M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        Write(&BlockStream, Left);
+      }
+    }
   } else if (Mid < End) {
-    // TODO: handle the case where we want to do resolution split on the right as well
 #if defined(RESOLUTION_ALWAYS)
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
 #else
@@ -4263,7 +4284,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     //GenerateParticlesPerNode(N, Grid, &OutputParticles);
     //NParticlesGenerated += N;
     //NParticlesDecoded += N;
-    return N;
+    return 0;
   }
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
@@ -4274,6 +4295,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   i64 NParticlesLeft = 0;
   if (InTheCut && Begin+1==Mid && CellCountLeft==1) { // one particle on the left
     auto G = GridLeft;
+    bbox_int BBox;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
         if (Size(BlockStream) < Params.DecodeBudget) {
@@ -4282,7 +4304,22 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           bool Left = Read(&BlockStream);
           if (Left) G = G1; else G = G2;
         } else {
+          InTheCut = false;
           goto GENERATE_PARTICLE_LEFT; // TODO: just return?
+        }
+      }
+    }
+    BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+    BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        if (Size(BlockStream) < Params.DecodeBudget)  {
+          bool Left = Read(&BlockStream);
+          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        } else {
+          InTheCut = false;
+          goto GENERATE_PARTICLE_LEFT;
         }
       }
     }
@@ -4304,9 +4341,11 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     else if (Split == ResolutionSplit)
       NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
+  InTheCut = Size(BlockStream) < Params.DecodeBudget;
   i64 NParticlesRight = 0;
   if (InTheCut && Mid+1==End && CellCountRight==1) {
     auto G = GridRight;
+    bbox_int BBox;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
         if (Size(BlockStream) < Params.DecodeBudget) {
@@ -4315,7 +4354,22 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           bool Left = Read(&BlockStream);
           if (Left) G = G1; else G = G2;
         } else {
+          InTheCut = false;
           goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
+        }
+      }
+    }
+    BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+    BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]) {
+        if (Size(BlockStream) < Params.DecodeBudget)  {
+          bool Left = Read(&BlockStream);
+          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        } else {
+          InTheCut = false;
+          goto GENERATE_PARTICLE_RIGHT;
         }
       }
     }
@@ -4335,11 +4389,11 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     else if (Split == ResolutionSplit)
       NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
-
-  //if (InTheCut && NParticlesLeft+Begin<Mid) {
+  //InTheCut = Size(BlockStream) < Params.DecodeBudget;
+  //if (!InTheCut && NParticlesLeft+Begin<Mid) {
   //  GenerateParticlesPerNode(Mid-(NParticlesLeft+Begin), GridLeft, &OutputParticles);
   //}
-  //if (InTheCut && NParticlesRight+Mid<End) {
+  //if (!InTheCut && NParticlesRight+Mid<End) {
   //  GenerateParticlesPerNode(End-(NParticlesRight+Mid), GridRight, &OutputParticles);
   //}
   return N;
