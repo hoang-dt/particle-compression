@@ -3819,6 +3819,90 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   }
 }
 
+static void
+BuildTreeBFS(q_item_int Q, std::vector<particle_int>& Particles) {
+  std::queue<q_item_int> Queue;
+  Queue.push(Q);
+  while (!Queue.empty()) {
+    Q = Queue.front();
+    Queue.pop();
+    i64 N = Q.End - Q.Begin;
+    i64 Mid = Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    i32 MM = Q.Grid.From3[D];
+    if (Q.Split == ResolutionSplit) {
+      auto RPred = [&Q, D](const particle_int& P) {
+        i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+        Bin = (Bin-Q.Grid.From3[D]) / Q.Grid.Stride3[D];
+        return IS_EVEN(Bin);
+      };
+      Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
+    } else if (Q.Split == SpatialSplit) {
+      MM = Q.Grid.From3[D] + (((Q.Grid.Dims3[D]+1)>>1)-1) * Q.Grid.Stride3[D];
+      auto SPred = [&Q, MM, D](const particle_int& P) {
+        i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+        return Bin <= MM;
+      };
+      Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+    }
+    i64 P = Mid - Q.Begin;
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    if (Q.Begin+1 == Mid) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+      BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (BBox.Max[DD] > BBox.Min[DD]) {
+          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+          bool Left = Particles[Q.Begin].Pos[DD] <= M;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          Write(&BlockStream, Left);
+        }
+      }
+    } else if (Q.Begin < Mid) {
+      split_type NextSplit = 
+        ((Q.Depth+1==Params.StartResolutionSplit) ||
+         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+        .Depth = i8(Q.Depth + 1),
+        .Split = NextSplit
+      });
+    }
+
+    if (Mid+1 == Q.End) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+      BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (BBox.Max[DD] > BBox.Min[DD]) {
+          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+          bool Left = Particles[Mid].Pos[DD] <= M;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          Write(&BlockStream, Left);
+        }
+      }
+    } else if (Mid < Q.End) {
+      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+        .Depth = i8(Q.Depth + 1),
+        .Split = NextSplit
+      });
+    }
+  }
+}
+
 static tree*
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
