@@ -2452,6 +2452,18 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   fclose(Fp);
 }
 template <typename t> inline void
+WriteXYZ(cstr FileName, t Begin, t End, vec3i Min3, vec3f Scale3) {
+  FILE* Fp = fopen(FileName, "w");
+  auto NParticles = End - Begin;
+  fprintf(Fp, "%zu\n", NParticles);
+  fprintf(Fp, "dummy\n");
+  FOR_EACH (P3, Begin, End) {
+    vec3f R3 = vec3f(P3->Pos-Min3) * Scale3;
+    fprintf(Fp, "C %f %f %f\n", R3.x, R3.y, R3.z);
+  }
+  fclose(Fp);
+}
+template <typename t> inline void
 WriteXYZInt(cstr FileName, t Begin, t End) {
   FILE* Fp = fopen(FileName, "w");
   auto NParticles = End - Begin;

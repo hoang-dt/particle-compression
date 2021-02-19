@@ -4119,7 +4119,8 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   if (Begin+1 == Mid) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    //BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    BBox.Max = Params.BBoxInt.Min + (GridLeft.From3+(GridLeft.Dims3-1)*GridLeft.Stride3+1)*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
@@ -4143,7 +4144,8 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   if (Mid+1 == End) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    BBox.Max = Params.BBoxInt.Min + (GridRight.From3+(GridRight.Dims3-1)*GridRight.Stride3+1)*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -4253,7 +4255,11 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   if (InTheCut) {
     Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Begin;
   } else { // stop going down in this branch
-    return 0;
+    printf("what the hell\n");
+    //GenerateParticlesPerNode(N, Grid, &OutputParticles);
+    //NParticlesGenerated += N;
+    //NParticlesDecoded += N;
+    return N;
   }
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
@@ -4265,7 +4271,8 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   if (InTheCut && Begin+1==Mid) { // one particle on the left
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    BBox.Max = Params.BBoxInt.Min + (GridLeft.From3+(GridLeft.Dims3-1)*GridLeft.Stride3+1)*Params.W3 - 1;
+    //BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         if (Size(BlockStream) < Params.DecodeBudget) {
@@ -4273,6 +4280,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         } else {
+          printf("whaatttt\n");
           goto GENERATE_PARTICLE_LEFT;
         }
       }
@@ -4295,7 +4303,8 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   if (InTheCut && Mid+1==End) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    BBox.Max = Params.BBoxInt.Min + (GridRight.From3+(GridRight.Dims3-1)*GridRight.Stride3+1)*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         if (Size(BlockStream) < Params.DecodeBudget) {
@@ -4303,6 +4312,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
         } else {
+          printf("whaatttt\n");
           goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
         }
       }
@@ -4319,9 +4329,14 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     else if (Split == ResolutionSplit)
       NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
-  
-  // TODO: here we can let the parent
-  return NParticlesLeft + NParticlesRight;
+
+  //if (InTheCut && NParticlesLeft+Begin<Mid) {
+  //  GenerateParticlesPerNode(Mid-(NParticlesLeft+Begin), GridLeft, &OutputParticles);
+  //}
+  //if (InTheCut && NParticlesRight+Mid<End) {
+  //  GenerateParticlesPerNode(End-(NParticlesRight+Mid), GridRight, &OutputParticles);
+  //}
+  return N;
 }
 
 /* we divide the particles into three trees, one for each x/y/z splits 
@@ -5220,8 +5235,10 @@ START:
     WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
+    vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
     if (Budget)
-      WriteXYZInt(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
+      //WriteXYZInt(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     //Blocks.resize(Params.NLevels + 1);
     //Blocks[Params.NLevels].resize(1);
     //Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
