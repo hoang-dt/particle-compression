@@ -751,33 +751,45 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
   if (N == 0) return;
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
   static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
-  GridPoints.resize(N);
+  //GridPoints.resize(N);
   vec3i Dims3 = Grid.Dims3;
   
   i64 NElems = N;
   i64 I = 0;
-  FOR(i32, Z, 0, Dims3.z) {
-  FOR(i32, Y, 0, Dims3.y) {
-  FOR(i32, X, 0, Dims3.x) {
-    if (I < N) {
-      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    } else {
-      ++NElems;
-      i64 J = rand() % NElems; // exclusive
-      if (J < N)
-        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    }
-    ++I;
-  }}}
-  FOR_EACH(P, GridPoints) {
+  FOR(i32, I, 0, N) {
+    i32 X = rand() % Dims3.x;
+    i32 Y = rand() % Dims3.y;
+    i32 Z = rand() % Dims3.z;
+    vec3i P3 = Grid.From3 + Grid.Stride3*vec3i(X, Y, Z);
     bbox_int BBox{
-      .Min = Params.BBoxInt.Min + (*P) * Params.W3,
-      .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
+      .Min = Params.BBoxInt.Min + P3*Params.W3,
+      .Max = Params.BBoxInt.Min + (P3+1)*Params.W3 // TODO -1
     };
-    //vec3i P3 = GenerateOneParticle(BBox);
     Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    // TODO: here we don't really care if we have duplicated points
   }
-  NCount2 += GridPoints.size();
+  //FOR(i32, Z, 0, Dims3.z) {
+  //FOR(i32, Y, 0, Dims3.y) {
+  //FOR(i32, X, 0, Dims3.x) {
+  //  if (I < N) {
+  //    GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+  //  } else {
+  //    ++NElems;
+  //    i64 J = rand() % NElems; // exclusive
+  //    if (J < N)
+  //      GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+  //  }
+  //  ++I;
+  //}}}
+  //FOR_EACH(P, GridPoints) {
+  //  bbox_int BBox{
+  //    .Min = Params.BBoxInt.Min + (*P) * Params.W3,
+  //    .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
+  //  };
+  //  //vec3i P3 = GenerateOneParticle(BBox);
+  //  Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+  //}
+  //NCount2 += GridPoints.size();
 }
 
 /* Generate N random particles inside Grid */
@@ -2604,10 +2616,10 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-#define FORCE_BINOMIAL 1
+//#define FORCE_BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -3869,10 +3881,10 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 P = Mid - Q.Begin;
-    if (CellCount-N < N) {
-      N = CellCount - N;
-      P = CellCountLeft - P;
-    }
+    //if (CellCount-N < N) {
+    //  N = CellCount - N;
+    //  P = CellCountLeft - P;
+    //}
 #if defined(BINOMIAL)
       if (Q.Split == ResolutionSplit) {
         f64 Mean = f64(N) / 2; // mean
@@ -3982,7 +3994,7 @@ DecodeTreeIntBFS(q_item_int Q) {
     bool InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
     if (InTheCut) {
       bool Flip = CellCount-N < N;
-      if (Flip) N = CellCount - N;
+      //if (Flip) N = CellCount - N;
       i64 P = 0;
 #if defined(BINOMIAL)
       if (Q.Split == ResolutionSplit) {
@@ -3999,7 +4011,7 @@ DecodeTreeIntBFS(q_item_int Q) {
 #else
       P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
 #endif
-      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      //if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
       Mid = P + Q.Begin;
     } else {
       NParticlesGenerated += N;
@@ -4041,7 +4053,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_LEFT:
-      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
       ++NParticlesLeft;
@@ -4091,7 +4103,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_RIGHT:
-      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
       ++NParticlesRight;
