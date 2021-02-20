@@ -2604,7 +2604,8 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-#define PREDICTION  1
+#define FORCE_BINOMIAL 1
+//#define PREDICTION  1
 //#define TIME_PREDICT 1
 //#define NORMAL 1
 //#define SOTA 1
@@ -2661,7 +2662,7 @@ DecodeTreeIntPredict(
   assert(CellCountLeft+CellCountRight == CellCount);
 
   /* decode to find Mid */
-#if defined(BINOMIAL)
+#if defined(BINOMIAL)  || defined(FORCE_BINOMIAL)
   i64 N = End - Begin;
   i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
   i64 Mid = P + Begin;
@@ -2788,7 +2789,7 @@ DecodeTreeIntPredict(
   if (S == 1) {
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (S==1 && CellCountLeft==1) {
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   if (Begin+1 == Mid) {
 #endif
     assert(Depth+1 == Params.MaxDepth);
@@ -2807,7 +2808,7 @@ DecodeTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   } else if (Begin < Mid) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -2826,7 +2827,7 @@ DecodeTreeIntPredict(
   if (R == 1) {
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (R==1 && CellCountRight==1) {
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   if (Mid+1 == End) {
 #endif
     assert(Depth+1 == Params.MaxDepth);
@@ -2845,7 +2846,7 @@ DecodeTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT) ||defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (R >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)  || defined(FORCE_BINOMIAL)
   } else if (Mid < End) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -2926,7 +2927,7 @@ BuildTreeIntPredict(
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
 
-#if defined(BINOMIAL)
+#if defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   if (CellCount-N < N) {
     N = CellCount - N;
     P = CellCountLeft - P;
@@ -3161,7 +3162,7 @@ BuildTreeIntPredict(
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (S==1 && CellCountLeft==1) {
     assert(Depth+1 == Params.MaxDepth);
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   if (Begin+1 == Mid) {
 #endif
     assert(Begin+1 == Mid);
@@ -3195,7 +3196,7 @@ BuildTreeIntPredict(
     }
 #if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   } else if (Begin < Mid) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
@@ -3226,7 +3227,7 @@ BuildTreeIntPredict(
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
   if (R==1 && CellCountRight==1) {
     assert(Depth+1 == Params.MaxDepth);
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
+#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL) || defined(FORCE_BINOMIAL)
   if (Mid+1 == End) {
 #endif
     assert(Mid+1 == End);
@@ -3846,6 +3847,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
+    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i32 MM = Q.Grid.From3[D];
     if (Q.Split == ResolutionSplit) {
       auto RPred = [&Q, D](const particle_int& P) {
@@ -3862,16 +3864,45 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       };
       Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
     }
-    i64 P = Mid - Q.Begin;
-    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
     auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    i64 P = Mid - Q.Begin;
+    if (CellCount-N < N) {
+      N = CellCount - N;
+      P = CellCountLeft - P;
+    }
+#if defined(BINOMIAL)
+      if (Q.Split == ResolutionSplit) {
+        f64 Mean = f64(N) / 2; // mean
+        f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+        EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+      } else {
+        EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+      }
+#elif defined(FORCE_BINOMIAL)
+      f64 Mean = f64(N) / 2; // mean
+      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+      EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+#else
+      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+#endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
+      auto G = GridLeft;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (G.Dims3[DD] > 1) {
+          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
+          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
+          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
+          bool Left = Particles[Q.Begin].Pos[DD] < M;
+          if (Left) G = G1; else G = G2;
+          Write(&BlockStream, Left);
+        }
+      }
       bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-      BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -3895,9 +3926,21 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
     }
 
     if (Mid+1==Q.End && CellCountRight==1) {
+      auto G = GridRight;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (G.Dims3[DD] > 1) {
+          REQUIRE(0 > 1);
+          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
+          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
+          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
+          bool Left = Particles[Mid].Pos[DD] < M;
+          if (Left) G = G1; else G = G2;
+          Write(&BlockStream, Left);
+        }
+      }
       bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-      BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -3931,9 +3974,33 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
-    bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    bool InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
     if (InTheCut) {
-      Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Q.Begin;
+      bool Flip = CellCount-N < N;
+      if (Flip) N = CellCount - N;
+      i64 P = 0;
+#if defined(BINOMIAL)
+      if (Q.Split == ResolutionSplit) {
+        f64 Mean = f64(N) / 2; // mean
+        f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+        P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
+      } else {
+        P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+      }
+#elif defined(FORCE_BINOMIAL)
+      f64 Mean = f64(N) / 2; // mean
+      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+      P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
+#else
+      P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+#endif
+      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      Mid = P + Q.Begin;
     } else {
       NParticlesGenerated += N;
       NParticlesDecoded += N;
@@ -3941,22 +4008,34 @@ DecodeTreeIntBFS(q_item_int Q) {
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
-    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
-    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
-    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
-    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 NParticlesLeft = 0;
+    InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
+      auto G = GridLeft;
       bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-      BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (G.Dims3[DD] > 1) {
+          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
+            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
+            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
+            bool Left = Read(&BlockStream);
+            if (Left) G = G1; else G = G2;
+          } else {
+            InTheCut = false;
+            goto GENERATE_PARTICLE_LEFT; // TODO: just return?
+          }
+        }
+      }
+      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
-          if (Size(BlockStream) < Params.DecodeBudget) {
+          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
             bool Left = Read(&BlockStream);
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
             if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
           } else {
+            InTheCut = false;
             goto GENERATE_PARTICLE_LEFT;
           }
         }
@@ -3980,18 +4059,34 @@ DecodeTreeIntBFS(q_item_int Q) {
       });
     }
     i64 NParticlesRight = 0;
+    InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
+      auto G = GridRight;
       bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-      BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+      for (int DD = 0; DD < 3; ++DD) {
+        while (G.Dims3[DD] > 1) {
+          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
+            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
+            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
+            bool Left = Read(&BlockStream);
+            if (Left) G = G1; else G = G2;
+          } else {
+            InTheCut = false;
+            goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
+          }
+        }
+      }
+      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
+      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
-          if (Size(BlockStream) < Params.DecodeBudget) {
+          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
             bool Left = Read(&BlockStream);
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
             if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
           } else {
-            goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
+            InTheCut = false;
+            goto GENERATE_PARTICLE_RIGHT;
           }
         }
       }
@@ -4312,7 +4407,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
-  bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+  bool InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
   if (InTheCut) {
     bool Flip = CellCount-N < N;
     if (Flip) N = CellCount - N;
@@ -4338,6 +4433,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     //NParticlesDecoded += N;
     return N;
   }
+  InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
   i64 NParticlesLeft = 0;
@@ -4346,7 +4442,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     bbox_int BBox;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
-        if (Size(BlockStream) < Params.DecodeBudget) {
+        if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
           auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
           auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
           bool Left = Read(&BlockStream);
@@ -4361,7 +4457,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
-        if (Size(BlockStream) < Params.DecodeBudget)  {
+        if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
           bool Left = Read(&BlockStream);
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
@@ -4389,14 +4485,14 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     else if (Split == ResolutionSplit)
       NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
-  InTheCut = Size(BlockStream) < Params.DecodeBudget;
+  InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
   i64 NParticlesRight = 0;
   if (InTheCut && Mid+1==End && CellCountRight==1) {
     auto G = GridRight;
     bbox_int BBox;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
-        if (Size(BlockStream) < Params.DecodeBudget) {
+        if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
           auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
           auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
           bool Left = Read(&BlockStream);
@@ -4411,7 +4507,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
-        if (Size(BlockStream) < Params.DecodeBudget)  {
+        if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
           bool Left = Read(&BlockStream);
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
@@ -5163,21 +5259,21 @@ START:
       split_type Split = (Params.NLevels>1 && Params.StartResolutionSplit==0) ? ResolutionSplit : SpatialSplit;
       printf("--------------- Encoding %s\n", Buf);
       tree* MyNode = nullptr;
-      MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
-      //bool Bfs = OptExists(Argc, Argv, "--bfs");
-      //if (!Bfs) {
-      //  BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
-      //} else {
-      //  q_item_int Q {
-      //    .Begin = 0,
-      //    .End = N,
-      //    .Grid = Grid,
-      //    .ResLvl = 0,
-      //    .Depth = 0,
-      //    .Split = Split,
-      //  };
-      //  BuildTreeIntBFS(Q, ParticlesInt);
-      //}
+      //MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
+      bool Bfs = OptExists(Argc, Argv, "--bfs");
+      if (!Bfs) {
+        BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+      } else {
+        q_item_int Q {
+          .Begin = 0,
+          .End = N,
+          .Grid = Grid,
+          .ResLvl = 0,
+          .Depth = 0,
+          .Split = Split,
+        };
+        BuildTreeIntBFS(Q, ParticlesInt);
+      }
       PrevFramePtr = MyNode;
       i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
       printf("Stream size                        = %lld\n", BlockStreamSize);
@@ -5297,6 +5393,7 @@ START:
     double start_time = timer();
     uint64_t dec_start_time = __rdtsc();
     //BinomialTables = CreateGeneralBinomialTables();
+    CdfTable = CreateBinomialTable(BinomialCutoff);
     Coder.InitRead();
     InitRead(&BlockStream, BlockStream.Stream);
     printf("bit stream size = %lld\n", Size(BlockStream.Stream));
