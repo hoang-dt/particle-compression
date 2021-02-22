@@ -1383,6 +1383,61 @@ struct arithmetic_coder {
     PendingBits = 0;
   }
 
+  /* This version decodes to an output variable and returns the number of bits just consumed */
+  u32
+  Decode(const count_t* CdfTable, u32 Size, count_t Count, u32& S) {
+    assert(Size > 0);
+    assert(Count > 0);
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+    code_t Range = CodeHigh - CodeLow + 1;
+
+    code_t V = ((CodeVal-CodeLow+1)*Count - 1) / Range;
+    assert(V < Count);
+    count_t Sum = 0;
+    S = 0;
+    do {
+      Sum += CdfTable[S];
+      if (Sum > V) break;
+      ++S;
+    } while (S < Size); // after the loop S is one after the right value
+    auto Low = Sum - CdfTable[S];
+    auto High = Sum;
+    assert(Low < High);
+    CodeHigh = CodeLow + (Range*High)/Count - 1;
+    CodeLow = CodeLow + (Range*Low)/Count;
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+    assert(CodeLow<=CodeVal && CodeVal<=CodeHigh);
+
+    /* renormalization */
+    u32 B = 0;
+    while (true) {
+      if (CodeHigh < CodeOneHalf) {
+        // do nothing
+      } else if (CodeLow >= CodeOneHalf) {
+        CodeVal -= CodeOneHalf;
+        CodeLow -= CodeOneHalf;
+        CodeHigh -= CodeOneHalf;
+      } else if (CodeLow>=CodeOneFourth && CodeHigh<CodeThreeFourths) {
+        CodeVal -= CodeOneFourth;
+        CodeLow -= CodeOneFourth;
+        CodeHigh -= CodeOneFourth;
+      } else {
+        break;
+      }
+      CodeLow <<= 1;
+      CodeHigh <<= 1;
+      ++CodeHigh;
+      CodeVal <<= 1;
+      CodeVal += Read(&BitStream);
+      ++B;
+    }
+    assert(CodeHigh <= CodeMax);
+    assert(CodeLow <= CodeMax);
+    return B;
+  }
+
   u32
   Decode(const count_t* CdfTable, u32 Size, count_t Count) {
     //if (Counter < 200) printf("%d begin ", Counter);
@@ -1436,6 +1491,46 @@ struct arithmetic_coder {
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
     return S;
+  }
+
+  /* This version decodes to an output variable and returns the number of bits just consumed */
+  u32
+  Decode(const std::vector<count_t>& CdfTable, u32& S) {
+    assert(CdfTable.size() > 0);
+    count_t Count = CdfTable[CdfTable.size()-1];
+    assert(Count > 0);
+    code_t Range = CodeHigh - CodeLow + 1;
+    code_t V = ((CodeVal-CodeLow+1)*Count - 1) / Range;
+    S = 0;
+    for (; S < CdfTable.size() && CdfTable[S] <= V; ++S) {}
+    count_t Low = S == 0 ? 0 : CdfTable[S-1];
+    count_t High = CdfTable[S];
+    CodeHigh = CodeLow + (Range*High)/Count - 1;
+    CodeLow = CodeLow + (Range*Low)/Count;
+
+    /* renormalization */
+    u32 B = 0;
+    while (true) {
+      if (CodeHigh < CodeOneHalf) {
+        // do nothing
+      } else if (CodeLow >= CodeOneHalf) {
+        CodeVal -= CodeOneHalf;
+        CodeLow -= CodeOneHalf;
+        CodeHigh -= CodeOneHalf;
+      } else if (CodeLow >= CodeOneFourth && CodeHigh < CodeThreeFourths) {
+        CodeVal -= CodeOneFourth;
+        CodeLow -= CodeOneFourth;
+        CodeHigh -= CodeOneFourth;
+      } else
+        break;
+      CodeLow <<= 1;
+      CodeHigh <<= 1;
+      ++CodeHigh;
+      CodeVal <<= 1;
+      CodeVal += Read(&BitStream);
+      ++B;
+    }
+    return B;
   }
 
   /* Decode a single symbol and return its index in the CDF table */
@@ -1622,6 +1717,37 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   }
 }
 
+/* This version decodes into v and return the number of bits just consumed */
+inline u32
+DecodeCenteredMinimal(u32 n, bitstream* Bs, u32& v) {
+  assert(n > 0);
+  if (n == 2) {
+    v = (u32)Read(Bs);
+    return 1;
+  }
+  u32 l1 = Msb(n);
+  u32 l2 = ((1<<l1)==n) ? l1 : l1+1;
+  u32 d = (1<<l2) - n;
+  u32 m = (n-d) >> 1;
+  Refill(Bs); // TODO: minimize the number of refill
+  v = (u32)Peek(Bs, l2);
+  v <<= sizeof(v)*8 - l2;
+  v = BitReverse(v);
+  if (v < m) {
+    Consume(Bs, l2);
+    return l2;
+  } else if (v < 2*m) {
+    Consume(Bs, l2);
+    v += d;
+    return l2;
+  } else {
+    Consume(Bs, l1);
+    v >>= 1;
+    return l1;
+  }
+  return 0;
+}
+
 inline u32
 DecodeCenteredMinimal(u32 n, bitstream* Bs) {
   assert(n > 0);
@@ -1799,7 +1925,7 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
   Coder->Encode(prob);
 }
 
-inline void
+INLINE void
 EncodeWithContext(u32 N, u32 V, const u32* Context, arithmetic_coder<>* Coder) {
   //assert(V>=0 && V<=N);
   u32 Hi = Context[V];
@@ -1811,7 +1937,7 @@ EncodeWithContext(u32 N, u32 V, const u32* Context, arithmetic_coder<>* Coder) {
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
 }
 
-inline u32
+INLINE u32
 DecodeWithContext(u32 N, const u32* Context, arithmetic_coder<>* Coder) {
   u32 Count = 0;
   for (u32 I = 0; I <= N+1; ++I) Count += Context[I]; 
@@ -1820,7 +1946,7 @@ DecodeWithContext(u32 N, const u32* Context, arithmetic_coder<>* Coder) {
 }
 
 /* assume value V<=N have probability 2^(V-1) */
-inline void
+INLINE void
 EncodeGeometric(u32 N, u32 V, arithmetic_coder<>* Coder) {
   assert(V>=0 && V<=N);
   if (N >= 2) {
@@ -1833,7 +1959,7 @@ EncodeGeometric(u32 N, u32 V, arithmetic_coder<>* Coder) {
   }
 }
 
-inline void
+INLINE void
 EncodeUniform(u32 N, u32 V, arithmetic_coder<>* Coder) {
   assert(V>=0 && V<=N);
   u32 Lo = V;
@@ -1842,7 +1968,7 @@ EncodeUniform(u32 N, u32 V, arithmetic_coder<>* Coder) {
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
 }
 
-inline void
+INLINE void
 EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   assert(v>=0 && v<=n);
   u32 lo = v == 0 ? 0 : CdfTable[v-1];
@@ -1853,11 +1979,52 @@ EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* 
   Coder->Encode(prob);
 }
 
-inline u32
+INLINE u32
 DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   size_t v = Coder->Decode(CdfTable);
   assert(v <= n);
   return (u32)v;
+}
+/* This version decodes to an output variable and returns the number of bits just consumed */
+inline u32
+DecodeRange(
+  f64 m, f64 s, f64 a, f64 b, const cdf_table& CdfTable, 
+  bitstream* Bs, arithmetic_coder<>* Coder, u32& v) 
+{
+  assert(a <= b);
+  bool first = true;
+  u32 B = 0;
+  while (true) {
+    u32 beg = (u32)std::ceil(a);
+    u32 end = (u32)std::floor(b);
+    if (beg == end) {
+      v = beg;
+      return 0;
+    }
+    u32 n = end - beg + 1;
+    if (first && n<=BinomialCutoff) { // use the CdfTable for small values of n, but only in the first loop iteration
+      return Coder->Decode(CdfTable[n-1], v);
+    }
+    /* compute F(a) and F(b) */
+    f64 fa = F(m, s, a);
+    f64 fb = F(m, s, b);
+    // TODO: what if fa==fb and mid is NAN
+    /* compute F^-1((fa+fb)/2) */
+    f64 mid = Finv(m, s, (fa+fb)*0.5);
+    if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
+      mid = a;
+    if (a==mid || b==mid || mid!=mid) { // we run out of precision
+      return B + DecodeCenteredMinimal(n, Bs, v);
+    }
+    assert(a<=mid && mid<=b);
+
+    auto bit = Read(Bs);
+    if (bit == 0) b = std::floor(mid);
+    else          a = std::ceil(mid);
+    ++B;
+    first = false;
+  }
+  return B;
 }
 
 /* The inverse of encode */
@@ -2020,7 +2187,7 @@ struct params {
   vec3i W3 = {};
   bbox_int BBoxInt;
   vec3i LogDims3;
-  vec3i BlockDims3; // TODO: compute this
+  vec3i BlockDims3 = vec3i(0, 0, 0); // TODO: compute this
   u8 BaseHeight;
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
@@ -2034,7 +2201,7 @@ struct params {
 };
 
 /* the left side is favored if the dimension is odd */
-inline grid_int
+INLINE grid_int
 SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   auto Out = Grid;
   if (SplitType == ResolutionSplit) {
@@ -2049,7 +2216,7 @@ SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   return Out;
 }
 
-inline grid
+INLINE grid
 SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
   grid Out = Grid;
   if (SplitType == ResolutionSplit) {
