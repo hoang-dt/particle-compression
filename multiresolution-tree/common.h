@@ -1812,6 +1812,14 @@ Pow(double X, int K) {
   }
   return R;
 }
+inline int
+Pow(int X, int K) {
+  int R = 1;
+  FOR(int, I, 0, K) {
+    R *= X;
+  }
+  return R;
+}
 
 constexpr inline int BinomialCutoff = 30; // cannot be bigger than 30 else we will have overflow
 constexpr inline int cutoff2 = 0; // to switch over to uniform encoding (doesn't seem to make a big difference in compression rate, but may make a difference in speed)
