@@ -3926,6 +3926,8 @@ BuildIntAdaptiveDFSPhase(
     P = CellCountLeft - P;
   }
   auto Stream = GetStream(Grid);
+  GrowIfTooFull(&Stream->Stream);
+  GrowIfTooFull(&Stream->Coder.BitStream);
 #if defined(FORCE_BINOMIAL)
   if (Split == ResolutionSplit) {
     f64 Mean = f64(N) / 2; // mean
@@ -4004,11 +4006,10 @@ BuildIntAdaptiveDFSPhase(
   }
 }
 
-
 static void
 BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item_int>& Queue) {
   while (!Queue.empty()) {
-    const auto& Q = Queue.front();
+    auto Q = Queue.front();
     Queue.pop();
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
@@ -4040,6 +4041,8 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       P = CellCountLeft - P;
     }
     auto Stream = GetStream(Q.Grid);
+    GrowIfTooFull(&Stream->Stream);
+    GrowIfTooFull(&Stream->Coder.BitStream);
 #if defined(FORCE_BINOMIAL)
       f64 Mean = f64(N) / 2; // mean
       f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
@@ -4093,7 +4096,6 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       auto G = GridRight;
       for (int DD = 0; DD < 3; ++DD) {
         while (G.Dims3[DD] > 1) {
-          REQUIRE(0 > 1);
           auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
           auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
           i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
@@ -4761,7 +4763,7 @@ static void
 DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, f32>& Heap, std::vector<stack>& Stacks) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   while (!Queue.empty()) {
-    const auto& Q = Queue.front();
+    auto Q = Queue.front();
     Queue.pop();
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
@@ -6064,6 +6066,80 @@ ProcessSemantic3D(cstr FileNameIn, cstr FileNameOut) {
   WriteParticles(FileNameOut, Particles);
 }
 
+static void
+AllocateMemoryForBlocks(const grid_int& Grid) {
+  grid_int G = Grid;
+  for (int I = 0; I < Params.StartResolutionSplit; ++I) {
+    G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
+  }
+  Params.BlockDims3 = G.Dims3;
+  vec3i NBlocks3 = Grid.Dims3 / Params.BlockDims3;
+  i64 NBlocks = i64(NBlocks3.x) * i64(NBlocks3.y) * i64(NBlocks3.z);
+  Streams.resize(NBlocks);
+  FOR_EACH(S, Streams) {
+    InitWrite(&S->Stream, 4 << 20); // 4 MB
+    S->Coder.InitWrite(4 << 20);
+  }
+  InitWrite(&GlobalStream.Stream, 4 << 20); // 4 MB
+  GlobalStream.Coder.InitWrite(4 << 20);
+  //InitWrite(&BlockStream, 900 << 20); // 900 MB
+  //Coder.InitWrite(900 << 20);
+}
+
+static void
+InitContext() {
+  ContextS .resize((Params.MaxDepth+1)*Params.NLevels);
+  ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
+  ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
+  ContextTSR .resize((Params.MaxDepth+1)*Params.NLevels);
+  FOR_EACH (C, ContextS  ) { C->reserve(512); }
+  FOR_EACH (C, ContextR  ) { C->reserve(512); }
+  FOR_EACH (C, ContextTS ) { C->reserve(512); }
+  FOR_EACH (C, ContextTSR) { C->reserve(512); }
+}
+
+static void
+HandleOptions(int Argc, cstr* Argv) {
+}
+
+static std::tuple<i64, i64>
+WriteBinaryFiles() {
+  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+  i64 StreamSize = 0;
+  bitstream Bs;
+  InitWrite(&Bs, 10 << 20);
+  Flush(&GlobalStream.Stream);
+  GlobalStream.Coder.EncodeFinalize();
+  WriteVarByte(&Bs, Size(GlobalStream.Stream));
+  WriteVarByte(&Bs, Size(GlobalStream.Coder.BitStream));
+  StreamSize += Size(GlobalStream.Stream) + Size(GlobalStream.Coder.BitStream);
+  FOR_EACH(S, Streams) {
+    Flush(&S->Stream);
+    S->Coder.EncodeFinalize();
+    fwrite(S->Stream.Stream.Data, Size(S->Stream), 1, Fp);
+    fwrite(S->Coder.BitStream.Stream.Data, Size(S->Coder.BitStream), 1, Fp);
+    StreamSize += Size(S->Stream) + Size(S->Coder.BitStream);
+    GrowToAccomodate(&Bs, 8);
+    WriteVarByte(&Bs, Size(S->Stream));
+    WriteVarByte(&Bs, Size(S->Coder.BitStream));
+  }
+  Flush(&Bs);
+  fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
+  i64 MetaSize = Size(Bs);
+  fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
+  fclose(Fp);
+  return {StreamSize, MetaSize};
+  //i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
+  //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+  //i64 FirstStreamSize = Size(BlockStream);
+  //i64 SecondStreamSize = Size(Coder.BitStream);
+  //fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+  //fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+  //fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+  //fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+  //fclose(Fp);
+}
+
 int
 main(int Argc, cstr* Argv) {
   //ProcessSemantic3D("D:/Downloads/sg27_station8_intensity_rgb.txt", "D:/Downloads/sg27_station8_intensity_rgb.vtu");
@@ -6097,10 +6173,6 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
-    if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
-      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
-        EXIT_ERROR("missing --height and --accuracy");
-    }
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);
@@ -6116,8 +6188,6 @@ main(int Argc, cstr* Argv) {
     char Buf[512]; 
     strncpy(Buf, Params.InFile, sizeof(Buf));
     CdfTable = CreateBinomialTable(BinomialCutoff);
-    InitWrite(&BlockStream, 900 << 20); // 900 MB
-    Coder.InitWrite(900 << 20);
     bool Series = OptExists(Argc, Argv, "--series");
     FILE* Tp = nullptr;
     bool Ok = false;
@@ -6130,20 +6200,18 @@ main(int Argc, cstr* Argv) {
       Ok = fscanf(Tp, "%s\n", Buf);
       if (TimeStep >= 2) 
         break;
-      // TODO: read a text file containing the list of files to process
-      // TODO: go through each file and perform the following
 START:
       ParticlesInt = ReadParticlesInt(Buf);
       if (ParticlesInt.size() == 0)
         EXIT_ERROR("No particles read");
       Params.NParticles = ParticlesInt.size();
-      if (TreePtrBackup == nullptr) {
-        assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 8];
-        PrevFramePtr = new tree[Params.NParticles * 8];
-        TreePtrBackup      = TreePtr;
-        PrevFramePtrBackup = PrevFramePtr;
-      }
+      //if (TreePtrBackup == nullptr) {
+      //  assert(PrevFramePtrBackup == nullptr);
+      //  TreePtr      = new tree[Params.NParticles * 8];
+      //  PrevFramePtr = new tree[Params.NParticles * 8];
+      //  TreePtrBackup      = TreePtr;
+      //  PrevFramePtrBackup = PrevFramePtr;
+      //}
       printf("number of particles = %zu\n", ParticlesInt.size());
       double start_time = timer();
       Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
@@ -6165,17 +6233,10 @@ START:
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
       Params.Dims3 = Params.Dims3 / Params.W3;
       Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
-      // TODO: maybe not clear the context at the end of each time step?
-      /*ContextS .clear();*/ ContextS .resize((Params.MaxDepth+1)*Params.NLevels);
-      /*ContextS .clear();*/ ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
-      /*ContextTS.clear();*/ ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
-      /*ContextR .clear();*/ ContextTSR .resize((Params.MaxDepth+1)*Params.NLevels);
-      FOR_EACH (C, ContextS ) { C->reserve(512); }
-      FOR_EACH (C, ContextR ) { C->reserve(512); }
-      FOR_EACH (C, ContextTS) { C->reserve(512); }
-      FOR_EACH (C, ContextTSR ) { C->reserve(512); }
+      //InitContext(); // uncomment to use contexts
       printf("max depth = %d\n", Params.MaxDepth);
       grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
+      AllocateMemoryForBlocks(Grid);
       printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
       printf("dims string = %s\n", Params.DimsStr);
       i64 N = ParticlesInt.size();
@@ -6184,12 +6245,6 @@ START:
       printf("--------------- Encoding %s\n", Buf);
       tree* MyNode = nullptr;
       //MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
-      grid_int G = Grid;
-      for (int I = 0; I < Params.StartResolutionSplit; ++I) {
-        G = SplitGrid(G, Params.DimsStr[I], SpatialSplit, side::Left);
-      }
-      Params.BlockDims3 = G.Dims3;
-      // TODO: initialize all the streams
       if (OptExists(Argc, Argv, "--adaptive")) {
         q_item_int Q {
           .Begin = 0,
@@ -6225,42 +6280,11 @@ START:
       printf("Time: %f s\n", dec_time);
       ++TimeStep;
     }
-    delete[] TreePtrBackup;
-    delete[] PrevFramePtrBackup;
-    Coder.EncodeFinalize();
-    //Coder2.EncodeFinalize();
-    Flush(&BlockStream);
-    printf("block count = %lld\n", BlockCount);
-    //for (i64 I = 0; I < Residuals.size(); ++I) {
-    //  printf("%d\n", Residuals[I]);
-    //}
-    //bitstream Bs;
-    //InitWrite(&Bs, 100 << 20); // 100 MB
-    //for (int I = 0; I < Residuals.size(); ++I) {
-    //  WriteVarByte(&Bs, Residuals[I]);
-    //}
-    //FILE* Rf = fopen("residuals.dat", "wb");
-    //fwrite(Bs.Stream.Data, Size(Bs), 1, Rf);
-    //fclose(Rf);
-
-    //auto ResidualTree = BuildBinaryTreeForResiduals(Residuals);
-    //i64 ResidualCodeLength = CountCodeLength(ResidualTree);
-    //printf("Residual code length        = %lld\n", ResidualCodeLength);
-    printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
-    printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
-    //Rans64EncFlush(&Rans, &RansPtr);
-    //printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr) * sizeof(u32));
+    //delete[] TreePtrBackup;
+    //delete[] PrevFramePtrBackup;
+    auto [StreamSize, MetaSize] = WriteBinaryFiles();
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("%s\n", Params.DimsStr);
-    i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
-    FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-    i64 FirstStreamSize = Size(BlockStream);
-    i64 SecondStreamSize = Size(Coder.BitStream);
-    fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-    fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-    fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
-    fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
-    fclose(Fp);
     //printf("Uniform code size 1                = %lld\n", (UniformCodeSize1 + 7) / 8);
     printf("Max depth                          = %d\n", Params.MaxDepth);
     printf("Binomial stream size               = %lld\n", (BinomialCodeSize + 7) / 8);
@@ -6269,9 +6293,7 @@ START:
     printf("Non-predicted code size            = %lld\n", (NonPredictedCodeSize + 7) / 8);
     printf("predicted node count               = %lld\n", PredictedNodeCount);
     printf("non predicted node count           = %lld\n", NonPredictedNodeCount);
-    printf("Stream size                        = %lld\n", BlockStreamSize);
-    printf("Separation code size (theoretical) = %f\n", (SeparationCodeLength ) / 8);
-    printf("Separation code size (actual)      = %lld\n", BlockStreamSize - (RefinementCodeLength + 7 ) / 8);
+    printf("Stream size                        = %lld\n", StreamSize);
     printf("Refinement code size               = %lld\n", (RefinementCodeLength + 7 ) / 8);
     printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));
     printf("# particles = %lld\n", NParticlesDecoded);
