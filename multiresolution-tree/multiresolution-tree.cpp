@@ -3884,6 +3884,7 @@ struct heap_priority {
   f32 Error = 0;
 };
 struct heap_data {
+  i64 BlockId = 0;
   stream* Stream = nullptr;
   stack* Stack = nullptr;
   INLINE bool operator<(const heap_data& Other) const { return Stream < Other.Stream; }
@@ -4015,9 +4016,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 P = Mid - Q.Begin;
-    printf("P = %lld\n", P);
-    if (P == 818996)
-      int Stop = 0;
+    //printf("P = %lld\n", P);
     if (CellCount-N < N) {
       N = CellCount - N;
       P = CellCountLeft - P;
@@ -4070,7 +4069,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
         ++BlockCount;
       }
@@ -4112,7 +4111,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
         ++BlockCount;
       }
@@ -4123,8 +4122,6 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
 static void
 BuildIntAdaptive(std::vector<particle_int>& Particles, q_item_int Q) {
   std::queue<q_item_int> Queue;
-  DynamicHeap<heap_data, f32> Heap;
-  std::vector<stack> Stacks;
   Queue.push(Q);
   BuildIntAdaptiveBFSPhase(Particles, Queue);
   int Stop = 0;
@@ -4747,7 +4744,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 }
 
 static void
-DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, f32>& Heap, std::vector<stack>& Stacks) {
+DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, f64>& Heap, std::vector<stack>& Stacks) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   while (!Queue.empty()) {
     auto Q = Queue.front();
@@ -4775,7 +4772,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
 #endif
       if (Flip) { P = (u32)(CellCountLeft-P); N = CellCount-N; }
       Mid = P + Q.Begin;
-      printf("P = %u\n", P);
+      //printf("P = %u\n", P);
     } else { // do not read any more bits, just generate particles
       NParticlesGenerated += N;
       NParticlesDecoded += N;
@@ -4836,10 +4833,10 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Mid-Q.Begin));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Mid-Q.Begin));
         ++BlockCount;
       }
     }
@@ -4895,10 +4892,10 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Q.End-Mid));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Q.End-Mid));
         ++BlockCount;
       }
     }
@@ -4910,7 +4907,7 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
   auto Stack = Top.Stack;
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
-  while (InTheCut && !Stack->empty() && PCount<1) {
+  while (InTheCut && !Stack->empty() && PCount<100) {
     auto Q = Stack->back();
     Stack->pop_back();
     i8 D = Params.DimsStr[Q.Depth] - 'x';
@@ -5025,7 +5022,7 @@ DecodeIntAdaptive(q_item_int Q) {
   printf("------Adaptive decoder------\n");
   // TODO: resize the Stacks to the number of blocks
   std::queue<q_item_int> Queue;
-  DynamicHeap<heap_data, f32> Heap;
+  DynamicHeap<heap_data, f64> Heap;
   std::vector<stack> Stacks; // one stack for each block
   Stacks.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   Queue.push(Q);
@@ -5034,19 +5031,22 @@ DecodeIntAdaptive(q_item_int Q) {
   /*-------------------- DFS phase ---------------------- */
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int Iter = 0;
+  std::vector<i64> BlockCount(Stacks.size(), 0);
   while (InTheCut && !Heap.empty()) {
     heap_data Top;
-    f32 TopScore;
+    f64 TopScore;
     Heap.top(Top, TopScore);
+    ++BlockCount[Top.BlockId];
     //Heap.pop();
     auto PCount = DecodeIntAdaptiveDFSPhase(Top);
     const auto& Stack = *(Top.Stack);
     if (!Stack.empty()) {
       //f64 Score = 0;
       //for (int I = 0; I < Stack.size(); ++I) {
-      //  Score = std::max(Score, GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin));
+      //  Score += GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin);
       //}
       //Score /= Stack.size();
+      //Heap.update(Top, Score);
       Heap.update(Top, TopScore-PCount);
     } else {
       //Heap.erase(Top);
@@ -5055,6 +5055,7 @@ DecodeIntAdaptive(q_item_int Q) {
     InTheCut = BitCount < Params.DecodeBudget*8;
     ++Iter;
   }
+  int Stop = 0;
 }
 
 static i64
