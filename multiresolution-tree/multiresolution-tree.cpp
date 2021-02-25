@@ -3939,7 +3939,6 @@ BuildIntAdaptiveDFSPhase(
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
-  tree* Left = nullptr;
   if (Begin+1==Mid/* && CellCountLeft==1*/) {
     auto G = GridLeft;
     for (int DD = 0; DD < 3; ++DD) {
@@ -3963,21 +3962,11 @@ BuildIntAdaptiveDFSPhase(
         Write(&Stream->Stream, Left);
       }
     }
-  } else if (Begin < Mid) {
-    split_type NextSplit = 
-      ((Depth+1==Params.StartResolutionSplit) ||
-       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
-      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
-  tree* Right = nullptr;
   if (Mid+1==End/* && CellCountRight==1*/) {
     auto G = GridRight;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
-        REQUIRE(0 > 1);
         auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
         auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
         i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
@@ -3997,7 +3986,17 @@ BuildIntAdaptiveDFSPhase(
         Write(&Stream->Stream, Left);
       }
     }
-  } else if (Mid < End) {
+  }
+  if (Begin+1 < Mid) {
+    split_type NextSplit = 
+      ((Depth+1==Params.StartResolutionSplit) ||
+       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+    if (Split == SpatialSplit)
+      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+    else if (Split == ResolutionSplit)
+      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+  }
+  if (Mid+1 < End) {
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
@@ -4968,7 +4967,6 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
     InTheCut = BitCount < Params.DecodeBudget*8;
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
     i64 P = Mid - Q.Begin;
-    i64 NParticlesLeft = 0;
     if (InTheCut && Q.Begin+1==Mid/* && CellCountLeft==1*/) { // one particle on the left
       auto G = GridLeft;
       bbox_int BBox;
@@ -5005,24 +5003,9 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
-      ++NParticlesLeft;
-    } else if (InTheCut && Q.Begin<Mid) {
-      split_type NextSplit = 
-        ((Q.Depth+1==Params.StartResolutionSplit) ||
-         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-      q_item_int Next {
-        .Begin = Q.Begin,
-        .End = Mid,
-        .Grid = GridLeft,
-        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-        .Depth = Q.Depth+1,
-        .Split = NextSplit
-      };
-      Stack->push_back(Next);
-    }
+    } 
 
     InTheCut = BitCount < Params.DecodeBudget*8;
-    i64 NParticlesRight = 0;
     if (InTheCut && Mid+1==Q.End/* && CellCountRight==1*/) {
       auto G = GridRight;
       bbox_int BBox;
@@ -5059,14 +5042,28 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
-      ++NParticlesRight;
-    } else if (InTheCut && Mid<Q.End) {
+    } 
+    if (InTheCut && Mid+1<Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       q_item_int Next {
         .Begin = Mid,
         .End = Q.End,
         .Grid = GridRight,
         .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
+        .Depth = Q.Depth+1,
+        .Split = NextSplit
+      };
+      Stack->push_back(Next);
+    }
+    if (InTheCut && Q.Begin+1<Mid) {
+      split_type NextSplit = 
+        ((Q.Depth+1==Params.StartResolutionSplit) ||
+         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+      q_item_int Next {
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = Q.Depth+1,
         .Split = NextSplit
       };
