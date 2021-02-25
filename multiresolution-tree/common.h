@@ -2196,6 +2196,7 @@ struct params {
   bbox_int BBoxInt;
   vec3i LogDims3;
   vec3i BlockDims3 = vec3i(0, 0, 0); // TODO: compute this
+  vec3i NBlocks3 = vec3i(0, 0 , 0);
   u8 BaseHeight;
   vec3i Dims3;
   int MaxNBlocks = INT_MAX;
