@@ -3875,7 +3875,8 @@ GetStream(const grid_int& Grid) {
 
 INLINE f64
 GetScore(const grid_int& Grid, i64 N) {
-  return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z) / f64(N);
+  return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z);
+  //return 1000000;
 }
 
 using stack = std::vector<q_item_int>;
@@ -4926,12 +4927,12 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
   }
 }
 
-static void
+static int
 DecodeIntAdaptiveDFSPhase(heap_data& Top) {
   auto Stack = Top.Stack;
   bool InTheCut = BitCount < Params.DecodeBudget*8;
-  int Iter = 0;
-  while (InTheCut && Iter++ < 1) { // return after 1 step
+  int PCount = 0;
+  while (InTheCut && !Stack->empty() && PCount < 10) {
     auto Q = Stack->back();
     Stack->pop_back();
     i8 D = Params.DimsStr[Q.Depth] - 'x';
@@ -5003,6 +5004,7 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
+      ++PCount;
     } 
 
     InTheCut = BitCount < Params.DecodeBudget*8;
@@ -5042,6 +5044,7 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
       ++NParticlesDecoded;
+      ++PCount;
     } 
     if (InTheCut && Mid+1<Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
@@ -5070,10 +5073,12 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       Stack->push_back(Next);
     }
   }
+  return PCount;
 }
 
 // TODO: reserve memory in advance
 // TODO: allocate a large memory arena upfront for the bit streams
+// TODO: we can't simply decode the right particle before going all the way to the left because it may belong to the next resolution
 static void
 DecodeIntAdaptive(q_item_int Q) {
   printf("------Adaptive decoder------\n");
@@ -5093,15 +5098,15 @@ DecodeIntAdaptive(q_item_int Q) {
     f32 TopScore;
     Heap.top(Top, TopScore);
     //Heap.pop();
-    DecodeIntAdaptiveDFSPhase(Top);
+    auto PCount = DecodeIntAdaptiveDFSPhase(Top);
     const auto& Stack = *(Top.Stack);
     if (!Stack.empty()) {
-      f64 Score = 0;
-      for (int I = 0; I < Stack.size(); ++I) {
-        Score += GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin);
-      }
-      Score /= Stack.size();
-      Heap.update(Top, f32(Score));
+      //f64 Score = 0;
+      //for (int I = 0; I < Stack.size(); ++I) {
+      //  Score = std::max(Score, GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin));
+      //}
+      //Score /= Stack.size();
+      Heap.update(Top, TopScore-PCount);
     } else {
       //Heap.erase(Top);
       Heap.pop();
