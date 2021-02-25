@@ -4902,12 +4902,14 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
   }
 }
 
+// TODO: try using bit budget to stop the loop instead of particle count
 static int
 DecodeIntAdaptiveDFSPhase(heap_data& Top) {
   auto Stack = Top.Stack;
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
-  while (InTheCut && !Stack->empty() && PCount<100) {
+  auto BitCountBackup = BitCount;
+  while (InTheCut && !Stack->empty() && /*BitCount-BitCountBackup<1000*/PCount<1) {
     auto Q = Stack->back();
     Stack->pop_back();
     i8 D = Params.DimsStr[Q.Depth] - 'x';
@@ -5055,6 +5057,12 @@ DecodeIntAdaptive(q_item_int Q) {
     InTheCut = BitCount < Params.DecodeBudget*8;
     ++Iter;
   }
+  //FOR_EACH(St, Stacks) {
+  //  FOR_EACH(S, *St) {
+  //    if (S->End-S->Begin<1000)
+  //      GenerateParticlesPerNode(S->End-S->Begin, S->Grid, &OutputParticles);
+  //  }
+  //}
   int Stop = 0;
 }
 
