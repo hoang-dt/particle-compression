@@ -3876,6 +3876,7 @@ GetStream(const grid_int& Grid) {
 INLINE f64
 GetScore(const grid_int& Grid, i64 N) {
   return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z);
+  //return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z)/f64(N);
   //return 1000000;
 }
 
@@ -3899,8 +3900,9 @@ BuildIntAdaptiveDFSPhase(
 {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
+  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   auto Stream = GetStream(Grid);
-  if (N == 1) {
+  if (N==1 && CellCount==1) {
     auto G = Grid;
     for (int DD = 0; DD < 3; ++DD) {
       while (G.Dims3[DD] > 1) {
@@ -3945,7 +3947,6 @@ BuildIntAdaptiveDFSPhase(
   }
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
-  i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
@@ -4836,7 +4837,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Mid-Q.Begin));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f64)GetScore(Next.Grid, Mid-Q.Begin));
         ++BlockCount;
       }
     }
@@ -4895,7 +4896,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f32)GetScore(Next.Grid, Q.End-Mid));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f64)GetScore(Next.Grid, Q.End-Mid));
         ++BlockCount;
       }
     }
@@ -4916,12 +4917,8 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 Mid = Q.Begin;
-    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
-    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
-    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
-    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     auto Stream = GetStream(Q.Grid);
-    if (N==1/* && CellCountLeft==1*/) {
+    if (N==1 && CellCount==1) {
       auto G = Q.Grid;
       bbox_int BBox;
       for (int DD = 0; DD < 3; ++DD) {
@@ -4962,6 +4959,10 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
     } 
 
     InTheCut = BitCount < Params.DecodeBudget*8;
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     if (InTheCut) {
       bool Flip = CellCount-N < N;
       if (Flip) N = CellCount - N;
@@ -4984,7 +4985,6 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
     }
 
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
-    i64 P = Mid - Q.Begin;
     InTheCut = BitCount < Params.DecodeBudget*8;
     if (InTheCut && Mid+1<=Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
@@ -5045,9 +5045,10 @@ DecodeIntAdaptive(q_item_int Q) {
     if (!Stack.empty()) {
       //f64 Score = 0;
       //for (int I = 0; I < Stack.size(); ++I) {
-      //  Score += GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin);
+      //  Score = std::max(GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin), Score);
+      //  //Score += GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin);
       //}
-      //Score /= Stack.size();
+      ////Score /= Stack.size();
       //Heap.update(Top, Score);
       Heap.update(Top, TopScore-PCount);
     } else {
