@@ -4523,7 +4523,6 @@ BuildTreeIntDFSBlockBased(std::vector<particle_int>& Particles, i64 Begin, i64 E
     N = CellCount - N;
     P = CellCountLeft - P;
   }
-  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   auto Stream = GetStream(Grid);
 #if defined(BINOMIAL)
   if (Split == ResolutionSplit) {
@@ -4618,7 +4617,7 @@ BuildTreeIntDFSBlockBased(std::vector<particle_int>& Particles, i64 Begin, i64 E
   return Node;
 }
 
-static tree*
+static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
@@ -4647,26 +4646,18 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
+  //if (CellCount-N < N) {
+  //  N = CellCount - N;
+  //  P = CellCountLeft - P;
+  //}
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-#if defined(BINOMIAL)
-  f64 Mean = f64(N) / 2; // mean
-  f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-  //EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
-  if (Split == ResolutionSplit) {
+#if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
     EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
-  } else {
-    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-  }
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
 #endif
-  tree* Left = nullptr;
   if (Begin+1==Mid && CellCountLeft==1) {
     auto G = GridLeft;
     for (int DD = 0; DD < 3; ++DD) {
@@ -4691,19 +4682,14 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
       }
     }
   } else if (Begin < Mid) {
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-#endif
     if (Split == SpatialSplit)
-      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+      BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
-  tree* Right = nullptr;
   if (Mid+1==End && CellCountRight==1) {
     auto G = GridRight;
     for (int DD = 0; DD < 3; ++DD) {
@@ -4729,19 +4715,12 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
       }
     }
   } else if (Mid < End) {
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#endif
     if (Split == SpatialSplit)
-      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+      BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+      BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
-
-  tree* Node = nullptr;
-  return Node;
 }
 
 static void
@@ -5293,45 +5272,48 @@ DecodeTreeIntDFSBlockBased(i64 Begin, i64 End, const grid_int& Grid, split_type 
 //  return N;
 //}
 
-static i64
-DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
+static tree*
+DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
+  assert(N <= CellCount);
   i64 Mid = Begin;
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   bool InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
+  i64 P = 0;
   if (InTheCut) {
-    bool Flip = CellCount-N < N;
-    if (Flip) N = CellCount - N;
-    i64 P = 0;
-#if defined(BINOMIAL)
+    //bool Flip = CellCount-N < N;
+    //if (Flip) N = CellCount - N;
+#if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    if (Split == ResolutionSplit) {
-      f64 Mean = f64(N) / 2; // mean
-      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-      P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
-    } else {
-      P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-    }
+    P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
 #else
     P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
 #endif
-    if (Flip) P = CellCountLeft - P;
-    Mid = P + Begin;
-  } else { // stop going down in this branch
-    //GenerateParticlesPerNode(N, Grid, &OutputParticles);
-    //NParticlesGenerated += N;
-    //NParticlesDecoded += N;
-    return N;
+  } else { // out of bit budget, we need to predict P
+    return nullptr;
+    //if (PredNode) {
+    //  i64 M = PredNode->Count;
+    //  i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+    //  P = N * K / M;  // P <= N
+    //  P = MIN(P, CellCountLeft);
+    //} else {
+    //  return nullptr;
+    //}
   }
+  //if (Flip) P = CellCountLeft - P;
+  assert(P <= CellCountLeft);
+  Mid = P + Begin;
+
+  /* ----------------- LEFT --------------- */
   InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
-  i64 P = Mid - Begin;
+  tree* LeftTree = nullptr;
   i64 NParticlesLeft = 0;
   if (InTheCut && Begin+1==Mid && CellCountLeft==1) { // one particle on the left
     auto G = GridLeft;
@@ -5345,7 +5327,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           if (Left) G = G1; else G = G2;
         } else {
           InTheCut = false;
-          goto GENERATE_PARTICLE_LEFT; // TODO: just return?
+          goto GENERATE_PARTICLE_LEFT; 
         }
       }
     }
@@ -5367,22 +5349,21 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     GenerateParticlesPerNode(1, G, &OutputParticles);
     ++NParticlesGenerated;
     ++NParticlesDecoded;
-    ++NParticlesLeft;
+    //LeftTree = new (TreePtr++) tree;
+    //LeftTree->Count = 1;
   } else if (InTheCut && Begin<Mid) {
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-#endif
     if (Split == SpatialSplit)
-      NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+      LeftTree = DecodeTreeIntDFS(PredNode?PredNode->Left:nullptr, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      NParticlesLeft += DecodeTreeIntDFS(Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      LeftTree = DecodeTreeIntDFS(nullptr, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
+
+  /* ----------------- RIGHT --------------- */
+  tree* RightTree = nullptr;
   InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;
-  i64 NParticlesRight = 0;
   if (InTheCut && Mid+1==End && CellCountRight==1) {
     auto G = GridRight;
     bbox_int BBox;
@@ -5395,7 +5376,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
           if (Left) G = G1; else G = G2;
         } else {
           InTheCut = false;
-          goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
+          goto GENERATE_PARTICLE_RIGHT;
         }
       }
     }
@@ -5417,26 +5398,31 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
     GenerateParticlesPerNode(1, G, &OutputParticles);
     ++NParticlesGenerated;
     ++NParticlesDecoded;
-    ++NParticlesRight;
+    //RightTree = new (TreePtr++) tree;
+    //RightTree->Count = 1;
   } else if (InTheCut && Mid<End) {
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#endif
     if (Split == SpatialSplit)
-      NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+      RightTree = DecodeTreeIntDFS(PredNode?PredNode->Right:nullptr, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
-      NParticlesRight += DecodeTreeIntDFS(Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+      RightTree = DecodeTreeIntDFS(LeftTree, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
-  //InTheCut = Size(BlockStream) < Params.DecodeBudget;
-  //if (!InTheCut && NParticlesLeft+Begin<Mid) {
-  //  GenerateParticlesPerNode(Mid-(NParticlesLeft+Begin), GridLeft, &OutputParticles);
+
+  tree* Node = nullptr;
+  //if (Split == ResolutionSplit) {
+  //  Node = BuildPredTree(LeftTree, RightTree, Depth, D);
+  //  assert(Node && Node->Count>0);
+  //} else if (Split == SpatialSplit) {
+  //  if (Depth > Params.StartResolutionSplit) {
+  //    Node = new (TreePtr++) tree;
+  //    Node->Left  = LeftTree;
+  //    Node->Right = RightTree;
+  //    if (LeftTree ) Node->Count = LeftTree->Count  ; else Node->Count = 0;
+  //    if (RightTree) Node->Count += RightTree->Count;
+  //  }
   //}
-  //if (!InTheCut && NParticlesRight+Mid<End) {
-  //  GenerateParticlesPerNode(End-(NParticlesRight+Mid), GridRight, &OutputParticles);
-  //}
-  return N;
+
+  return Node;
 }
 
 /* we divide the particles into three trees, one for each x/y/z splits 
@@ -6045,15 +6031,16 @@ AllocateMemoryForBlocks(const grid_int& Grid) {
   Params.BlockDims3 = G.Dims3;
   Params.NBlocks3 = Params.Dims3 / Params.BlockDims3;
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
-  Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  FOR_EACH(S, Streams) {
-    InitWrite(&S->Stream, 1 << 20); // 1 MB
-    S->Coder.InitWrite(1 << 20);
-  }
-  InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
-  GlobalStream.Coder.InitWrite(1 << 20);
-  //InitWrite(&BlockStream, 900 << 20); // 900 MB
-  //Coder.InitWrite(900 << 20);
+  //Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
+  //FOR_EACH(S, Streams) {
+  //  InitWrite(&S->Stream, 1 << 20); // 1 MB
+  //  S->Coder.InitWrite(1 << 20);
+  //}
+  //InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
+  //GlobalStream.Coder.InitWrite(1 << 20);
+
+  InitWrite(&BlockStream, 900 << 20); // 900 MB
+  Coder.InitWrite(900 << 20);
 }
 
 static void
@@ -6074,129 +6061,135 @@ HandleOptions(int Argc, cstr* Argv) {
 
 static std::tuple<i64, i64>
 WriteBinaryFiles() {
-  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  i64 StreamSize = 0;
-  bitstream Bs;
-  InitWrite(&Bs, 10 << 20);
-  Flush(&GlobalStream.Stream);
-  GlobalStream.Coder.EncodeFinalize();
-  auto Size1 = Size(GlobalStream.Stream);
-  //auto Size2 = Size(GlobalStream.Coder.BitStream);
-  WriteVarByte(&Bs, Size1);
-  //WriteVarByte(&Bs, Size2);
-  //StreamSize += Size1 + Size2;
-  StreamSize = Size1;
-  if (Size1 > 0) {
-    fwrite(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
-    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
-  }
-  //if (Size2 > 0) {
-  //  fwrite(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
-  //}
-  FOR_EACH(S, Streams) {
-    Flush(&S->Stream);
-    //S->Coder.EncodeFinalize();
-    Size1 = Size(S->Stream);
-    if (Size1 > 0) {
-      fwrite(S->Stream.Stream.Data, Size1, 1, Fp);
-      //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
-    }
-    //Size2 = Size(S->Coder.BitStream);
-    //if (Size2 > 0) {
-    //  fwrite(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
-    //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
-    //}
-    //StreamSize += Size1 + Size2;
-    StreamSize += Size1;
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, Size1);
-    //WriteVarByte(&Bs, Size2);
-  }
-  Flush(&Bs);
-  fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
-  i64 MetaSize = Size(Bs);
-  fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
-  fclose(Fp);
-  Dealloc(&Bs);
-  return {StreamSize, MetaSize};
-  //i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
   //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  //i64 FirstStreamSize = Size(BlockStream);
-  //i64 SecondStreamSize = Size(Coder.BitStream);
-  //fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  //fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-  //fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
-  //fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+  //i64 StreamSize = 0;
+  //bitstream Bs;
+  //InitWrite(&Bs, 10 << 20);
+  //Flush(&GlobalStream.Stream);
+  //GlobalStream.Coder.EncodeFinalize();
+  //auto Size1 = Size(GlobalStream.Stream);
+  ////auto Size2 = Size(GlobalStream.Coder.BitStream);
+  //WriteVarByte(&Bs, Size1);
+  ////WriteVarByte(&Bs, Size2);
+  ////StreamSize += Size1 + Size2;
+  //StreamSize = Size1;
+  //if (Size1 > 0) {
+  //  fwrite(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
+  //  //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
+  //}
+  ////if (Size2 > 0) {
+  ////  fwrite(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  ////  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
+  ////}
+  //FOR_EACH(S, Streams) {
+  //  Flush(&S->Stream);
+  //  //S->Coder.EncodeFinalize();
+  //  Size1 = Size(S->Stream);
+  //  if (Size1 > 0) {
+  //    fwrite(S->Stream.Stream.Data, Size1, 1, Fp);
+  //    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
+  //  }
+  //  //Size2 = Size(S->Coder.BitStream);
+  //  //if (Size2 > 0) {
+  //  //  fwrite(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  //  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
+  //  //}
+  //  //StreamSize += Size1 + Size2;
+  //  StreamSize += Size1;
+  //  GrowToAccomodate(&Bs, 8);
+  //  WriteVarByte(&Bs, Size1);
+  //  //WriteVarByte(&Bs, Size2);
+  //}
+  //Flush(&Bs);
+  //fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
+  //i64 MetaSize = Size(Bs);
+  //fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
   //fclose(Fp);
+  //Dealloc(&Bs);
+  //return {StreamSize, MetaSize};
+
+  i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
+  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+  i64 FirstStreamSize = Size(BlockStream);
+  i64 SecondStreamSize = Size(Coder.BitStream);
+  fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+  if (SecondStreamSize > 0)
+    fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+  fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+  fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+  fclose(Fp);
+  return {BlockStreamSize, 0};
 }
 
 static void
 ReadBinaryFiles(const grid_int& Grid) {
-  FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
-  FSEEK(Fp, 0, SEEK_END);
-  i64 MetaSize = 0;
-  ReadBackwardPOD(Fp, &MetaSize);
-  FSEEK(Fp, -(MetaSize+(i64)sizeof(MetaSize)), SEEK_END);
-  bitstream Bs;
-  AllocBuf(&Bs.Stream, MetaSize);
-  fread(Bs.Stream.Data, MetaSize, 1, Fp);
-  InitRead(&Bs, Bs.Stream);
-  grid_int G = Grid;
-  for (int I = 0; I < Params.StartResolutionSplit; ++I) {
-    G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
-  }
-  Params.BlockDims3 = G.Dims3;
-  printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
-  Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
-  Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  FSEEK(Fp, 0, SEEK_SET);
-  auto Size1 = ReadVarByte(&Bs);
-  if (Size1 > 0) {
-    AllocBuf(&GlobalStream.Stream.Stream, Size1); // 1 MB
-    fread(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
-    InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
-    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
-  }
-  //auto Size2 = ReadVarByte(&Bs);
-  //if (Size2 > 0) {
-  //  AllocBuf(&GlobalStream.Coder.BitStream.Stream, Size2);
-  //  fread(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  //  GlobalStream.Coder.InitRead();
-  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
-  //}
-  FOR_EACH(S, Streams) {
-    Size1 = ReadVarByte(&Bs);
-    if (Size1 > 0) {
-      AllocBuf(&S->Stream.Stream, Size1);
-      fread(S->Stream.Stream.Data, Size1, 1, Fp);
-      InitRead(&S->Stream, S->Stream.Stream);
-      //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
-    }
-    //Size2 = ReadVarByte(&Bs);
-    //if (Size2 > 0) {
-    //  AllocBuf(&S->Coder.BitStream.Stream, Size2);
-    //  fread(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
-    //  InitRead(&S->Coder.BitStream, S->Coder.BitStream.Stream);
-    //  S->Coder.InitRead();
-    //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
-    //}
-  }
-  Dealloc(&Bs);
-  if (Fp) fclose(Fp);
   //FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
   //FSEEK(Fp, 0, SEEK_END);
-  //i64 FirstStreamSize = 0, SecondStreamSize = 0;
-  //ReadBackwardPOD(Fp, &SecondStreamSize);
-  //ReadBackwardPOD(Fp, &FirstStreamSize);
-  //AllocBuf(&BlockStream.Stream, FirstStreamSize);
-  //AllocBuf(&Coder.BitStream.Stream, SecondStreamSize);
+  //i64 MetaSize = 0;
+  //ReadBackwardPOD(Fp, &MetaSize);
+  //FSEEK(Fp, -(MetaSize+(i64)sizeof(MetaSize)), SEEK_END);
+  //bitstream Bs;
+  //AllocBuf(&Bs.Stream, MetaSize);
+  //fread(Bs.Stream.Data, MetaSize, 1, Fp);
+  //InitRead(&Bs, Bs.Stream);
+  //grid_int G = Grid;
+  //for (int I = 0; I < Params.StartResolutionSplit; ++I) {
+  //  G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
+  //}
+  //Params.BlockDims3 = G.Dims3;
+  //printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
+  //Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
+  //Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   //FSEEK(Fp, 0, SEEK_SET);
-  //fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  //fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+  //auto Size1 = ReadVarByte(&Bs);
+  //if (Size1 > 0) {
+  //  AllocBuf(&GlobalStream.Stream.Stream, Size1); // 1 MB
+  //  fread(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
+  //  InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
+  //  //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
+  //}
+  ////auto Size2 = ReadVarByte(&Bs);
+  ////if (Size2 > 0) {
+  ////  AllocBuf(&GlobalStream.Coder.BitStream.Stream, Size2);
+  ////  fread(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  ////  GlobalStream.Coder.InitRead();
+  ////  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
+  ////}
+  //FOR_EACH(S, Streams) {
+  //  Size1 = ReadVarByte(&Bs);
+  //  if (Size1 > 0) {
+  //    AllocBuf(&S->Stream.Stream, Size1);
+  //    fread(S->Stream.Stream.Data, Size1, 1, Fp);
+  //    InitRead(&S->Stream, S->Stream.Stream);
+  //    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
+  //  }
+  //  //Size2 = ReadVarByte(&Bs);
+  //  //if (Size2 > 0) {
+  //  //  AllocBuf(&S->Coder.BitStream.Stream, Size2);
+  //  //  fread(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  //  //  InitRead(&S->Coder.BitStream, S->Coder.BitStream.Stream);
+  //  //  S->Coder.InitRead();
+  //  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
+  //  //}
+  //}
+  //Dealloc(&Bs);
   //if (Fp) fclose(Fp);
-  //Coder.InitRead();
-  //InitRead(&BlockStream, BlockStream.Stream);
+
+  FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
+  FSEEK(Fp, 0, SEEK_END);
+  i64 FirstStreamSize = 0, SecondStreamSize = 0;
+  ReadBackwardPOD(Fp, &SecondStreamSize);
+  ReadBackwardPOD(Fp, &FirstStreamSize);
+  AllocBuf(&BlockStream.Stream, FirstStreamSize);
+  AllocBuf(&Coder.BitStream.Stream, SecondStreamSize);
+  FSEEK(Fp, 0, SEEK_SET);
+  fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+  if (SecondStreamSize > 0) {
+    fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+    Coder.InitRead();
+  }
+  if (Fp) fclose(Fp);
+  InitRead(&BlockStream, BlockStream.Stream);
   //i64 N = ReadVarByte(&BlockStream);
 }
 
@@ -6398,8 +6391,8 @@ START:
     //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
     //}
     //fclose(Ff);
-    //TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
-    //auto TreePtrBackup = TreePtr;
+    TreePtr = new tree[Params.NParticles * 10]; // TODO: avoid this
+    auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
     tree* MyNode = nullptr;
     //MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
@@ -6416,9 +6409,9 @@ START:
     } else if (OptExists(Argc, Argv, "--bfs")) {
       DecodeTreeIntBFS(Q);
     } else {
-      DecodeTreeIntDFS(0, N, Grid, Split, 0, 0);
+      DecodeTreeIntDFS(nullptr, 0, N, Grid, Split, 0, 0);
     }
-    //delete[] TreePtrBackup;
+    delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
