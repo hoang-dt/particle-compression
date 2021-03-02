@@ -3882,7 +3882,19 @@ GetScore(const grid_int& Grid, i64 N) {
 
 using stack = std::vector<q_item_int>;
 struct heap_priority {
-  f32 Error = 0;
+  //f32 Error = 0;
+  i8 Level = 0;
+  i64 NParticles = 0; // num particles left so far on the current level
+  i64 TotalNParticlesOnLevel = 0; // total of particles on the current level
+  i64 TotalNParticles = 0; // total of particles on the current level
+  i64 ParticleCount = 0; // number of particles read so far
+  INLINE bool operator<(const heap_priority& Other) const { 
+    if (Level < Other.Level)
+      return true;
+    return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
+    //return (NParticles) < (Other.NParticles);
+    //return f64(ParticleCount)/f64(TotalNParticles) > f64(Other.ParticleCount)/f64(TotalNParticles);
+  };
 };
 struct heap_data {
   i64 BlockId = 0;
@@ -3968,21 +3980,51 @@ BuildIntAdaptiveDFSPhase(
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
-  if (Begin+1 <= Mid) {
-    split_type NextSplit = 
-      ((Depth+1==Params.StartResolutionSplit) ||
-       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
-      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
+  if (Split == ResolutionSplit) {
+    if (Begin+1 <= Mid) {
+      split_type NextSplit = (ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
       BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
-  }
-  if (Mid+1 <= End) {
-    split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
+    }
+    if (Mid+1 <= End) {
+      split_type NextSplit = SpatialSplit;
       BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+    }
+  } else if (Split == SpatialSplit) {
+    if (Mid-Begin <= End-Mid) {
+      if (Begin+1 <= Mid) {
+        split_type NextSplit = 
+          ((Depth+1==Params.StartResolutionSplit) ||
+           (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+        if (Split == SpatialSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+        else if (Split == ResolutionSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      }
+      if (Mid+1 <= End) {
+        split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+        if (Split == SpatialSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+        else if (Split == ResolutionSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+      }
+    } else {
+      if (Mid+1 <= End) {
+        split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+        if (Split == SpatialSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
+        else if (Split == ResolutionSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+      }
+      if (Begin+1 <= Mid) {
+        split_type NextSplit = 
+          ((Depth+1==Params.StartResolutionSplit) ||
+           (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+        if (Split == SpatialSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
+        else if (Split == ResolutionSplit)
+          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      }
+    }
   }
 }
 
@@ -4023,13 +4065,13 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       P = CellCountLeft - P;
     }
     auto Stream = GetStream(Q.Grid);
-    GrowIfTooFull(&Stream->Stream);
-    GrowIfTooFull(&Stream->Coder.BitStream);
 #if defined(FORCE_BINOMIAL)
       f64 Mean = f64(N) / 2; // mean
       f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+      GrowIfTooFull(&Stream->Coder.BitStream);
       EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream->Stream, &Stream->Coder);
 #else
+      GrowIfTooFull(&Stream->Stream);
       EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
@@ -4724,7 +4766,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 }
 
 static void
-DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, f64>& Heap, std::vector<stack>& Stacks) {
+DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, heap_priority>& Heap, std::vector<stack>& Stacks) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   while (!Queue.empty()) {
     auto Q = Queue.front();
@@ -4816,7 +4858,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f64)GetScore(Next.Grid, Mid-Q.Begin));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]},
+          heap_priority{.Level=100, .NParticles=Next.End-Next.Begin, .TotalNParticlesOnLevel=Next.End-Next.Begin, .TotalNParticles=Next.End-Next.Begin, .ParticleCount=0});
         ++BlockCount;
       }
     }
@@ -4875,7 +4918,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         Stacks[BlockIdx].push_back(Next);
-        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]}, (f64)GetScore(Next.Grid, Q.End-Mid));
+        Heap.insert(heap_data{.BlockId=BlockIdx, .Stream=&Streams[BlockIdx], .Stack=&Stacks[BlockIdx]},
+          heap_priority{.Level=100, .NParticles=Next.End-Next.Begin, .TotalNParticlesOnLevel=Next.End-Next.Begin, .TotalNParticles=Next.End-Next.Begin, .ParticleCount=0});
         ++BlockCount;
       }
     }
@@ -4884,14 +4928,19 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, DynamicHeap<heap_data, 
 
 // TODO: try using bit budget to stop the loop instead of particle count
 static int
-DecodeIntAdaptiveDFSPhase(heap_data& Top) {
-  auto Stack = Top.Stack;
+DecodeIntAdaptiveDFSPhase(heap_data& TopData, heap_priority& TopPriority) {
+  auto Stack = TopData.Stack;
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
   auto BitCountBackup = BitCount;
   while (InTheCut && !Stack->empty() && /*BitCount-BitCountBackup<1000*/PCount<1) {
     auto Q = Stack->back();
     Stack->pop_back();
+    if (Q.ResLvl != TopPriority.Level) { // TODO: move the update out of the loop
+      TopPriority.Level = Q.ResLvl;
+      TopPriority.NParticles = Q.End - Q.Begin;
+      TopPriority.TotalNParticlesOnLevel = Q.End - Q.Begin;
+    }
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
@@ -4934,6 +4983,7 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
       ++NParticlesGenerated;
       ++NParticlesDecoded;
       ++PCount;
+      --TopPriority.NParticles;
       continue;
     } 
 
@@ -4965,31 +5015,89 @@ DecodeIntAdaptiveDFSPhase(heap_data& Top) {
 
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
     InTheCut = BitCount < Params.DecodeBudget*8;
-    if (InTheCut && Mid+1<=Q.End) {
-      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-      q_item_int Next {
-        .Begin = Mid,
-        .End = Q.End,
-        .Grid = GridRight,
-        .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
-        .Depth = Q.Depth+1,
-        .Split = NextSplit
-      };
-      Stack->push_back(Next);
-    }
-    if (InTheCut && Q.Begin+1<=Mid) {
-      split_type NextSplit = 
-        ((Q.Depth+1==Params.StartResolutionSplit) ||
-         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-      q_item_int Next {
-        .Begin = Q.Begin,
-        .End = Mid,
-        .Grid = GridLeft,
-        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-        .Depth = Q.Depth+1,
-        .Split = NextSplit
-      };
-      Stack->push_back(Next);
+    if (Q.Split == ResolutionSplit) {
+      if (InTheCut && Mid+1<=Q.End) {
+        split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+        q_item_int Next {
+          .Begin = Mid,
+          .End = Q.End,
+          .Grid = GridRight,
+          .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
+          .Depth = Q.Depth+1,
+          .Split = NextSplit
+        };
+        Stack->push_back(Next);
+      }
+      if (InTheCut && Q.Begin+1<=Mid) {
+        split_type NextSplit = 
+          ((Q.Depth+1==Params.StartResolutionSplit) ||
+           (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+        q_item_int Next {
+          .Begin = Q.Begin,
+          .End = Mid,
+          .Grid = GridLeft,
+          .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+          .Depth = Q.Depth+1,
+          .Split = NextSplit
+        };
+        Stack->push_back(Next);
+      }
+    } else if (Q.Split == SpatialSplit) {
+      if (Mid-Q.Begin <= Q.End-Mid) {
+        if (InTheCut && Mid+1<=Q.End) {
+          split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+          q_item_int Next {
+            .Begin = Mid,
+            .End = Q.End,
+            .Grid = GridRight,
+            .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
+            .Depth = Q.Depth+1,
+            .Split = NextSplit
+          };
+          Stack->push_back(Next);
+        }
+        if (InTheCut && Q.Begin+1<=Mid) {
+          split_type NextSplit = 
+            ((Q.Depth+1==Params.StartResolutionSplit) ||
+             (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+          q_item_int Next {
+            .Begin = Q.Begin,
+            .End = Mid,
+            .Grid = GridLeft,
+            .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+            .Depth = Q.Depth+1,
+            .Split = NextSplit
+          };
+          Stack->push_back(Next);
+        }
+      } else {
+        if (InTheCut && Q.Begin+1<=Mid) {
+          split_type NextSplit = 
+            ((Q.Depth+1==Params.StartResolutionSplit) ||
+             (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+          q_item_int Next {
+            .Begin = Q.Begin,
+            .End = Mid,
+            .Grid = GridLeft,
+            .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+            .Depth = Q.Depth+1,
+            .Split = NextSplit
+          };
+          Stack->push_back(Next);
+        }
+        if (InTheCut && Mid+1<=Q.End) {
+          split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+          q_item_int Next {
+            .Begin = Mid,
+            .End = Q.End,
+            .Grid = GridRight,
+            .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
+            .Depth = Q.Depth+1,
+            .Split = NextSplit
+          };
+          Stack->push_back(Next);
+        }
+      }
     }
   }
   return PCount;
@@ -5003,7 +5111,7 @@ DecodeIntAdaptive(q_item_int Q) {
   printf("------Adaptive decoder------\n");
   // TODO: resize the Stacks to the number of blocks
   std::queue<q_item_int> Queue;
-  DynamicHeap<heap_data, f64> Heap;
+  DynamicHeap<heap_data, heap_priority> Heap;
   std::vector<stack> Stacks; // one stack for each block
   Stacks.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   Queue.push(Q);
@@ -5014,13 +5122,13 @@ DecodeIntAdaptive(q_item_int Q) {
   int Iter = 0;
   std::vector<i64> BlockCount(Stacks.size(), 0);
   while (InTheCut && !Heap.empty()) {
-    heap_data Top;
-    f64 TopScore;
-    Heap.top(Top, TopScore);
-    ++BlockCount[Top.BlockId];
+    heap_data TopData;
+    heap_priority TopPriority;
+    Heap.top(TopData, TopPriority);
+    ++BlockCount[TopData.BlockId];
     //Heap.pop();
-    auto PCount = DecodeIntAdaptiveDFSPhase(Top);
-    const auto& Stack = *(Top.Stack);
+    auto PCount = DecodeIntAdaptiveDFSPhase(TopData, TopPriority);
+    const auto& Stack = *(TopData.Stack);
     if (!Stack.empty()) {
       //f64 Score = 0;
       //for (int I = 0; I < Stack.size(); ++I) {
@@ -5029,7 +5137,8 @@ DecodeIntAdaptive(q_item_int Q) {
       //}
       ////Score /= Stack.size();
       //Heap.update(Top, Score);
-      Heap.update(Top, TopScore-PCount);
+      //Heap.update(TopData, TopScore-PCount);
+      Heap.update(TopData, TopPriority);
     } else {
       //Heap.erase(Top);
       Heap.pop();
@@ -6031,16 +6140,16 @@ AllocateMemoryForBlocks(const grid_int& Grid) {
   Params.BlockDims3 = G.Dims3;
   Params.NBlocks3 = Params.Dims3 / Params.BlockDims3;
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
-  //Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  //FOR_EACH(S, Streams) {
-  //  InitWrite(&S->Stream, 1 << 20); // 1 MB
-  //  S->Coder.InitWrite(1 << 20);
-  //}
-  //InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
-  //GlobalStream.Coder.InitWrite(1 << 20);
+  Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
+  FOR_EACH(S, Streams) {
+    InitWrite(&S->Stream, 1 << 20); // 1 MB
+    //S->Coder.InitWrite(1 << 20);
+  }
+  InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
+  GlobalStream.Coder.InitWrite(1 << 20);
 
-  InitWrite(&BlockStream, 900 << 20); // 900 MB
-  Coder.InitWrite(900 << 20);
+  //InitWrite(&BlockStream, 900 << 20); // 900 MB
+  //Coder.InitWrite(900 << 20);
 }
 
 static void
@@ -6061,135 +6170,135 @@ HandleOptions(int Argc, cstr* Argv) {
 
 static std::tuple<i64, i64>
 WriteBinaryFiles() {
-  //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  //i64 StreamSize = 0;
-  //bitstream Bs;
-  //InitWrite(&Bs, 10 << 20);
-  //Flush(&GlobalStream.Stream);
-  //GlobalStream.Coder.EncodeFinalize();
-  //auto Size1 = Size(GlobalStream.Stream);
-  ////auto Size2 = Size(GlobalStream.Coder.BitStream);
-  //WriteVarByte(&Bs, Size1);
-  ////WriteVarByte(&Bs, Size2);
-  ////StreamSize += Size1 + Size2;
-  //StreamSize = Size1;
-  //if (Size1 > 0) {
-  //  fwrite(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
-  //  //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
-  //}
-  ////if (Size2 > 0) {
-  ////  fwrite(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  ////  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
-  ////}
-  //FOR_EACH(S, Streams) {
-  //  Flush(&S->Stream);
-  //  //S->Coder.EncodeFinalize();
-  //  Size1 = Size(S->Stream);
-  //  if (Size1 > 0) {
-  //    fwrite(S->Stream.Stream.Data, Size1, 1, Fp);
-  //    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
-  //  }
-  //  //Size2 = Size(S->Coder.BitStream);
-  //  //if (Size2 > 0) {
-  //  //  fwrite(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  //  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
-  //  //}
-  //  //StreamSize += Size1 + Size2;
-  //  StreamSize += Size1;
-  //  GrowToAccomodate(&Bs, 8);
-  //  WriteVarByte(&Bs, Size1);
-  //  //WriteVarByte(&Bs, Size2);
-  //}
-  //Flush(&Bs);
-  //fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
-  //i64 MetaSize = Size(Bs);
-  //fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
-  //fclose(Fp);
-  //Dealloc(&Bs);
-  //return {StreamSize, MetaSize};
-
-  i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
   FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  i64 FirstStreamSize = Size(BlockStream);
-  i64 SecondStreamSize = Size(Coder.BitStream);
-  fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  if (SecondStreamSize > 0)
-    fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-  fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
-  fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+  i64 StreamSize = 0;
+  bitstream Bs;
+  InitWrite(&Bs, 10 << 20);
+  Flush(&GlobalStream.Stream);
+  GlobalStream.Coder.EncodeFinalize();
+  auto Size1 = Size(GlobalStream.Stream);
+  //auto Size2 = Size(GlobalStream.Coder.BitStream);
+  WriteVarByte(&Bs, Size1);
+  //WriteVarByte(&Bs, Size2);
+  //StreamSize += Size1 + Size2;
+  StreamSize = Size1;
+  if (Size1 > 0) {
+    fwrite(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
+    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
+  }
+  //if (Size2 > 0) {
+  //  fwrite(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
+  //}
+  FOR_EACH(S, Streams) {
+    Flush(&S->Stream);
+    //S->Coder.EncodeFinalize();
+    Size1 = Size(S->Stream);
+    if (Size1 > 0) {
+      fwrite(S->Stream.Stream.Data, Size1, 1, Fp);
+      //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
+    }
+    //Size2 = Size(S->Coder.BitStream);
+    //if (Size2 > 0) {
+    //  fwrite(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
+    //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
+    //}
+    //StreamSize += Size1 + Size2;
+    StreamSize += Size1;
+    GrowToAccomodate(&Bs, 8);
+    WriteVarByte(&Bs, Size1);
+    //WriteVarByte(&Bs, Size2);
+  }
+  Flush(&Bs);
+  fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
+  i64 MetaSize = Size(Bs);
+  fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
   fclose(Fp);
-  return {BlockStreamSize, 0};
+  Dealloc(&Bs);
+  return {StreamSize, MetaSize};
+
+  //i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
+  //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+  //i64 FirstStreamSize = Size(BlockStream);
+  //i64 SecondStreamSize = Size(Coder.BitStream);
+  //fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+  //if (SecondStreamSize > 0)
+  //  fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+  //fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
+  //fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
+  //fclose(Fp);
+  //return {BlockStreamSize, 0};
 }
 
 static void
 ReadBinaryFiles(const grid_int& Grid) {
-  //FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
-  //FSEEK(Fp, 0, SEEK_END);
-  //i64 MetaSize = 0;
-  //ReadBackwardPOD(Fp, &MetaSize);
-  //FSEEK(Fp, -(MetaSize+(i64)sizeof(MetaSize)), SEEK_END);
-  //bitstream Bs;
-  //AllocBuf(&Bs.Stream, MetaSize);
-  //fread(Bs.Stream.Data, MetaSize, 1, Fp);
-  //InitRead(&Bs, Bs.Stream);
-  //grid_int G = Grid;
-  //for (int I = 0; I < Params.StartResolutionSplit; ++I) {
-  //  G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
-  //}
-  //Params.BlockDims3 = G.Dims3;
-  //printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
-  //Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
-  //Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  //FSEEK(Fp, 0, SEEK_SET);
-  //auto Size1 = ReadVarByte(&Bs);
-  //if (Size1 > 0) {
-  //  AllocBuf(&GlobalStream.Stream.Stream, Size1); // 1 MB
-  //  fread(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
-  //  InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
-  //  //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
-  //}
-  ////auto Size2 = ReadVarByte(&Bs);
-  ////if (Size2 > 0) {
-  ////  AllocBuf(&GlobalStream.Coder.BitStream.Stream, Size2);
-  ////  fread(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  ////  GlobalStream.Coder.InitRead();
-  ////  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
-  ////}
-  //FOR_EACH(S, Streams) {
-  //  Size1 = ReadVarByte(&Bs);
-  //  if (Size1 > 0) {
-  //    AllocBuf(&S->Stream.Stream, Size1);
-  //    fread(S->Stream.Stream.Data, Size1, 1, Fp);
-  //    InitRead(&S->Stream, S->Stream.Stream);
-  //    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
-  //  }
-  //  //Size2 = ReadVarByte(&Bs);
-  //  //if (Size2 > 0) {
-  //  //  AllocBuf(&S->Coder.BitStream.Stream, Size2);
-  //  //  fread(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
-  //  //  InitRead(&S->Coder.BitStream, S->Coder.BitStream.Stream);
-  //  //  S->Coder.InitRead();
-  //  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
-  //  //}
-  //}
-  //Dealloc(&Bs);
-  //if (Fp) fclose(Fp);
-
   FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
   FSEEK(Fp, 0, SEEK_END);
-  i64 FirstStreamSize = 0, SecondStreamSize = 0;
-  ReadBackwardPOD(Fp, &SecondStreamSize);
-  ReadBackwardPOD(Fp, &FirstStreamSize);
-  AllocBuf(&BlockStream.Stream, FirstStreamSize);
-  AllocBuf(&Coder.BitStream.Stream, SecondStreamSize);
-  FSEEK(Fp, 0, SEEK_SET);
-  fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  if (SecondStreamSize > 0) {
-    fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-    Coder.InitRead();
+  i64 MetaSize = 0;
+  ReadBackwardPOD(Fp, &MetaSize);
+  FSEEK(Fp, -(MetaSize+(i64)sizeof(MetaSize)), SEEK_END);
+  bitstream Bs;
+  AllocBuf(&Bs.Stream, MetaSize);
+  fread(Bs.Stream.Data, MetaSize, 1, Fp);
+  InitRead(&Bs, Bs.Stream);
+  grid_int G = Grid;
+  for (int I = 0; I < Params.StartResolutionSplit; ++I) {
+    G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
   }
+  Params.BlockDims3 = G.Dims3;
+  printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
+  Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
+  Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
+  FSEEK(Fp, 0, SEEK_SET);
+  auto Size1 = ReadVarByte(&Bs);
+  if (Size1 > 0) {
+    AllocBuf(&GlobalStream.Stream.Stream, Size1); // 1 MB
+    fread(GlobalStream.Stream.Stream.Data, Size1, 1, Fp);
+    InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
+    //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(GlobalStream.Stream.Stream.Data));
+  }
+  //auto Size2 = ReadVarByte(&Bs);
+  //if (Size2 > 0) {
+  //  AllocBuf(&GlobalStream.Coder.BitStream.Stream, Size2);
+  //  fread(GlobalStream.Coder.BitStream.Stream.Data, Size2, 1, Fp);
+  //  GlobalStream.Coder.InitRead();
+  //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(GlobalStream.Coder.BitStream.Stream.Data));
+  //}
+  FOR_EACH(S, Streams) {
+    Size1 = ReadVarByte(&Bs);
+    if (Size1 > 0) {
+      AllocBuf(&S->Stream.Stream, Size1);
+      fread(S->Stream.Stream.Data, Size1, 1, Fp);
+      InitRead(&S->Stream, S->Stream.Stream);
+      //printf("normal  : %lld - %I64x\n", Size1, *(i64*)(S->Stream.Stream.Data));
+    }
+    //Size2 = ReadVarByte(&Bs);
+    //if (Size2 > 0) {
+    //  AllocBuf(&S->Coder.BitStream.Stream, Size2);
+    //  fread(S->Coder.BitStream.Stream.Data, Size2, 1, Fp);
+    //  InitRead(&S->Coder.BitStream, S->Coder.BitStream.Stream);
+    //  S->Coder.InitRead();
+    //  //printf("binomial: %lld - %I64x\n", Size2, *(i64*)(S->Coder.BitStream.Stream.Data));
+    //}
+  }
+  Dealloc(&Bs);
   if (Fp) fclose(Fp);
-  InitRead(&BlockStream, BlockStream.Stream);
+
+  //FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
+  //FSEEK(Fp, 0, SEEK_END);
+  //i64 FirstStreamSize = 0, SecondStreamSize = 0;
+  //ReadBackwardPOD(Fp, &SecondStreamSize);
+  //ReadBackwardPOD(Fp, &FirstStreamSize);
+  //AllocBuf(&BlockStream.Stream, FirstStreamSize);
+  //AllocBuf(&Coder.BitStream.Stream, SecondStreamSize);
+  //FSEEK(Fp, 0, SEEK_SET);
+  //fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
+  //if (SecondStreamSize > 0) {
+  //  fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
+  //  Coder.InitRead();
+  //}
+  //if (Fp) fclose(Fp);
+  //InitRead(&BlockStream, BlockStream.Stream);
   //i64 N = ReadVarByte(&BlockStream);
 }
 
