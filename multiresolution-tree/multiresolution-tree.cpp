@@ -4080,6 +4080,8 @@ BuildTreeBFS(q_item_int Q, std::vector<particle_int>& Particles) {
   }
 }
 
+static double BitCount[64] = {}; // count the code size per level
+
 static tree*
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
@@ -4115,6 +4117,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   //}
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+  BitCount[Depth] += 2; // one bit for the left and one bit for the right
   tree* Left = nullptr;
   if (Begin+1==Mid && CellCountLeft==1) {
     bbox_int BBox;
@@ -4244,6 +4247,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 //  }
 //  return N;
 //}
+
 
 static i64
 DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
@@ -5056,6 +5060,10 @@ START:
       bool Bfs = OptExists(Argc, Argv, "--bfs");
       if (!Bfs) {
         BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+        for (int I = 0; I <= Params.MaxDepth; ++I) {
+          printf("%f\n", BitCount[I]/8);
+        }
+        printf("-----------------------------\n");
       } else {
         q_item_int Q {
           .Begin = 0,
