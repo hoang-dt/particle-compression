@@ -2627,8 +2627,8 @@ WriteXYZ(cstr FileName, t Begin, t End) {
   }
   fclose(Fp);
 }
-template <typename t> inline void
-WriteXYZ(cstr FileName, t Begin, t End, vec3i Min3, vec3f Scale3) {
+template <typename t, typename u> inline void
+WriteXYZ(cstr FileName, t Begin, t End, u Min3, vec3f Scale3) {
   FILE* Fp = fopen(FileName, "w");
   auto NParticles = End - Begin;
   fprintf(Fp, "%zu\n", NParticles);
@@ -2646,8 +2646,6 @@ WriteXYZInt(cstr FileName, t Begin, t End) {
   fprintf(Fp, "%zu\n", NParticles);
   fprintf(Fp, "dummy\n");
   FOR_EACH (P3, Begin, End) {
-    if (P3->Pos.x > 10000)
-      int Stop = 0;
     fprintf(Fp, "C %d %d %d\n", P3->Pos.x, P3->Pos.y, P3->Pos.z);
   }
   fclose(Fp);
