@@ -3884,17 +3884,18 @@ using stack = std::vector<q_item_int>;
 struct heap_priority {
   //f32 Error = 0;
   i8 Level = 0;
-  i64 NParticles = 0; // num particles left so far on the current level
-  i64 TotalNParticlesOnLevel = 0; // total of particles on the current level
-  i64 TotalNParticles = 0; // total of particles on the current level
-  i64 ParticleCount = 0; // number of particles read so far
-  i64 BlockId = 0;
+  i32 NParticles = 0; // num particles left so far on the current level
+  i32 TotalNParticlesOnLevel = 0; // total of particles on the current level
+  //i64 TotalNParticles = 0; // total of particles on the current level
+  //i64 ParticleCount = 0; // number of particles read so far
+  //i64 BlockId = 0;
   stream* Stream = nullptr;
   stack* Stack = nullptr;
   INLINE bool operator<(const heap_priority& Other) const { 
     if (Level == Other.Level) {
       if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
-        return BlockId < Other.BlockId;
+      //if (NParticles == Other.NParticles) {
+        return Stream < Other.Stream;
       }
       return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
       //return (NParticles) < (Other.NParticles);
@@ -4868,11 +4869,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         Heap.push(
           heap_priority{
             .Level=100, 
-            .NParticles=Next.End-Next.Begin, 
-            .TotalNParticlesOnLevel=Next.End-Next.Begin, 
-            .TotalNParticles=Next.End-Next.Begin, 
-            .ParticleCount=0,
-            .BlockId=BlockIdx,
+            .NParticles=i32(Next.End-Next.Begin),
+            .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
             .Stream=&Streams[BlockIdx],
             .Stack=&Stacks[BlockIdx]});
         ++BlockCount;
@@ -4935,11 +4933,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         Stacks[BlockIdx].push_back(Next);
         Heap.push(heap_priority{
             .Level=100, 
-            .NParticles=Next.End-Next.Begin, 
-            .TotalNParticlesOnLevel=Next.End-Next.Begin, 
-            .TotalNParticles=Next.End-Next.Begin, 
-            .ParticleCount=0,
-            .BlockId=BlockIdx,
+            .NParticles=i32(Next.End-Next.Begin), 
+            .TotalNParticlesOnLevel=i32(Next.End-Next.Begin), 
             .Stream=&Streams[BlockIdx],
             .Stack=&Stacks[BlockIdx]});
         ++BlockCount;
@@ -5144,37 +5139,18 @@ DecodeIntAdaptive(q_item_int Q) {
   DecodeIntAdaptiveBFSPhase(Queue, Heap, Stacks);
   /*-------------------- DFS phase ---------------------- */
   bool InTheCut = BitCount < Params.DecodeBudget*8;
-  int Iter = 0;
   std::vector<i64> BlockCount(Stacks.size(), 0);
   while (InTheCut && !Heap.empty()) {
     heap_priority TopPriority = Heap.top();
-    ++BlockCount[TopPriority.BlockId];
+    //++BlockCount[TopPriority.BlockId];
     Heap.pop();
     auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
     const auto& Stack = *(TopPriority.Stack);
     if (!Stack.empty()) {
-      //f64 Score = 0;
-      //for (int I = 0; I < Stack.size(); ++I) {
-      //  Score = std::max(GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin), Score);
-      //  //Score += GetScore(Stack[I].Grid, Stack[I].End-Stack[I].Begin);
-      //}
-      ////Score /= Stack.size();
-      //Heap.update(Top, Score);
-      //Heap.update(TopData, TopScore-PCount);
-      if (TopPriority.Level == 19 && TopPriority.NParticles==0)
-        int Stop = 0;
       Heap.push(TopPriority);
     }
     InTheCut = BitCount < Params.DecodeBudget*8;
-    ++Iter;
   }
-  //FOR_EACH(St, Stacks) {
-  //  FOR_EACH(S, *St) {
-  //    if (S->End-S->Begin<1000)
-  //      GenerateParticlesPerNode(S->End-S->Begin, S->Grid, &OutputParticles);
-  //  }
-  //}
-  int Stop = 0;
 }
 
 static i64
