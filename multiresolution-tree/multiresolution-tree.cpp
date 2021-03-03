@@ -4971,8 +4971,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     Stack->pop_back();
     if (Q.ResLvl != TopPriority.Level) { // TODO: move the update out of the loop
       TopPriority.Level = Q.ResLvl;
-      TopPriority.NParticles = Q.End - Q.Begin;
-      TopPriority.TotalNParticlesOnLevel = Q.End - Q.Begin;
+      TopPriority.NParticles = i32(Q.End - Q.Begin);
+      TopPriority.TotalNParticlesOnLevel = i32(Q.End - Q.Begin);
     }
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     i64 N = Q.End - Q.Begin;
@@ -4981,7 +4981,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     auto Stream = GetStream(Q.Grid);
     auto RefStream = GetRefinementStream(Q.Grid);
     auto BlockIdx = GetBlockIndex(Q.Grid.From3);
-    assert(BlockIdx == TopPriority.BlockId);
+    //assert(BlockIdx == TopPriority.BlockId);
     if (N==1 && CellCount==1) {
       auto G = Q.Grid;
       bbox_int BBox;
@@ -6195,7 +6195,7 @@ WriteBinaryFiles() {
   bitstream Bs;
   InitWrite(&Bs, 10 << 20);
   Flush(&GlobalStream.Stream);
-  GlobalStream.Coder.EncodeFinalize();
+  //GlobalStream.Coder.EncodeFinalize();
   auto ByteCount = Size(GlobalStream.Stream);
   WriteVarByte(&Bs, ByteCount);
   StreamSize = ByteCount;
