@@ -4985,20 +4985,6 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     if (N==1 && CellCount==1) {
       auto G = Q.Grid;
       bbox_int BBox;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          if (BitCount < Params.DecodeBudget*8) {
-            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-            bool Left = Read(&Stream->Stream);
-            if (Left) G = G1; else G = G2;
-            ++BitCount;
-          } else {
-            InTheCut = false;
-            goto GENERATE_PARTICLE; 
-          }
-        }
-      }
       // here G.Dims3==1 and G.Stride3==1
       BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
       BBox.Max = BBox.Min + Params.W3 - 1;
@@ -5016,7 +5002,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         }
       }
     GENERATE_PARTICLE:
-      GenerateParticlesPerNode(1, G, &OutputParticles);
+      //GenerateParticlesPerNode(1, G, &OutputParticles);
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       ++NParticlesGenerated;
       ++NParticlesDecoded;
       ++PCount;
