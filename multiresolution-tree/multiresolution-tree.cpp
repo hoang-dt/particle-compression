@@ -4892,7 +4892,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
   auto BitCountBackup = BitCount;
-  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<64) {
+  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<512) {
     auto Q = Stack->back();
     Stack->pop_back();
     auto Stream = GetStream(Q.Grid);
@@ -5063,6 +5063,7 @@ DecodeIntAdaptive(q_item_int Q) {
   /*-------------------- DFS phase ---------------------- */
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   std::vector<i64> BlockCount(Stacks.size(), 0);
+  // TODO: we need to prioritize blocks where particles are less refined
   while (InTheCut && !Heap.empty()) {
     heap_priority TopPriority = Heap.top();
     auto& Block = OutputBlocks[TopPriority.BlockId];
@@ -5086,6 +5087,7 @@ DecodeIntAdaptive(q_item_int Q) {
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
       if (Block.NParticlesDecoded == Block.NParticles) {
         Heap.pop();
+        // TODO: debug here to see if we pop everything at the end (where all bits are used)
       }
     } else { // still in the DFS phase, not refinement
       Heap.pop();
