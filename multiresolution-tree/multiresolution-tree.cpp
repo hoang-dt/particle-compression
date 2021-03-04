@@ -5104,7 +5104,6 @@ DecodeIntAdaptive(q_item_int Q) {
       OutputParticles.push_back(particle_int{.Pos=(BB->Max+BB->Min)/2});
     }
     NParticlesDecoded += B->BBoxes.size();
-    NParticlesDecoded += B->BBoxes.size();
   }
 }
 
