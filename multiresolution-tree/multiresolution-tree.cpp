@@ -16,6 +16,12 @@
 #include <algorithm>
 
 static std::vector<particle_int> OutputParticles;
+struct block_info {
+  i32 NParticles = 0;
+  i32 NParticlesDecoded = 0;
+  std::vector<bbox_int> BBoxes;
+};
+static std::vector<block_info> OutputBlocks;
 
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
@@ -3936,30 +3942,46 @@ BuildIntAdaptiveDFSPhase(
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   auto Stream = GetStream(Grid);
   if (N==1 && CellCount==1) {
-    GrowIfTooFull(&Stream->Stream);
     auto G = Grid;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (G.Dims3[DD] > 1) {
-        auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-        auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-        i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
-        bool Left = Particles[Begin].Pos[DD] < M;
-        if (Left) G = G1; else G = G2;
-        Write(&Stream->Stream, Left);
-      }
-    }
-    /* here G.Dims3==1 and G.Stride3==1 */
     auto RefStream = GetRefinementStream(Grid);
     GrowIfTooFull(&RefStream->Stream);
+    auto BlockIdx = GetBlockIndex(Grid.From3);
+    auto& Block = OutputBlocks[BlockIdx];
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&RefStream->Stream, Left);
+    vec3i W3 = BBox.Max - BBox.Min;
+    i8 DD = 0;
+    if (W3.y>W3.x && W3.y>W3.z) { DD = 1; }
+    else if (W3.z>W3.x && W3.z>W3.y) { DD = 2; }
+    if (BBox.Max[DD] > BBox.Min[DD]) {
+      i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+      bool Left = Particles[Begin].Pos[DD] <= M;
+      if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+      Write(&RefStream->Stream, Left);
+    }
+    Block.BBoxes.push_back(BBox);
+    // check if all particles have been seen
+    if (Block.BBoxes.size() == Block.NParticles) { // now encode the rest of the refinement bits
+      i32 NParticlesEncoded = 0;
+      while (NParticlesEncoded < Block.NParticles) {
+        W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
+        i8 DD = 0;
+        if (W3.y > W3[DD]) DD = 1;
+        if (W3.z > W3[DD]) DD = 2;
+        if (W3[DD] > 0) {
+          FOR_EACH(B, Block.BBoxes) {
+            i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+            bool Left = Particles[Begin].Pos[DD] <= M;
+            if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
+            Write(&RefStream->Stream, Left);
+            if (B->Min == B->Max) {
+              ++NParticlesEncoded;
+            }
+          }
+        } else {
+          NParticlesEncoded = Block.NParticles;
+        }
       }
     }
     return;
@@ -4100,28 +4122,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
-      auto G = GridLeft;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
-          bool Left = Particles[Q.Begin].Pos[DD] < M;
-          if (Left) G = G1; else G = G2;
-          Write(&Stream->Stream, Left);
-        }
-      }
-      bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
-          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-          bool Left = Particles[Q.Begin].Pos[DD] <= M;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-          Write(&Stream->Stream, Left);
-        }
-      }
+      REQUIRE(false);
     } else if (Q.Begin < Mid) {
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
@@ -4134,38 +4135,21 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
         .Depth = i8(Q.Depth+1),
         .Split = NextSplit
       };
-      if (Q.Depth+1 < Params.StartResolutionSplit) {
+      if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        auto BlockIdx = GetBlockIndex(Next.Grid.From3);
+        auto& Block = OutputBlocks[BlockIdx];
+        Block.NParticles = i32(Next.End - Next.Begin);
+        Block.BBoxes.reserve(Block.NParticles);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
         ++BlockCount;
       }
     }
 
     if (Mid+1==Q.End && CellCountRight==1) {
-      auto G = GridRight;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
-          bool Left = Particles[Mid].Pos[DD] < M;
-          if (Left) G = G1; else G = G2;
-          Write(&Stream->Stream, Left);
-        }
-      }
-      bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
-          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-          bool Left = Particles[Mid].Pos[DD] <= M;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-          Write(&Stream->Stream, Left);
-        }
-      }
+      REQUIRE(false);
     } else if (Mid < Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       q_item_int Next{
@@ -4176,10 +4160,14 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
         .Depth = i8(Q.Depth+1),
         .Split = NextSplit
       };
-      if (Q.Depth+1 < Params.StartResolutionSplit) {
+      if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
+        auto BlockIdx = GetBlockIndex(Next.Grid.From3);
+        auto& Block = OutputBlocks[BlockIdx];
+        Block.NParticles = i32(Next.End - Next.Begin);
+        Block.BBoxes.reserve(Block.NParticles);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
         ++BlockCount;
       }
@@ -4969,6 +4957,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
   while (InTheCut && !Stack->empty() && /*BitCount-BitCountBackup<1000*/PCount<1) {
     auto Q = Stack->back();
     Stack->pop_back();
+    auto Stream = GetStream(Q.Grid);
     if (Q.ResLvl != TopPriority.Level) { // TODO: move the update out of the loop
       TopPriority.Level = Q.ResLvl;
       TopPriority.NParticles = i32(Q.End - Q.Begin);
@@ -4978,43 +4967,33 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 Mid = Q.Begin;
-    auto Stream = GetStream(Q.Grid);
     auto RefStream = GetRefinementStream(Q.Grid);
     auto BlockIdx = GetBlockIndex(Q.Grid.From3);
     //assert(BlockIdx == TopPriority.BlockId);
-    if (N==1 && CellCount==1) {
+    if (N==1 && CellCount==1) {      
+      block_info& Block = OutputBlocks[BlockIdx];
       auto G = Q.Grid;
       bbox_int BBox;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          if (BitCount < Params.DecodeBudget*8) {
-            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-            bool Left = Read(&Stream->Stream);
-            if (Left) G = G1; else G = G2;
-            ++BitCount;
-          } else {
-            InTheCut = false;
-            goto GENERATE_PARTICLE; 
-          }
-        }
-      }
-      // here G.Dims3==1 and G.Stride3==1
       BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
       BBox.Max = BBox.Min + Params.W3 - 1;
+      
+      i8 DD = 0;
       for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
-          if (BitCount < Params.DecodeBudget*8)  {
-            bool Left = Read(&RefStream->Stream);
-            i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-            if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-            ++BitCount;
-          } else {
-            InTheCut = false;
-            goto GENERATE_PARTICLE;
-          }
+        if (BBox.Max[DD] > BBox.Min[DD]) { continue; };
+        if (BitCount < Params.DecodeBudget*8)  {
+          bool Left = Read(&RefStream->Stream);
+          i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          ++BitCount;
+        } else {
+          InTheCut = false;
+          goto GENERATE_PARTICLE;
         }
       }
+      if (BBox.Min == BBox.Max) {
+        ++Block.NParticlesDecoded;
+      }
+      // TODO: check if i am
     GENERATE_PARTICLE:
       GenerateParticlesPerNode(1, G, &OutputParticles);
       ++NParticlesGenerated;
@@ -5023,7 +5002,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       assert(TopPriority.NParticles > -1);
       --TopPriority.NParticles;
       continue;
-    } 
+    }
 
     InTheCut = BitCount < Params.DecodeBudget*8;
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
@@ -6157,7 +6136,8 @@ AllocateMemoryForBlocks(const grid_int& Grid) {
   Params.NBlocks3 = Params.Dims3 / Params.BlockDims3;
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  RefStreams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
+  RefStreams.resize(Streams.size());
+  OutputBlocks.resize(Streams.size());
   FOR_EACH(S, Streams) {
     InitWrite(&S->Stream, 1 << 20); // 1 MB
     //S->Coder.InitWrite(1 << 20);
@@ -6262,7 +6242,8 @@ ReadBinaryFiles(const grid_int& Grid) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
   Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  RefStreams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
+  RefStreams.resize(Streams.size());
+  OutputBlocks.resize(Streams.size());
   FSEEK(Fp, 0, SEEK_SET);
   auto ByteCount = ReadVarByte(&Bs);
   if (ByteCount > 0) {
