@@ -1353,10 +1353,13 @@ Error3(
     auto Nearest = Tree.nearest(Point);
     vec3i Q(Nearest.coords_[0], Nearest.coords_[1], Nearest.coords_[2]);
     vec3i Diff = Q - P->Pos;
-    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+    f64 D = Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+    Err += D;
   }
   int NDims = Dims3.z == 1 ? 2 : 3;
   Err = std::sqrt(Err / (NDims * Particles2.size()));
+  
+  printf("rmse = %f\n", Err);
   return Err;
 }
 
@@ -5237,7 +5240,7 @@ START:
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
+    WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
     vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
@@ -5306,13 +5309,13 @@ START:
     if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
     auto Particles1 = ReadParticlesInt(Params.InFile);
     auto Particles2 = ReadParticlesInt(Params.OutFile);
-    //f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
+    f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
     //f32 Err2 = Error3(Particles2, Particles1, Params.Dims3);
-    //printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
-    if (!CheckSame(Particles1, Particles2))
-      printf("not same\n");
-    else
-      printf("same\n");
+    printf("error = %f \n", Err1);
+    //if (!CheckSame(Particles1, Particles2))
+    //  printf("not same\n");
+    //else
+    //  printf("same\n");
   //================= CONVERT =======================
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
