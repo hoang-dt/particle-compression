@@ -1183,23 +1183,6 @@ BuildTreeInner(q_item Q, float Accuracy) {
   }
 }
 
-static void
-ComputeGrid(vec3i BBoxExt3, str DimsStr)
-{
-  i8 Depth = 0;
-  i8 D = 0;
-  while (BBoxExt3.x > 1 || BBoxExt3.y > 1 || BBoxExt3.z > 1) {
-    if (BBoxExt3.x >= BBoxExt3.y && BBoxExt3.x >= BBoxExt3.z)
-      D = 0;
-    else if (BBoxExt3.y >= BBoxExt3.z && BBoxExt3.y >= BBoxExt3.x)
-      D = 1;
-    else if (BBoxExt3.z >= BBoxExt3.y && BBoxExt3.z >= BBoxExt3.x)
-      D = 2;
-    DimsStr[Depth++] = 'x' + D; 
-    BBoxExt3[D] = (BBoxExt3[D] + 1) >> 1;
-  }
-}
-
 static vec3i
 ComputeGrid(
   std::vector<particle_int>* Particles, const bbox_int& BBox, 
@@ -1208,6 +1191,9 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
   i8 D = 0;
+  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+    D = 0;
+  else
   if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
     D = 1;
   else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
@@ -1225,40 +1211,6 @@ ComputeGrid(
   }
   if (Mid+1 < End) {
     LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
-    ++LogDims3Right[D];
-  }
-  return max(LogDims3Left, LogDims3Right);
-}
-
-/* Return the dimensions of the underlying grid (in terms of power of two) */
-static vec3i
-ComputeGrid(
-  std::vector<particle>* Particles, const bbox& BBox, 
-  i64 Begin, i64 End, i8 Depth, str DimsStr)
-{
-  REQUIRE(Begin < End); // this cannot be a leaf node
-  vec3f BBoxExt3 = Extent(BBox);
-  i8 D;
-  if (BBoxExt3.x >= BBoxExt3.y && BBoxExt3.x >= BBoxExt3.z)
-    D = 0;
-  else if (BBoxExt3.y >= BBoxExt3.z && BBoxExt3.y >= BBoxExt3.x)
-    D = 1;
-  else if (BBoxExt3.z >= BBoxExt3.y && BBoxExt3.z >= BBoxExt3.x)
-    D = 2;
-  DimsStr[Depth] = 'x' + D; 
-  f32 Middle = (BBox.Min[D] + BBox.Max[D]) * 0.5f;
-  auto Pred = [D, Middle](const particle& P) { return P.Pos[D] < Middle; };
-  i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
-  vec3i LogDims3Left  = MCOPY(vec3i(0), [D] = 1);
-  vec3i LogDims3Right = MCOPY(vec3i(0), [D] = 1);
-  if (Begin + 1 < Mid) {
-    LogDims3Left = 
-      ComputeGrid(Particles, MCOPY(BBox, .Max[D] = Middle), Begin, Mid, Depth + 1, DimsStr);
-    ++LogDims3Left[D];
-  }
-  if (Mid + 1 < End) {
-    LogDims3Right = 
-      ComputeGrid(Particles, MCOPY(BBox, .Min[D] = Middle), Mid, End, Depth + 1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -4238,7 +4190,7 @@ DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 
   if (InTheCut && Mid+1==End && CellCountRight==1) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     //BBox.Max = Params.BBoxInt.Min + (GridRight.From3+(GridRight.Dims3-1)*GridRight.Stride3+1)*Params.W3 - 1;
     //for (int DD = 0; DD < 3; ++DD) {
     //  while (BBox.Max[DD] > BBox.Min[DD]) {
@@ -4964,6 +4916,8 @@ START:
       Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
       Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+      //sprintf(Params.DimsStr, "%s", "yxyzxyzxyzxyzxyzxyzxyzxyzxy");
+      //yyxyzxyzxyzxyzxyzxyzxyzxyzx
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
       Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
