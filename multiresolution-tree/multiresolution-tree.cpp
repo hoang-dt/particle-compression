@@ -1718,7 +1718,9 @@ BuildIntAdaptiveDFSPhase(
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
   if (Begin+1 <= Mid) {
-    split_type NextSplit = (ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
+    split_type NextSplit = 
+          ((Depth+1==Params.StartResolutionSplit) ||
+           (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
   if (Mid+1 <= End) {
