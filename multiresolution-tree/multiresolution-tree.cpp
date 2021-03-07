@@ -1829,42 +1829,26 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       N = CellCount - N;
       P = CellCountLeft - P;
     }
-#if defined(BINOMIAL)
-      if (Q.Split == ResolutionSplit) {
-        f64 Mean = f64(N) / 2; // mean
-        f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-        EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
-      } else {
-        EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-      }
-#elif defined(FORCE_BINOMIAL)
-      f64 Mean = f64(N) / 2; // mean
-      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-      EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
+    auto& Stream = GlobalStream;
+#if defined(FORCE_BINOMIAL)
+    f64 Mean = f64(N) / 2; // mean
+    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
 #else
-      EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
 #endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
-      auto G = GridLeft;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
-          bool Left = Particles[Q.Begin].Pos[DD] < M;
-          if (Left) G = G1; else G = G2;
-          Write(&BlockStream, Left);
-        }
-      }
-      bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+      const auto& G = GridLeft;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+        .Max = BBox.Min + Params.W3 - 1
+      };
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           bool Left = Particles[Q.Begin].Pos[DD] <= M;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-          Write(&BlockStream, Left);
+          Write(&Stream.Stream, Left);
         }
       }
     } else if (Q.Begin < Mid) {
@@ -1882,27 +1866,17 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
     }
 
     if (Mid+1==Q.End && CellCountRight==1) {
-      auto G = GridRight;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          REQUIRE(0 > 1);
-          auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-          auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-          i32 M = Params.BBoxInt.Min[DD] + G2.From3[DD]*Params.W3[DD];
-          bool Left = Particles[Mid].Pos[DD] < M;
-          if (Left) G = G1; else G = G2;
-          Write(&BlockStream, Left);
-        }
-      }
-      bbox_int BBox;
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+      const auto& G = GridRight;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+        .Max = BBox.Min + Params.W3 - 1
+      };
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           bool Left = Particles[Mid].Pos[DD] <= M;
           if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-          Write(&BlockStream, Left);
+          Write(&Stream.Stream, Left);
         }
       }
     } else if (Mid < Q.End) {
