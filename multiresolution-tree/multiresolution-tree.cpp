@@ -3013,6 +3013,7 @@ START:
       Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
       Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+      //sprintf(Params.DimsStr, "%s", "yxyzxyzxyzxyzxyzxyzxyzxyzxy");
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
       Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
