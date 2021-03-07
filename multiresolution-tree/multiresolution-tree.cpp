@@ -1638,7 +1638,7 @@ BuildIntAdaptiveDFSPhase(
   if (N==1 && CellCount==1) {
     const auto& G = Grid;
     auto RefStream = GetRefinementStream(Grid);
-    GrowIfTooFull(&RefStream->Stream);
+    //GrowIfTooFull(&RefStream->Stream);
     auto BlockIdx = GetBlockIndex(Grid.From3);
     auto& Block = OutputBlocks[BlockIdx];
     bbox_int BBox;
@@ -1646,36 +1646,36 @@ BuildIntAdaptiveDFSPhase(
     BBox.Max = BBox.Min + Params.W3 - 1;
     vec3i W3 = BBox.Max - BBox.Min;
     i8 DD = 0;
-    if (W3.y>W3.x && W3.y>W3.z) { DD = 1; }
-    else if (W3.z>W3.x && W3.z>W3.y) { DD = 2; }
+    if (W3.y > W3[DD]) DD = 1;
+    if (W3.z > W3[DD]) DD = 2;
     if (BBox.Max[DD] > BBox.Min[DD]) {
-      i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-      bool Left = Particles[Begin].Pos[DD] <= M;
-      if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-      Write(&RefStream->Stream, Left);
+      //i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+      //bool Left = Particles[Begin].Pos[DD] <= M;
+      //if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+      //Write(&RefStream->Stream, Left);
     }
     Block.BBoxes.push_back(BBox);
     REQUIRE(Block.BBoxes.size() <= Block.NParticles);
     // check if all particles have been seen
     if (Block.BBoxes.size() == Block.NParticles) { // now encode the rest of the refinement bits
       i32 NParticlesEncoded = 0;
-      while (NParticlesEncoded < Block.NParticles) {
-        W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
-        i8 DD = 0;
-        if (W3.y > W3[DD]) DD = 1;
-        if (W3.z > W3[DD]) DD = 2;
-        if (W3[DD] > 0) {
-          FOR_EACH(B, Block.BBoxes) {
-            i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-            bool Left = Particles[Begin].Pos[DD] <= M;
-            if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
-            Write(&RefStream->Stream, Left);
-            if (B->Min == B->Max) { ++NParticlesEncoded; }
-          }
-        } else {
-          NParticlesEncoded = Block.NParticles;
-        }
-      }
+      //while (NParticlesEncoded < Block.NParticles) {
+      //  W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
+      //  i8 DD = 0;
+      //  if (W3.y > W3[DD]) DD = 1;
+      //  if (W3.z > W3[DD]) DD = 2;
+      //  if (W3[DD] > 0) {
+      //    FOR_EACH(B, Block.BBoxes) {
+      //      i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+      //      bool Left = Particles[Begin].Pos[DD] <= M;
+      //      if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
+      //      Write(&RefStream->Stream, Left);
+      //      if (B->Min == B->Max) { ++NParticlesEncoded; }
+      //    }
+      //  } else {
+      //    NParticlesEncoded = Block.NParticles;
+      //  }
+      //}
       // TODO: here we can clear the memory for Block
     }
     return;
@@ -1709,15 +1709,11 @@ BuildIntAdaptiveDFSPhase(
     P = CellCountLeft - P;
   }
   GrowIfTooFull(&Stream->Stream);
-  GrowIfTooFull(&Stream->Coder.BitStream);
 #if defined(FORCE_BINOMIAL)
-  if (Split == ResolutionSplit) {
-    f64 Mean = f64(N) / 2; // mean
-    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream->Stream, &Stream->Coder);
-  } else {
-    EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
-  }
+  f64 Mean = f64(N) / 2; // mean
+  f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+  GrowIfTooFull(&Stream->Coder.BitStream);
+  EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream->Stream, &Stream->Coder);
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
@@ -1780,9 +1776,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
     if (Q.Begin+1==Mid && CellCountLeft==1) {
       REQUIRE(false);
     } else if (Q.Begin < Mid) {
-      split_type NextSplit = 
-        ((Q.Depth+1==Params.StartResolutionSplit) ||
-         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       q_item_int Next{
         .Begin = Q.Begin,
         .End = Mid,
