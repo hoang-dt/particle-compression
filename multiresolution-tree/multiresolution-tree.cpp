@@ -1658,24 +1658,24 @@ BuildIntAdaptiveDFSPhase(
     REQUIRE(Block.BBoxes.size() <= Block.NParticles);
     // check if all particles have been seen
     if (Block.BBoxes.size() == Block.NParticles) { // now encode the rest of the refinement bits
-      //i32 NParticlesEncoded = 0;
-      //while (NParticlesEncoded < Block.NParticles) {
-      //  W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
-      //  i8 DD = 0;
-      //  if (W3.y > W3[DD]) DD = 1;
-      //  if (W3.z > W3[DD]) DD = 2;
-      //  if (W3[DD] > 0) {
-      //    FOR_EACH(B, Block.BBoxes) {
-      //      i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-      //      bool Left = Particles[Begin].Pos[DD] <= M;
-      //      if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
-      //      Write(&RefStream->Stream, Left);
-      //      if (B->Min == B->Max) { ++NParticlesEncoded; }
-      //    }
-      //  } else {
-      //    NParticlesEncoded = Block.NParticles;
-      //  }
-      //}
+      i32 NParticlesEncoded = 0;
+      while (NParticlesEncoded < Block.NParticles) {
+        W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
+        i8 DD = 0;
+        if (W3.y > W3[DD]) DD = 1;
+        if (W3.z > W3[DD]) DD = 2;
+        if (W3[DD] > 0) {
+          FOR_EACH(B, Block.BBoxes) {
+            i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+            bool Left = Particles[Begin].Pos[DD] <= M;
+            if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
+            Write(&RefStream->Stream, Left);
+            if (B->Min == B->Max) { ++NParticlesEncoded; }
+          }
+        } else {
+          NParticlesEncoded = Block.NParticles;
+        }
+      }
       // TODO: here we can clear the memory for Block
     }
     return;
@@ -1721,51 +1721,13 @@ BuildIntAdaptiveDFSPhase(
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
-  if (Split == ResolutionSplit) {
-    if (Begin+1 <= Mid) {
-      split_type NextSplit = (ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
-      BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
-    }
-    if (Mid+1 <= End) {
-      split_type NextSplit = SpatialSplit;
-      BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-    }
-  } else if (Split == SpatialSplit) {
-    if (Mid-Begin <= End-Mid) {
-      if (Begin+1 <= Mid) {
-        split_type NextSplit = 
-          ((Depth+1==Params.StartResolutionSplit) ||
-           (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-        if (Split == SpatialSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
-        else if (Split == ResolutionSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
-      }
-      if (Mid+1 <= End) {
-        split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-        if (Split == SpatialSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-        else if (Split == ResolutionSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
-      }
-    } else {
-      if (Mid+1 <= End) {
-        split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-        if (Split == SpatialSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-        else if (Split == ResolutionSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
-      }
-      if (Begin+1 <= Mid) {
-        split_type NextSplit = 
-          ((Depth+1==Params.StartResolutionSplit) ||
-           (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-        if (Split == SpatialSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
-        else if (Split == ResolutionSplit)
-          BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
-      }
-    }
+  if (Begin+1 <= Mid) {
+    split_type NextSplit = (ResLvl+2<Params.NLevels) ? ResolutionSplit : SpatialSplit;
+    BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+  }
+  if (Mid+1 <= End) {
+    split_type NextSplit = SpatialSplit;
+    BuildIntAdaptiveDFSPhase(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
   }
 }
 
@@ -2441,89 +2403,31 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
 
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
     InTheCut = BitCount < Params.DecodeBudget*8;
-    if (Q.Split == ResolutionSplit) {
-      if (InTheCut && Mid+1<=Q.End) {
-        split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-        q_item_int Next {
-          .Begin = Mid,
-          .End = Q.End,
-          .Grid = GridRight,
-          .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
-          .Depth = Q.Depth+1,
-          .Split = NextSplit
-        };
-        Stack->push_back(Next);
-      }
-      if (InTheCut && Q.Begin+1<=Mid) {
-        split_type NextSplit = 
-          ((Q.Depth+1==Params.StartResolutionSplit) ||
-           (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-        q_item_int Next {
-          .Begin = Q.Begin,
-          .End = Mid,
-          .Grid = GridLeft,
-          .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-          .Depth = Q.Depth+1,
-          .Split = NextSplit
-        };
-        Stack->push_back(Next);
-      }
-    } else if (Q.Split == SpatialSplit) {
-      if (Mid-Q.Begin <= Q.End-Mid) {
-        if (InTheCut && Mid+1<=Q.End) {
-          split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-          q_item_int Next {
-            .Begin = Mid,
-            .End = Q.End,
-            .Grid = GridRight,
-            .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
-            .Depth = Q.Depth+1,
-            .Split = NextSplit
-          };
-          Stack->push_back(Next);
-        }
-        if (InTheCut && Q.Begin+1<=Mid) {
-          split_type NextSplit = 
-            ((Q.Depth+1==Params.StartResolutionSplit) ||
-             (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-          q_item_int Next {
-            .Begin = Q.Begin,
-            .End = Mid,
-            .Grid = GridLeft,
-            .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-            .Depth = Q.Depth+1,
-            .Split = NextSplit
-          };
-          Stack->push_back(Next);
-        }
-      } else {
-        if (InTheCut && Q.Begin+1<=Mid) {
-          split_type NextSplit = 
-            ((Q.Depth+1==Params.StartResolutionSplit) ||
-             (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-          q_item_int Next {
-            .Begin = Q.Begin,
-            .End = Mid,
-            .Grid = GridLeft,
-            .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-            .Depth = Q.Depth+1,
-            .Split = NextSplit
-          };
-          Stack->push_back(Next);
-        }
-        if (InTheCut && Mid+1<=Q.End) {
-          split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-          q_item_int Next {
-            .Begin = Mid,
-            .End = Q.End,
-            .Grid = GridRight,
-            .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
-            .Depth = Q.Depth+1,
-            .Split = NextSplit
-          };
-          Stack->push_back(Next);
-        }
-      }
+    if (InTheCut && Mid+1<=Q.End) {
+      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+      q_item_int Next {
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
+        .Depth = Q.Depth+1,
+        .Split = NextSplit
+      };
+      Stack->push_back(Next);
+    }
+    if (InTheCut && Q.Begin+1<=Mid) {
+      split_type NextSplit = 
+        ((Q.Depth+1==Params.StartResolutionSplit) ||
+         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+      q_item_int Next {
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+        .Depth = Q.Depth+1,
+        .Split = NextSplit
+      };
+      Stack->push_back(Next);
     }
   }
   return PCount;
@@ -2564,7 +2468,7 @@ DecodeIntAdaptive(q_item_int Q) {
           if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
         }
         if (B->Min == B->Max) {
-          ++Block.NParticlesDecoded; 
+          ++Block.NParticlesDecoded;
         }
       }
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
@@ -2582,7 +2486,8 @@ DecodeIntAdaptive(q_item_int Q) {
     InTheCut = BitCount < Params.DecodeBudget*8;
   }
   // generate the particles
-  FOR_EACH(B, OutputBlocks) {    
+  FOR_EACH(B, OutputBlocks) {
+    printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
     FOR_EACH(BB, B->BBoxes) {
       OutputParticles.push_back(particle_int{.Pos=(BB->Max+BB->Min)/2});
     }
