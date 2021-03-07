@@ -1894,8 +1894,8 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
 }
 
 #define IN_THE_CUT \
-  InTheCut = Q.Depth <= 19; \
-  //InTheCut = Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget;\
+  InTheCut = BitCount < Params.DecodeBudget*8;\
+  //InTheCut = Q.Depth <= 19; \
 
 static void
 DecodeTreeIntBFS(q_item_int Q) {
@@ -1915,58 +1915,40 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     IN_THE_CUT
+    auto& Stream = GlobalStream;
+    bool Flip = CellCount-N < N;
+    if (Flip) N = CellCount - N;
     if (InTheCut) {
-      bool Flip = CellCount-N < N;
-      //if (Flip) N = CellCount - N;
-      i64 P = 0;
-#if defined(BINOMIAL)
-      if (Q.Split == ResolutionSplit) {
-        f64 Mean = f64(N) / 2; // mean
-        f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-        P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
-      } else {
-        P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-      }
-#elif defined(FORCE_BINOMIAL)
+      u32 P = 0;
+#if defined(FORCE_BINOMIAL)
       f64 Mean = f64(N) / 2; // mean
       f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-      P = DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &BlockStream, &Coder);
+      BitCount += DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &Stream.Stream, &Stream.Coder, P);
 #else
-      P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
+      BitCount += DecodeCenteredMinimal(u32(N+1), &Stream.Stream, P);
 #endif
-      //if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
       Mid = P + Q.Begin;
     } else {
+      if (Flip) { N = CellCount - N; }
       NParticlesGenerated += N;
       NParticlesDecoded += N;
       GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
-    i64 NParticlesLeft = 0;
     IN_THE_CUT
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
-      auto G = GridLeft;
-      bbox_int BBox;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
-            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-            bool Left = Read(&BlockStream);
-            if (Left) G = G1; else G = G2;
-          } else {
-            InTheCut = false;
-            goto GENERATE_PARTICLE_LEFT; // TODO: just return?
-          }
-        }
-      }
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+      const auto& G = GridLeft;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+        .Max = BBox.Min + Params.W3 - 1
+      };
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
-          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
-            bool Left = Read(&BlockStream);
+          if (BitCount < Params.DecodeBudget*8)  {
+            bool Left = Read(&Stream.Stream);
+            ++BitCount;
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
             if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
           } else {
@@ -1976,10 +1958,9 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_LEFT:
-      GenerateParticlesPerNode(1, G, &OutputParticles);
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
       ++NParticlesGenerated;
       ++NParticlesDecoded;
-      ++NParticlesLeft;
     } else if (InTheCut && Q.Begin<Mid) {
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
@@ -1993,30 +1974,19 @@ DecodeTreeIntBFS(q_item_int Q) {
         .Split = NextSplit
       });
     }
-    i64 NParticlesRight = 0;
     IN_THE_CUT
+    /* ---------------------- RIGHT ----------------- */
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
-      auto G = GridRight;
-      bbox_int BBox;
-      for (int DD = 0; DD < 3; ++DD) {
-        while (G.Dims3[DD] > 1) {
-          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget) {
-            auto G1 = SplitGrid(G, DD, SpatialSplit, side::Left);
-            auto G2 = SplitGrid(G, DD, SpatialSplit, side::Right);
-            bool Left = Read(&BlockStream);
-            if (Left) G = G1; else G = G2;
-          } else {
-            InTheCut = false;
-            goto GENERATE_PARTICLE_RIGHT; // TODO: just return?
-          }
-        }
-      }
-      BBox.Min = Params.BBoxInt.Min + G.From3*Params.W3;
-      BBox.Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1;
+      const auto& G = GridRight;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+        .Max = BBox.Min + Params.W3 - 1
+      };
       for (int DD = 0; DD < 3; ++DD) {
         while (BBox.Max[DD] > BBox.Min[DD]) {
-          if (Size(BlockStream)+Size(Coder.BitStream) < Params.DecodeBudget)  {
-            bool Left = Read(&BlockStream);
+          if (BitCount < Params.DecodeBudget*8)  {
+            bool Left = Read(&Stream.Stream);
+            ++BitCount;
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
             if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
           } else {
@@ -2026,10 +1996,9 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_RIGHT:
-      GenerateParticlesPerNode(1, G, &OutputParticles);
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
       ++NParticlesGenerated;
       ++NParticlesDecoded;
-      ++NParticlesRight;
     } else if (InTheCut && Mid<Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
