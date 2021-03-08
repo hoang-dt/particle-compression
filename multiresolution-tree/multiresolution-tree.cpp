@@ -1590,6 +1590,8 @@ struct heap_data {
 
 static int BitCount = 0;
 
+static bool IsPowerOfTwo(i64 x) { return (x & (x - 1)) == 0; }
+
 static void
 BuildIntAdaptiveDFSPhase(
   std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -1607,11 +1609,11 @@ BuildIntAdaptiveDFSPhase(
     auto& Block = OutputBlocks[BlockIdx];
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3 - 1
+      .Max = BBox.Min + Params.W3
     };
     for (int DD = 0; DD < Params.NDims; ++DD) {
       REQUIRE(Particles[Begin].Pos[DD] >= BBox.Min[DD]);
-      REQUIRE(Particles[Begin].Pos[DD] <= BBox.Max[DD]);
+      REQUIRE(Particles[Begin].Pos[DD] < BBox.Max[DD]);
     }
     Block.BBoxesAndIds.push_back({Begin, BBox});
     REQUIRE(Block.BBoxesAndIds.size() <= Block.NParticles);
@@ -1623,14 +1625,17 @@ BuildIntAdaptiveDFSPhase(
         i8 DD = 0;
         if (W3.y > W3[DD]) DD = 1;
         if (W3.z > W3[DD]) DD = 2;
-        if (W3[DD] > 0) {
+        if (W3[DD] > 1) {
           FOR_EACH(B, Block.BBoxesAndIds) {
-            i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) / 2;
+            assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
+            i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
             bool Left = Particles[B->Id].Pos[DD] <= M;
-            if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M+1;
+            auto BBoxCopy = B->BBox;
+            if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
+            assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
             GrowIfTooFull(&RefStream->Stream);
             Write(&RefStream->Stream, Left);
-            if (B->BBox.Min == B->BBox.Max) {
+            if (B->BBox.Min+1 == B->BBox.Max) {
               ++NParticlesEncoded; 
             }
             ++Block.BitCount;
@@ -2254,7 +2259,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       const auto& G = Q.Grid;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3 - 1
+        .Max = BBox.Min + Params.W3
       };
       Block.BBoxes.push_back(BBox);
       REQUIRE(Block.BBoxes.size() <= Block.NParticles);
@@ -2362,14 +2367,14 @@ DecodeIntAdaptive(q_item_int Q) {
       if (W3.z > W3[DD]) DD = 2;
       auto& RefStream = RefStreams[TopPriority.BlockId];
       FOR_EACH(B, Block.BBoxes) {
-        if (W3[DD] > 0) {
+        if (W3[DD] > 1) {
           bool Left = Read(&RefStream.Stream);
           ++Block.BitCount;
           ++BitCount;
           i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-          if (Left) B->Max[DD] = M; else B->Min[DD] = M+1;
+          if (Left) B->Max[DD] = M; else B->Min[DD] = M;
         }
-        if (B->Min == B->Max) {
+        if (B->Min+1 == B->Max) {
           ++Block.NParticlesDecoded;
         }
       }
@@ -2377,7 +2382,7 @@ DecodeIntAdaptive(q_item_int Q) {
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
       if (Block.NParticlesDecoded == Block.NParticles) {
         Heap.pop();
-        printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
+        //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
         // TODO: debug here to see if we pop everything at the end (where all bits are used)
       }
     } else { // still in the DFS phase, not refinement
@@ -2389,12 +2394,12 @@ DecodeIntAdaptive(q_item_int Q) {
     //++BlockCount[TopPriority.BlockId];
     InTheCut = BitCount < Params.DecodeBudget*8;
   }
-  printf("heap size = %d\n", Heap.size());
+  //printf("heap size = %d\n", Heap.size());
   // generate the particles
   FOR_EACH(B, OutputBlocks) {
     printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
     FOR_EACH(BB, B->BBoxes) {
-      OutputParticles.push_back(particle_int{.Pos=(BB->Max+BB->Min)/2});
+      OutputParticles.push_back(particle_int{.Pos=BB->Min});
     }
     NParticlesDecoded += B->BBoxes.size();
   }
