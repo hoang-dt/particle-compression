@@ -1864,13 +1864,13 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       const auto& G = GridLeft;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3 - 1
+        .Max = BBox.Min + Params.W3
       };
       for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
+        while (BBox.Max[DD] > BBox.Min[DD]+1) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           bool Left = Particles[Q.Begin].Pos[DD] <= M;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
           Write(&Stream.Stream, Left);
         }
       }
@@ -1892,13 +1892,13 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       const auto& G = GridRight;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3 - 1
+        .Max = BBox.Min + Params.W3
       };
       for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
+        while (BBox.Max[DD] > BBox.Min[DD]+1) {
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
           bool Left = Particles[Mid].Pos[DD] <= M;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
           Write(&Stream.Stream, Left);
         }
       }
@@ -1965,15 +1965,15 @@ DecodeTreeIntBFS(q_item_int Q) {
       const auto& G = GridLeft;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3 - 1
+        .Max = BBox.Min + Params.W3
       };
       for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
+        while (BBox.Max[DD] > BBox.Min[DD]+1) {
           if (BitCount < Params.DecodeBudget*8)  {
             bool Left = Read(&Stream.Stream);
             ++BitCount;
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-            if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+            if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
           } else {
             InTheCut = false;
             goto GENERATE_PARTICLE_LEFT;
@@ -1981,7 +1981,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_LEFT:
-      OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
+      OutputParticles.push_back(particle_int{.Pos=BBox.Min});
       ++NParticlesGenerated;
       ++NParticlesDecoded;
     } else if (InTheCut && Q.Begin<Mid) {
@@ -2003,15 +2003,15 @@ DecodeTreeIntBFS(q_item_int Q) {
       const auto& G = GridRight;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3 - 1
+        .Max = BBox.Min + Params.W3
       };
       for (int DD = 0; DD < 3; ++DD) {
-        while (BBox.Max[DD] > BBox.Min[DD]) {
+        while (BBox.Max[DD] > BBox.Min[DD]+1) {
           if (BitCount < Params.DecodeBudget*8)  {
             bool Left = Read(&Stream.Stream);
             ++BitCount;
             i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-            if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+            if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
           } else {
             InTheCut = false;
             goto GENERATE_PARTICLE_RIGHT;
@@ -2019,7 +2019,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         }
       }
     GENERATE_PARTICLE_RIGHT:
-      OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
+      OutputParticles.push_back(particle_int{.Pos=BBox.Min});
       ++NParticlesGenerated;
       ++NParticlesDecoded;
     } else if (InTheCut && Mid<Q.End) {
@@ -2082,13 +2082,13 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     const auto& G = GridLeft;
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3 - 1
+      .Max = BBox.Min + Params.W3
     };
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Begin].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         GrowIfTooFull(&Stream.Stream);
         Write(&Stream.Stream, Left);
       }
@@ -2106,13 +2106,13 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     const auto& G = GridRight;
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = Params.BBoxInt.Min + (G.From3+(G.Dims3-1)*G.Stride3+1)*Params.W3 - 1
+      .Max = BBox.Min + Params.W3
     };
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Mid].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         Write(&Stream.Stream, Left);
       }
     }
@@ -2463,15 +2463,15 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     const auto& G = GridLeft;
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3 - 1
+      .Max = BBox.Min + Params.W3
     };
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         if (BitCount < Params.DecodeBudget*8)  {
           bool Left = Read(&Stream.Stream);
           ++BitCount;
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         } else {
           InTheCut = false;
           goto GENERATE_PARTICLE_LEFT;
@@ -2479,7 +2479,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
       }
     }
   GENERATE_PARTICLE_LEFT:
-    OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
+    OutputParticles.push_back(particle_int{.Pos=BBox.Min});
     ++NParticlesGenerated;
     ++NParticlesDecoded;
     //LeftTree = new (TreePtr++) tree;
