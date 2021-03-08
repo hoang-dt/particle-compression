@@ -2023,9 +2023,9 @@ DecodeTreeIntBFS(q_item_int Q) {
             }
             if (B->Min+1 == B->Max) {
               ++MyBlock.NParticlesDecoded;
-              OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-              ++NParticlesGenerated;
-              ++NParticlesDecoded;
+              //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
+              //++NParticlesGenerated;
+              //++NParticlesDecoded;
             }
           }
           InTheCut = BitCount < Params.DecodeBudget*8;
@@ -2068,9 +2068,9 @@ DecodeTreeIntBFS(q_item_int Q) {
             }
             if (B->Min+1 == B->Max) {
               ++MyBlock.NParticlesDecoded;
-              OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-              ++NParticlesGenerated;
-              ++NParticlesDecoded;
+              //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
+              //++NParticlesGenerated;
+              //++NParticlesDecoded;
             }
           }
           InTheCut = BitCount < Params.DecodeBudget*8;
@@ -2088,6 +2088,10 @@ DecodeTreeIntBFS(q_item_int Q) {
       });
     }
   }
+  FOR_EACH(BB, MyBlock.BBoxesAndIds) {
+    OutputParticles.push_back(particle_int{.Pos=(BB->BBox.Min+BB->BBox.Max)/2});
+  }
+  NParticlesDecoded += MyBlock.BBoxesAndIds.size();
 }
 
 static void
