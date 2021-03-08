@@ -2559,15 +2559,15 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     const auto& G = GridRight;
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3 - 1
+      .Max = BBox.Min + Params.W3
     };
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         if (BitCount < Params.DecodeBudget*8)  {
           bool Left = Read(&Stream.Stream);
           ++BitCount;
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+          if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         } else {
           InTheCut = false;
           goto GENERATE_PARTICLE_RIGHT;
@@ -2575,7 +2575,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
       }
     }
   GENERATE_PARTICLE_RIGHT:
-    OutputParticles.push_back(particle_int{.Pos=(BBox.Max+BBox.Min)/2});
+    OutputParticles.push_back(particle_int{.Pos=BBox.Min});
     ++NParticlesGenerated;
     ++NParticlesDecoded;
     //RightTree = new (TreePtr++) tree;
