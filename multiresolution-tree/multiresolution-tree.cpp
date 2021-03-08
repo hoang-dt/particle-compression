@@ -27,6 +27,7 @@ struct block_info {
   std::vector<particle_id_and_bbox> BBoxesAndIds;
   std::vector<u64> PId; // particle id
   int BitCount = 0;
+  bool AtRefinement = false;
 };
 static std::vector<block_info> OutputBlocks;
 
@@ -2361,6 +2362,10 @@ DecodeIntAdaptive(q_item_int Q) {
     heap_priority TopPriority = Heap.top();
     auto& Block = OutputBlocks[TopPriority.BlockId];
     if (Block.BBoxes.size() == Block.NParticles) { // every particle has been seen once
+      if (!Block.AtRefinement) {
+        Block.AtRefinement = true;
+        TopPriority.Level = -1;
+      }
       auto W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
       i8 DD = 0;
       if (W3.y > W3[DD]) DD = 1;
@@ -2378,13 +2383,18 @@ DecodeIntAdaptive(q_item_int Q) {
           ++Block.NParticlesDecoded;
         }
       }
+      ++TopPriority.Level;
       // TODO: need to update the priority so that the same block does not pop up multiple times
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
-      if (Block.NParticlesDecoded == Block.NParticles) {
-        Heap.pop();
-        //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
-        // TODO: debug here to see if we pop everything at the end (where all bits are used)
+      Heap.pop();
+      if (Block.NParticlesDecoded != Block.NParticles) {
+        Heap.push(TopPriority);
       }
+      //if (Block.NParticlesDecoded == Block.NParticles) {
+      //  Heap.pop();
+      //  //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
+      //  // TODO: debug here to see if we pop everything at the end (where all bits are used)
+      //}
     } else { // still in the DFS phase, not refinement
       Heap.pop();
       auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
