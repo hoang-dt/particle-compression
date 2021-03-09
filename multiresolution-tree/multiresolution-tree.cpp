@@ -1649,7 +1649,7 @@ BuildIntAdaptiveDFSPhase(
           printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
         }
       }
-      // TODO: here we can clear the memory for Block
+      Block.BBoxesAndIds.clear();
     }
     return;
   }
