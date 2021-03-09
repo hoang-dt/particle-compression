@@ -1517,7 +1517,6 @@ struct stream {
 };
 static stream GlobalStream;
 static std::vector<stream> Streams; // one for each block
-static std::vector<stream> RefStreams; // to store the refinement bits in case Params.W3 > 1
 
 INLINE u64
 GetBlockIndex(const vec3i& From3) {
@@ -1536,17 +1535,6 @@ GetStream(const grid_int& Grid, i8 Depth) {
     u64 BlockIdx = GetBlockIndex(Grid.From3);
     REQUIRE(Streams.size() > BlockIdx);
     return &Streams[BlockIdx];
-  }
-  return &GlobalStream;
-}
-
-static stream*
-GetRefinementStream(const grid_int& Grid) {
-  if (u64(Grid.Dims3.x)*u64(Grid.Dims3.y)*u64(Grid.Dims3.z) <= 
-      u64(Params.BlockDims3.x)*u64(Params.BlockDims3.y)*u64(Params.BlockDims3.z)) {
-    u64 BlockIdx = GetBlockIndex(Grid.From3);
-    REQUIRE(RefStreams.size() > BlockIdx);
-    return &RefStreams[BlockIdx];
   }
   return &GlobalStream;
 }
@@ -1604,8 +1592,6 @@ BuildIntAdaptiveDFSPhase(
   auto Stream = GetStream(Grid, Depth);
   if (N==1 && CellCount==1) {
     const auto& G = Grid;
-    auto RefStream = GetRefinementStream(Grid);
-    GrowIfTooFull(&RefStream->Stream);
     auto BlockIdx = GetBlockIndex(Grid.From3);
     auto& Block = OutputBlocks[BlockIdx];
     bbox_int BBox {
@@ -1634,8 +1620,8 @@ BuildIntAdaptiveDFSPhase(
             auto BBoxCopy = B->BBox;
             if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
             assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
-            GrowIfTooFull(&RefStream->Stream);
-            Write(&RefStream->Stream, Left);
+            GrowIfTooFull(&Stream->Stream);
+            Write(&Stream->Stream, Left);
             if (B->BBox.Min+1 == B->BBox.Max) {
               ++NParticlesEncoded; 
             }
@@ -2322,7 +2308,6 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 Mid = Q.Begin;
-    auto RefStream = GetRefinementStream(Q.Grid);
     auto BlockIdx = GetBlockIndex(Q.Grid.From3);
     //assert(BlockIdx == TopPriority.BlockId);
     if (N==1 && CellCount==1) {
@@ -2440,10 +2425,10 @@ DecodeIntAdaptive(q_item_int Q) {
       i8 DD = 0;
       if (W3.y > W3[DD]) DD = 1;
       if (W3.z > W3[DD]) DD = 2;
-      auto& RefStream = RefStreams[TopPriority.BlockId];
+      auto& Stream = Streams[TopPriority.BlockId];
       FOR_EACH(B, Block.BBoxes) {
         if (W3[DD] > 1) {
-          bool Left = Read(&RefStream.Stream);
+          bool Left = Read(&Stream.Stream);
           ++Block.BitCount;
           ++BitCount;
           InTheCut = BitCount < Params.DecodeBudget*8;
@@ -2751,20 +2736,17 @@ AllocateMemoryForBlocks(const grid_int& Grid) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   printf("nblocks = %d\n", int(Streams.size()));
-  RefStreams.resize(Streams.size());
   OutputBlocks.resize(Streams.size());
   FOR_EACH(S, Streams) {
     InitWrite(&S->Stream, 1 << 20); // 1 MB
-    //S->Coder.InitWrite(1 << 20);
-  }
-  FOR_EACH(S, RefStreams) {
-    InitWrite(&S->Stream, 1 << 20);
+#if defined(FORCE_BINOMIAL)
+    S->Coder.InitWrite(1 << 20);
+#endif
   }
   InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
-  //GlobalStream.Coder.InitWrite(1 << 20);
-
-  //InitWrite(&BlockStream, 900 << 20); // 900 MB
-  //Coder.InitWrite(900 << 20);
+#if defined(FORCE_BINOMIAL)
+  GlobalStream.Coder.InitWrite(1 << 20);
+#endif
 }
 
 static void
@@ -2779,8 +2761,9 @@ InitContext() {
   FOR_EACH (C, ContextTSR) { C->reserve(512); }
 }
 
-static void
+static i64
 WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
+  i64 StreamSize = 0;
   { // stream
     auto ByteCount = Size(S->Stream);
     if (ByteCount > 0) {
@@ -2801,6 +2784,7 @@ WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
     GrowToAccomodate(Bs, 8);
     WriteVarByte(Bs, ByteCount);
   }
+  return StreamSize;
 }
 
 static std::tuple<i64, i64>
@@ -2810,18 +2794,7 @@ WriteBinaryFiles() {
   bitstream Bs;
   InitWrite(&Bs, 10 << 20);
   FOR_EACH(S, Streams) {
-    WriteBlock(Fp, &*S, &Bs);
-  }
-  // ref streams
-  FOR_EACH(S, RefStreams) {
-    auto ByteCount = Size(S->Stream);
-    if (ByteCount > 0) {
-      Flush(&S->Stream);
-      fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
-      StreamSize += ByteCount;
-    }
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount);
+    StreamSize += WriteBlock(Fp, &*S, &Bs);
   }
   { // global stream
     auto ByteCount = Size(GlobalStream.Stream);
@@ -2884,7 +2857,6 @@ ReadBinaryFiles(const grid_int& Grid) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   Params.NBlocks3 = Grid.Dims3 / Params.BlockDims3;
   Streams.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
-  RefStreams.resize(Streams.size());
   OutputBlocks.resize(Streams.size());
   FSEEK(Fp, 0, SEEK_SET);
   FOR_EACH(S, Streams) {
@@ -2903,14 +2875,6 @@ ReadBinaryFiles(const grid_int& Grid) {
         fread(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
         S->Coder.InitRead();
       }
-    }
-  }
-  FOR_EACH(S, RefStreams) {
-    auto ByteCount = ReadVarByte(&Bs);
-    if (ByteCount > 0) {
-      AllocBuf(&S->Stream.Stream, ByteCount);
-      fread(S->Stream.Stream.Data, ByteCount, 1, Fp);
-      InitRead(&S->Stream, S->Stream.Stream);
     }
   }
   { // global stream
