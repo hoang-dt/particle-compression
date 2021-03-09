@@ -2479,12 +2479,12 @@ ReadPly(cstr FileName) {
 }
 
 struct vtu_header {
-  u32 pad3;
-  u32 size;
-  u32 pad1;
-  u32 step;
-  u32 pad2;
-  f32 time;
+  u32 pad3 = 0;
+  u32 size = 0;
+  u32 pad1 = 0;
+  u32 step = 0;
+  u32 pad2 = 0;
+  f32 time = 0;
 };
 
 inline std::vector<particle>
@@ -2639,6 +2639,25 @@ WriteXYZ(cstr FileName, t Begin, t End, u Min3, vec3f Scale3) {
   }
   fclose(Fp);
 }
+
+template <typename t, typename u> inline void
+WriteVTU(cstr FileName, t Begin, t End, u Min3, vec3f Scale3) {
+  auto Fp = fopen(FileName, "wb");
+  vtu_header Header;
+  constexpr int MagicOffset = 4072;
+  char Temp[MagicOffset] = {};
+  fwrite(Temp, sizeof(Temp), 1, Fp); // write some dummy data for the first MagicOffset bytes
+  Header.size = u32(End - Begin);
+  WritePOD(Fp, Header);
+  i32 A = 0;
+  fwrite(&A, sizeof(A), 1, Fp); // advance 4 more bytes
+  FOR_EACH(P3, Begin, End) {
+    vec3f R3 = vec3f(P3->Pos-Min3) * Scale3;
+    fwrite(&P3->Pos, sizeof(P3->Pos), 1, Fp);
+  }
+  fclose(Fp);
+}
+
 template <typename t> inline void
 WriteXYZInt(cstr FileName, t Begin, t End) {
   FILE* Fp = fopen(FileName, "w");

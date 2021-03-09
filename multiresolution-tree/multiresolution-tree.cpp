@@ -1646,7 +1646,7 @@ BuildIntAdaptiveDFSPhase(
           }
         } else {
           NParticlesEncoded = Block.NParticles;
-          printf("block %lld bitcount %d\n", BlockIdx, Block.BitCount);
+          printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
         }
       }
       // TODO: here we can clear the memory for Block
@@ -1870,6 +1870,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       };
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
+        printf("hello1\n");
         i32 NParticlesEncoded = 0;
         while (NParticlesEncoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
@@ -1917,6 +1918,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       };
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
+        printf("hello2\n");
         i32 NParticlesEncoded = 0;
         while (NParticlesEncoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
@@ -2009,6 +2011,7 @@ DecodeTreeIntBFS(q_item_int Q) {
       };
       MyBlock.BBoxes.push_back(BBox);
       if (MyBlock.BBoxes.size() == Params.NParticles) {
+        printf("hello1\n");
         while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
           i8 DD = 0;
@@ -2018,6 +2021,9 @@ DecodeTreeIntBFS(q_item_int Q) {
             if (W3[DD] > 1) {
               bool Left = Read(&Stream.Stream);
               ++BitCount;
+              InTheCut = BitCount < Params.DecodeBudget*8;
+              if (!InTheCut)
+                break;
               i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
               if (Left) B->Max[DD] = M; else B->Min[DD] = M;
             }
@@ -2054,6 +2060,7 @@ DecodeTreeIntBFS(q_item_int Q) {
       };
       MyBlock.BBoxes.push_back(BBox);
       if (MyBlock.BBoxes.size() == Params.NParticles) {
+        printf("hello2\n");
         while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
           i8 DD = 0;
@@ -2063,6 +2070,9 @@ DecodeTreeIntBFS(q_item_int Q) {
             if (W3[DD] > 1) {
               bool Left = Read(&Stream.Stream);
               ++BitCount;
+              InTheCut = BitCount < Params.DecodeBudget*8;
+              if (!InTheCut)
+                break;
               i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
               if (Left) B->Max[DD] = M; else B->Min[DD] = M;
             }
@@ -2434,6 +2444,9 @@ DecodeIntAdaptive(q_item_int Q) {
           bool Left = Read(&RefStream.Stream);
           ++Block.BitCount;
           ++BitCount;
+          InTheCut = BitCount < Params.DecodeBudget*8;
+          if (!InTheCut)
+            break;
           i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
           if (Left) B->Max[DD] = M; else B->Min[DD] = M;
         }
@@ -2973,6 +2986,7 @@ START:
       Params.Dims3 = EnlargeToPow2(Params.Dims3);
       Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
+      //Params.LogDims3 = ComputeGrid(&ParticlesInt, MCOPY(Params.BBoxInt, .Max=Params.BBoxInt.Min+Params.Dims3), 0, ParticlesInt.size(), 0, Params.DimsStr);
       Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
       //yxyxyzxyzxyzxyzxyzxyzxyzxyz
       //sprintf(Params.DimsStr, "%s", "xyzxyzxyzxyzxyzxyzxyzxyzxyy");
@@ -3089,7 +3103,7 @@ START:
     //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
     //}
     //fclose(Ff);
-    TreePtr = new tree[Params.NParticles * 10]; // TODO: avoid this
+    //Treeptr = new tree[Params.NParticles * 10]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
     tree* MyNode = nullptr;
@@ -3109,7 +3123,7 @@ START:
     } else {
       DecodeTreeIntDFS(nullptr, 0, N, Grid, Split, 0, 0);
     }
-    delete[] TreePtrBackup;
+    //delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
@@ -3117,6 +3131,7 @@ START:
     WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
+    printf("bit count = %d bytes\n", BitCount/8);
     vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
     if (Budget)
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
@@ -3166,7 +3181,8 @@ START:
     } else if (OptExists(Argc, Argv, "--ospray")) {
       Params.BBox = ComputeBoundingBox(Particles);
       vec3f Scale3 = 30.0 / vec3f(Params.BBox.Max - Params.BBox.Min);
-      WriteXYZ(PRINT("%s.xyz", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
+      //WriteXYZ(PRINT("%s.xyz", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
+      WriteVTU(PRINT("%s.vtu", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
     } else {
       fprintf(stderr, "Writing particles\n");
       WriteParticles(Params.OutFile, Particles);
