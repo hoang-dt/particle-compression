@@ -1649,7 +1649,9 @@ BuildIntAdaptiveDFSPhase(
           printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
         }
       }
+      // block is done, release memory
       Block.BBoxesAndIds.clear();
+      //WriteBlock(FilePtr, );
     }
     return;
   }
@@ -2778,7 +2780,27 @@ InitContext() {
 }
 
 static void
-HandleOptions(int Argc, cstr* Argv) {
+WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
+  { // stream
+    auto ByteCount = Size(S->Stream);
+    if (ByteCount > 0) {
+      Flush(&S->Stream);
+      fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
+      StreamSize += ByteCount;
+    }
+    GrowToAccomodate(Bs, 8);
+    WriteVarByte(Bs, ByteCount);
+  }
+  { // coder
+    auto ByteCount = Size(S->Coder.BitStream);
+    if (ByteCount > 0) {
+      S->Coder.EncodeFinalize();
+      fwrite(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+      StreamSize += ByteCount;
+    }
+    GrowToAccomodate(Bs, 8);
+    WriteVarByte(Bs, ByteCount);
+  }
 }
 
 static std::tuple<i64, i64>
@@ -2788,26 +2810,7 @@ WriteBinaryFiles() {
   bitstream Bs;
   InitWrite(&Bs, 10 << 20);
   FOR_EACH(S, Streams) {
-    { // stream
-      auto ByteCount = Size(S->Stream);
-      if (ByteCount > 0) {
-        Flush(&S->Stream);
-        fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
-        StreamSize += ByteCount;
-      }
-      GrowToAccomodate(&Bs, 8);
-      WriteVarByte(&Bs, ByteCount);
-    }
-    { // coder
-      auto ByteCount = Size(S->Coder.BitStream);
-      if (ByteCount > 0) {
-        S->Coder.EncodeFinalize();
-        fwrite(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
-        StreamSize += ByteCount;
-      }
-      GrowToAccomodate(&Bs, 8);
-      WriteVarByte(&Bs, ByteCount);
-    }
+    WriteBlock(Fp, &*S, &Bs);
   }
   // ref streams
   FOR_EACH(S, RefStreams) {
