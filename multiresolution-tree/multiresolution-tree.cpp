@@ -2787,34 +2787,60 @@ WriteBinaryFiles() {
   i64 StreamSize = 0;
   bitstream Bs;
   InitWrite(&Bs, 10 << 20);
-  Flush(&GlobalStream.Stream);
-  //GlobalStream.Coder.EncodeFinalize();
-  auto ByteCount = Size(GlobalStream.Stream);
-  WriteVarByte(&Bs, ByteCount);
-  StreamSize = ByteCount;
-  if (ByteCount > 0) {
-    fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
-  }
   FOR_EACH(S, Streams) {
-    Flush(&S->Stream);
-    ByteCount = Size(S->Stream);
-    if (ByteCount > 0) {
-      fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
+    { // stream
+      auto ByteCount = Size(S->Stream);
+      if (ByteCount > 0) {
+        Flush(&S->Stream);
+        fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
+        StreamSize += ByteCount;
+      }
+      GrowToAccomodate(&Bs, 8);
+      WriteVarByte(&Bs, ByteCount);
     }
-    StreamSize += ByteCount;
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount);
+    { // coder
+      auto ByteCount = Size(S->Coder.BitStream);
+      if (ByteCount > 0) {
+        S->Coder.EncodeFinalize();
+        fwrite(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+        StreamSize += ByteCount;
+      }
+      GrowToAccomodate(&Bs, 8);
+      WriteVarByte(&Bs, ByteCount);
+    }
   }
+  // ref streams
   FOR_EACH(S, RefStreams) {
-    Flush(&S->Stream);
-    ByteCount = Size(S->Stream);
+    auto ByteCount = Size(S->Stream);
     if (ByteCount > 0) {
+      Flush(&S->Stream);
       fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
+      StreamSize += ByteCount;
     }
-    StreamSize += ByteCount;
     GrowToAccomodate(&Bs, 8);
     WriteVarByte(&Bs, ByteCount);
   }
+  { // global stream
+    auto ByteCount = Size(GlobalStream.Stream);
+    if (ByteCount > 0) {
+      Flush(&GlobalStream.Stream);
+      fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
+      StreamSize += ByteCount;
+    }
+    GrowToAccomodate(&Bs, 8);
+    WriteVarByte(&Bs, ByteCount); // global stream
+  }
+  { // global coder
+    auto ByteCount = Size(GlobalStream.Coder.BitStream);
+    if (ByteCount > 0) {
+      GlobalStream.Coder.EncodeFinalize();
+      fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+      StreamSize += ByteCount;
+    }
+    GrowToAccomodate(&Bs, 8);
+    WriteVarByte(&Bs, ByteCount); // global coder
+  }
+  // write the meta data
   Flush(&Bs);
   fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
   i64 MetaSize = Size(Bs);
@@ -2858,26 +2884,46 @@ ReadBinaryFiles(const grid_int& Grid) {
   RefStreams.resize(Streams.size());
   OutputBlocks.resize(Streams.size());
   FSEEK(Fp, 0, SEEK_SET);
-  auto ByteCount = ReadVarByte(&Bs);
-  if (ByteCount > 0) {
-    AllocBuf(&GlobalStream.Stream.Stream, ByteCount); // 1 MB
-    fread(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
-    InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
-  }
   FOR_EACH(S, Streams) {
-    ByteCount = ReadVarByte(&Bs);
+    { // stream
+      auto ByteCount = ReadVarByte(&Bs);
+      if (ByteCount > 0) {
+        AllocBuf(&S->Stream.Stream, ByteCount);
+        fread(S->Stream.Stream.Data, ByteCount, 1, Fp);
+        InitRead(&S->Stream, S->Stream.Stream);
+      }
+    }
+    { // coder
+      auto ByteCount = ReadVarByte(&Bs);
+      if (ByteCount > 0) {
+        AllocBuf(&S->Coder.BitStream.Stream, ByteCount);
+        fread(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+        S->Coder.InitRead();
+      }
+    }
+  }
+  FOR_EACH(S, RefStreams) {
+    auto ByteCount = ReadVarByte(&Bs);
     if (ByteCount > 0) {
       AllocBuf(&S->Stream.Stream, ByteCount);
       fread(S->Stream.Stream.Data, ByteCount, 1, Fp);
       InitRead(&S->Stream, S->Stream.Stream);
     }
   }
-  FOR_EACH(S, RefStreams) {
-    ByteCount = ReadVarByte(&Bs);
-    if (ByteCount > 0) {
-      AllocBuf(&S->Stream.Stream, ByteCount);
-      fread(S->Stream.Stream.Data, ByteCount, 1, Fp);
-      InitRead(&S->Stream, S->Stream.Stream);
+  { // global stream
+    auto ByteCount = ReadVarByte(&Bs);
+    if (ByteCount > 0) { // global stream
+      AllocBuf(&GlobalStream.Stream.Stream, ByteCount); // 1 MB
+      fread(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
+      InitRead(&GlobalStream.Stream, GlobalStream.Stream.Stream);
+    }
+  }
+  { // global coder
+    auto ByteCount = ReadVarByte(&Bs);
+    if (ByteCount > 0) { // global stream
+      AllocBuf(&GlobalStream.Coder.BitStream.Stream, ByteCount); // 1 MB
+      fread(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+      GlobalStream.Coder.InitRead();
     }
   }
   Dealloc(&Bs);
