@@ -2558,10 +2558,10 @@ static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
-//#define BINOMIAL 1
+#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-#define NORMAL 1
+//#define NORMAL 1
 //#define FORCE_BINOMIAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
@@ -3875,7 +3875,8 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
-    bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    //bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    bool InTheCut = Q.Depth<=Params.DecodeDepth;
     if (InTheCut) {
 #if defined(BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
@@ -3886,9 +3887,17 @@ DecodeTreeIntBFS(q_item_int Q) {
       Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Q.Begin;
 #endif
     } else {
-      NParticlesGenerated += N;
-      NParticlesDecoded += N;
-      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      //NParticlesGenerated += N;
+      //NParticlesDecoded += N;
+      //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      NParticlesGenerated += 1;
+      NParticlesDecoded += 1;
+      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = BBox.Min + Params.W3
+      };
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
@@ -5051,6 +5060,7 @@ START:
     OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
     OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
+    OptVal(Argc, Argv, "--decode_depth", &Params.DecodeDepth);
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);

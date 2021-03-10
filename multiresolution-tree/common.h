@@ -2031,6 +2031,7 @@ struct params {
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
   int DecodeBudget = INT_MAX;
+  i8 DecodeDepth = 127;
 };
 
 /* the left side is favored if the dimension is odd */
