@@ -372,7 +372,7 @@ ComputeGrid(
   DimsStr[Depth] = 'x' + D;
   //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
-  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] <= Middle; };
+  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left  = MCOPY(vec3i(0), [D]=1);
   vec3i LogDims3Right = MCOPY(vec3i(0), [D]=1);
@@ -381,7 +381,7 @@ ComputeGrid(
     ++LogDims3Left[D];
   }
   if (Mid+1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -1646,7 +1646,7 @@ BuildIntAdaptiveDFSPhase(
           FOR_EACH(B, Block.BBoxesAndIds) {
             assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
             i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-            bool Left = Particles[B->Id].Pos[DD] <= M;
+            bool Left = Particles[B->Id].Pos[DD] < M;
             auto BBoxCopy = B->BBox;
             if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
             assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
@@ -1899,7 +1899,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
             FOR_EACH(B, MyBlock.BBoxesAndIds) {
               assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
               i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-              bool Left = Particles[B->Id].Pos[DD] <= M;
+              bool Left = Particles[B->Id].Pos[DD] < M;
               auto BBoxCopy = B->BBox;
               if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
               assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
@@ -1947,7 +1947,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
             FOR_EACH(B, MyBlock.BBoxesAndIds) {
               assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
               i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-              bool Left = Particles[B->Id].Pos[DD] <= M;
+              bool Left = Particles[B->Id].Pos[DD] < M;
               auto BBoxCopy = B->BBox;
               if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
               assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
@@ -2173,7 +2173,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] <= M;
+        bool Left = Particles[Begin].Pos[DD] < M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         GrowIfTooFull(&Stream.Stream);
         Write(&Stream.Stream, Left);
@@ -2197,7 +2197,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Mid].Pos[DD] <= M;
+        bool Left = Particles[Mid].Pos[DD] < M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         Write(&Stream.Stream, Left);
       }
@@ -2794,7 +2794,7 @@ InitContext() {
 static std::tuple<i64, i64>
 WriteBinaryFiles() {
   FOR_EACH(S, Streams) { // write the block sizes
-    WriteBlock(FilePtr, &*S, &MetaStream);
+    StreamSize += WriteBlock(FilePtr, &*S, &MetaStream);
     GrowToAccomodate(&MetaStream, 8);
     WriteVarByte(&MetaStream, S->StreamSize);
     GrowToAccomodate(&MetaStream, 8);
@@ -2993,8 +2993,8 @@ START:
       Params.Dims3 = EnlargeToPow2(Params.Dims3);
       Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
-      //Params.LogDims3 = ComputeGrid(&ParticlesInt, MCOPY(Params.BBoxInt, .Max=Params.BBoxInt.Min+Params.Dims3), 0, ParticlesInt.size(), 0, Params.DimsStr);
-      Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+      Params.LogDims3 = ComputeGrid(&ParticlesInt, MCOPY(Params.BBoxInt, .Max=Params.BBoxInt.Min+Params.Dims3), 0, ParticlesInt.size(), 0, Params.DimsStr);
+      //Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
       //yxyxyzxyzxyzxyzxyzxyzxyzxyz
       //sprintf(Params.DimsStr, "%s", "xyzxyzxyzxyzxyzxyzxyzxyzxyy");
                                        //xyzxyzyyyzyzyzyzyzxyzxyzxyz
