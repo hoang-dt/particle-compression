@@ -574,13 +574,7 @@ Error(
   return Err;
 }
 
-void WriteBlockNew(bitstream* Bs, u64 BlockIdx);
-void FlushBlocksToFilesNew();
-void BuildTreeNew(q_item_new Q, float Accuracy);
-void EncodeRootNew(i64 N);
-
 f64 RMSE = 0;
-i64 StreamSize = 0;
 i64 NParticlesGenerated = 0;
 
 static cdf_table CdfTable;
@@ -819,7 +813,6 @@ static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 std::vector<vec2i> SRList;
 
-static i64 BlockCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -945,7 +938,6 @@ DecodeTreeIntPredict(
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
-    ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     //FOR_EACH(Context, ContextS ) { Context->clear(); }
     //FOR_EACH(Context, ContextTS) { Context->clear(); }
@@ -1320,7 +1312,6 @@ BuildTreeIntPredict(
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
-    ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     //FOR_EACH(Context, ContextS ) { Context->clear(); }
     //FOR_EACH(Context, ContextTS) { Context->clear(); }
@@ -1514,37 +1505,11 @@ static constexpr i8 ContextLength = 1;
 struct stream {
   bitstream Stream;
   arithmetic_coder<> Coder;
+  u32 StreamSize = 0;
+  u32 CoderSize = 0;
 };
 static stream GlobalStream;
 static std::vector<stream> Streams; // one for each block
-
-INLINE u64
-GetBlockIndex(const vec3i& From3) {
-  vec3i BlockId3 = From3 / Params.BlockDims3;
-  u64 BlockIdx = u64(BlockId3.z)*Params.NBlocks3.x*Params.NBlocks3.y + u64(BlockId3.y)*Params.NBlocks3.x + u64(BlockId3.x);
-  return BlockIdx;
-}
-
-// TODO: use the depth to determine whether we are inside a block or still above
-static stream*
-GetStream(const grid_int& Grid, i8 Depth) {
-  if (Depth >= Params.StartResolutionSplit) {
-    REQUIRE(Grid.Dims3.x <= Params.BlockDims3.x);
-    REQUIRE(Grid.Dims3.y <= Params.BlockDims3.y);
-    REQUIRE(Grid.Dims3.z <= Params.BlockDims3.z);
-    u64 BlockIdx = GetBlockIndex(Grid.From3);
-    REQUIRE(Streams.size() > BlockIdx);
-    return &Streams[BlockIdx];
-  }
-  return &GlobalStream;
-}
-
-INLINE f64
-GetScore(const grid_int& Grid, i64 N) {
-  return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z);
-  //return f64(Grid.Dims3.x)*f64(Grid.Dims3.y)*f64(Grid.Dims3.z)/f64(N);
-  //return 1000000;
-}
 
 using stack = std::vector<q_item_int>;
 struct heap_priority {
@@ -1554,14 +1519,13 @@ struct heap_priority {
   i32 TotalNParticlesOnLevel = 0; // total of particles on the current level
   //i64 TotalNParticles = 0; // total of particles on the current level
   //i64 ParticleCount = 0; // number of particles read so far
-  stream* Stream = nullptr;
-  stack* Stack = nullptr;
-  i64 BlockId = 0;
+  u32 BlockId = 0;
   INLINE bool operator<(const heap_priority& Other) const { 
     if (Level == Other.Level) {
       if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
       //if (NParticles == Other.NParticles) {
-        return Stream < Other.Stream;
+        //return Stream < Other.Stream;
+        return BlockId < Other.BlockId;
       }
       return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
       //return (NParticles) < (Other.NParticles);
@@ -1578,9 +1542,38 @@ struct heap_data {
 };
 
 static int BitCount = 0;
+static FILE* FilePtr = nullptr;
+static bitstream MetaStream;
+static i64 StreamSize = 0;
 
 static bool IsPowerOfTwo(i64 x) { return (x & (x - 1)) == 0; }
 
+static i64
+WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
+  i64 AddedBytes = 0;
+  { // stream
+    S->StreamSize = (u32)Size(S->Stream);
+    if (S->StreamSize > 0) {
+      Flush(&S->Stream);
+      fwrite(S->Stream.Stream.Data, S->StreamSize, 1, Fp);
+      AddedBytes += S->StreamSize;
+    }
+    DeallocBuf(&S->Stream.Stream);
+    //std::cout << S->StreamSize << "\n";
+  }
+  { // coder
+    S->CoderSize = (u32)Size(S->Coder.BitStream);
+    if (S->CoderSize > 0) {
+      S->Coder.EncodeFinalize();
+      fwrite(S->Coder.BitStream.Stream.Data, S->CoderSize, 1, Fp);
+      AddedBytes += S->CoderSize;
+    }
+    DeallocBuf(&S->Coder.BitStream.Stream);
+  }
+  return AddedBytes;
+}
+
+static u32 BlockIndex = 0;
 static void
 BuildIntAdaptiveDFSPhase(
   std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -1589,11 +1582,10 @@ BuildIntAdaptiveDFSPhase(
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
-  auto Stream = GetStream(Grid, Depth);
+  auto Stream = &Streams[BlockIndex];
   if (N==1 && CellCount==1) {
     const auto& G = Grid;
-    auto BlockIdx = GetBlockIndex(Grid.From3);
-    auto& Block = OutputBlocks[BlockIdx];
+    auto& Block = OutputBlocks[BlockIndex];
     bbox_int BBox {
       .Min = Params.BBoxInt.Min + G.From3*Params.W3,
       .Max = BBox.Min + Params.W3
@@ -1628,16 +1620,16 @@ BuildIntAdaptiveDFSPhase(
             ++Block.BitCount;
           }
           if (NParticlesEncoded == Block.NParticles) {
-            printf("block %lld bitcount %d\n", BlockIdx, Block.BitCount);
+            printf("block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
           }
         } else {
           NParticlesEncoded = Block.NParticles;
-          printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
+          printf("- block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
         }
       }
       // block is done, release memory
       Block.BBoxesAndIds.clear();
-      //WriteBlock(FilePtr, );
+      StreamSize += WriteBlock(FilePtr, Stream, &MetaStream);
     }
     return;
   }
@@ -1726,7 +1718,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       N = CellCount - N;
       P = CellCountLeft - P;
     }
-    auto Stream = GetStream(Q.Grid, Q.Depth);
+    auto Stream = &GlobalStream;
 #if defined(FORCE_BINOMIAL)
       f64 Mean = f64(N) / 2; // mean
       f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
@@ -1751,13 +1743,11 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
-        auto BlockIdx = GetBlockIndex(Next.Grid.From3);
-        auto& Block = OutputBlocks[BlockIdx];
+        auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxesAndIds.reserve(Block.NParticles);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
-        ++BlockCount;
+        ++BlockIndex;
       }
     }
 
@@ -1776,13 +1766,11 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
-        auto BlockIdx = GetBlockIndex(Next.Grid.From3);
-        auto& Block = OutputBlocks[BlockIdx];
+        auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxesAndIds.reserve(Block.NParticles);
         BuildIntAdaptiveDFSPhase(Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
-        ++BlockCount;
+        ++BlockIndex;
       }
     }
   }
@@ -1794,9 +1782,8 @@ BuildIntAdaptive(std::vector<particle_int>& Particles, q_item_int Q) {
     std::queue<q_item_int> Queue;
     Queue.push(Q);
     BuildIntAdaptiveBFSPhase(Particles, Queue);
-  } else {
-    auto BlockIdx = GetBlockIndex(Q.Grid.From3);
-    auto& Block = OutputBlocks[BlockIdx];
+  } else { // just one block
+    auto& Block = OutputBlocks[0];
     Block.NParticles = i32(Q.End - Q.Begin);
     Block.BBoxes.reserve(Block.NParticles);
     BuildIntAdaptiveDFSPhase(Particles, Q.Begin, Q.End, Q.Grid, Q.Split, Q.ResLvl, Q.Depth);
@@ -1859,7 +1846,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
         printf("hello1\n");
-        i32 NParticlesEncoded = 0;
+        i64 NParticlesEncoded = 0;
         while (NParticlesEncoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
           i8 DD = 0;
@@ -1907,7 +1894,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
         printf("hello2\n");
-        i32 NParticlesEncoded = 0;
+        i64 NParticlesEncoded = 0;
         while (NParticlesEncoded < Params.NParticles) {
           auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
           i8 DD = 0;
@@ -1980,7 +1967,7 @@ DecodeTreeIntBFS(q_item_int Q) {
 #else
       BitCount += DecodeCenteredMinimal(u32(N+1), &Stream.Stream, P);
 #endif
-      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      if (Flip) { P = u32(CellCountLeft-P); N = CellCount - N; }
       Mid = P + Q.Begin;
     } else {
       if (Flip) { N = CellCount - N; }
@@ -2196,7 +2183,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     InTheCut = BitCount < Params.DecodeBudget*8;
-    auto Stream = GetStream(Q.Grid, Q.Depth);
+    auto Stream = &GlobalStream;
     if (InTheCut) {
       bool Flip = CellCount-N < N;
       if (Flip) N = CellCount - N;
@@ -2236,21 +2223,18 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
-        i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
-        auto& Block = OutputBlocks[BlockIdx];
+        printf("block %d: bitcount %lld\n", BlockIndex, Size(Streams[BlockIndex].Stream.Stream));
+        auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
-        Stacks[BlockIdx].push_back(Next);
+        Stacks[BlockIndex].push_back(Next);
         Heap.push(
           heap_priority{
             .Level=100, 
             .NParticles=i32(Next.End-Next.Begin),
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
-            .Stream=&Streams[BlockIdx],
-            .Stack=&Stacks[BlockIdx],
-            .BlockId=BlockIdx});
-        ++BlockCount;
+            .BlockId=BlockIndex});
+        ++BlockIndex;
       }
     }
     i64 NParticlesRight = 0;
@@ -2270,35 +2254,33 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
-        i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
-        auto& Block = OutputBlocks[BlockIdx];
+        printf("block %d: bitcount %lld\n", BlockIndex, Size(Streams[BlockIndex].Stream.Stream));
+        auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
-        Stacks[BlockIdx].push_back(Next);
+        Stacks[BlockIndex].push_back(Next);
         Heap.push(heap_priority{
             .Level=100, 
             .NParticles=i32(Next.End-Next.Begin), 
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin), 
-            .Stream=&Streams[BlockIdx],
-            .Stack=&Stacks[BlockIdx],
-            .BlockId=BlockIdx});
-        ++BlockCount;
+            .BlockId=BlockIndex});
+        ++BlockIndex;
       }
     }
   }
 }
 
+static std::vector<stack> Stacks; // one stack for each block
 static int
 DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
-  auto Stack = TopPriority.Stack;
+  auto Stack = &Stacks[TopPriority.BlockId];
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
   auto BitCountBackup = BitCount;
   while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<512) {
     auto Q = Stack->back();
     Stack->pop_back();
-    auto Stream = GetStream(Q.Grid, Q.Depth);
+    auto Stream = &Streams[TopPriority.BlockId];
     if (Q.ResLvl != TopPriority.Level) { // TODO: move the update out of the loop
       TopPriority.Level = Q.ResLvl;
       TopPriority.NParticles = i32(Q.End - Q.Begin);
@@ -2308,10 +2290,9 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 Mid = Q.Begin;
-    auto BlockIdx = GetBlockIndex(Q.Grid.From3);
     //assert(BlockIdx == TopPriority.BlockId);
     if (N==1 && CellCount==1) {
-      block_info& Block = OutputBlocks[BlockIdx];
+      block_info& Block = OutputBlocks[TopPriority.BlockId];
       const auto& G = Q.Grid;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + G.From3*Params.W3,
@@ -2389,29 +2370,24 @@ DecodeIntAdaptive(q_item_int Q) {
   // TODO: resize the Stacks to the number of blocks
   std::queue<q_item_int> Queue;
   std::priority_queue<heap_priority> Heap;
-  std::vector<stack> Stacks; // one stack for each block
   Stacks.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   Queue.push(Q);
   /*-------------------- BFS phase ---------------------- */
   if (Params.StartResolutionSplit > 0) {
     DecodeIntAdaptiveBFSPhase(Queue, Heap, Stacks);
   } else {
-    i64 BlockIdx = GetBlockIndex(Q.Grid.From3);
-    auto& Block = OutputBlocks[BlockIdx];
+    auto& Block = OutputBlocks[0];
     Block.NParticles = i32(Q.End - Q.Begin);
     Block.BBoxes.reserve(Block.NParticles);
-    Stacks[BlockIdx].push_back(Q);
+    Stacks[0].push_back(Q);
     Heap.push(heap_priority{
       .Level=100, 
       .NParticles=i32(Q.End-Q.Begin), 
       .TotalNParticlesOnLevel=i32(Q.End-Q.Begin), 
-      .Stream=&Streams[BlockIdx],
-      .Stack=&Stacks[BlockIdx],
-      .BlockId=BlockIdx});
+      .BlockId=0});
   }
   /*-------------------- DFS phase ---------------------- */
   bool InTheCut = BitCount < Params.DecodeBudget*8;
-  std::vector<i64> BlockCount(Stacks.size(), 0);
   // TODO: we need to prioritize blocks where particles are less refined
   while (InTheCut && !Heap.empty()) {
     heap_priority TopPriority = Heap.top();
@@ -2456,7 +2432,6 @@ DecodeIntAdaptive(q_item_int Q) {
     } else { // still in the DFS phase, not refinement
       Heap.pop();
       auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
-      const auto& Stack = *(TopPriority.Stack);
       Heap.push(TopPriority);
     }
     //++BlockCount[TopPriority.BlockId];
@@ -2465,7 +2440,7 @@ DecodeIntAdaptive(q_item_int Q) {
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
   FOR_EACH(B, OutputBlocks) {
-    printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
+    printf("n %d ndecoded %d bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
     FOR_EACH(BB, B->BBoxes) {
       OutputParticles.push_back(particle_int{.Pos=BB->Min});
     }
@@ -2508,7 +2483,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     //  return nullptr;
     //}
   }
-  if (Flip) P = CellCountLeft - P;
+  if (Flip) P = u32(CellCountLeft-P);
   assert(P <= CellCountLeft);
   Mid = P + Begin;
 
@@ -2761,81 +2736,42 @@ InitContext() {
   FOR_EACH (C, ContextTSR) { C->reserve(512); }
 }
 
-static i64
-WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
-  i64 StreamSize = 0;
-  { // stream
-    auto ByteCount = Size(S->Stream);
-    if (ByteCount > 0) {
-      Flush(&S->Stream);
-      fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
-      StreamSize += ByteCount;
-    }
-    GrowToAccomodate(Bs, 8);
-    WriteVarByte(Bs, ByteCount);
-  }
-  { // coder
-    auto ByteCount = Size(S->Coder.BitStream);
-    if (ByteCount > 0) {
-      S->Coder.EncodeFinalize();
-      fwrite(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
-      StreamSize += ByteCount;
-    }
-    GrowToAccomodate(Bs, 8);
-    WriteVarByte(Bs, ByteCount);
-  }
-  return StreamSize;
-}
-
 static std::tuple<i64, i64>
 WriteBinaryFiles() {
-  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  i64 StreamSize = 0;
-  bitstream Bs;
-  InitWrite(&Bs, 10 << 20);
-  FOR_EACH(S, Streams) {
-    StreamSize += WriteBlock(Fp, &*S, &Bs);
+  FOR_EACH(S, Streams) { // write the block sizes
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, S->StreamSize);
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, S->CoderSize);
   }
   { // global stream
     auto ByteCount = Size(GlobalStream.Stream);
     if (ByteCount > 0) {
       Flush(&GlobalStream.Stream);
-      fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
+      fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, FilePtr);
       StreamSize += ByteCount;
     }
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount); // global stream
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, ByteCount); // global stream
   }
   { // global coder
     auto ByteCount = Size(GlobalStream.Coder.BitStream);
     if (ByteCount > 0) {
       GlobalStream.Coder.EncodeFinalize();
-      fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+      fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, FilePtr);
       StreamSize += ByteCount;
     }
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount); // global coder
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, ByteCount); // global coder
   }
   // write the meta data
-  Flush(&Bs);
-  fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
-  i64 MetaSize = Size(Bs);
-  fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
-  fclose(Fp);
-  Dealloc(&Bs);
+  Flush(&MetaStream);
+  fwrite(MetaStream.Stream.Data, Size(MetaStream), 1, FilePtr);
+  i64 MetaSize = Size(MetaStream);
+  fwrite(&MetaSize, sizeof(MetaSize), 1, FilePtr);
+  fclose(FilePtr);
+  Dealloc(&MetaStream);
   return {StreamSize, MetaSize};
-
-  //i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
-  //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  //i64 FirstStreamSize = Size(BlockStream);
-  //i64 SecondStreamSize = Size(Coder.BitStream);
-  //fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  //if (SecondStreamSize > 0)
-  //  fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-  //fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
-  //fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
-  //fclose(Fp);
-  //return {BlockStreamSize, 0};
 }
 
 static void
@@ -2862,7 +2798,8 @@ ReadBinaryFiles(const grid_int& Grid) {
   FOR_EACH(S, Streams) {
     { // stream
       auto ByteCount = ReadVarByte(&Bs);
-      if (ByteCount > 0) {
+      //std::cout << ByteCount << "\n";
+      if (ByteCount > 0) {        
         AllocBuf(&S->Stream.Stream, ByteCount);
         fread(S->Stream.Stream.Data, ByteCount, 1, Fp);
         InitRead(&S->Stream, S->Stream.Stream);
@@ -2966,6 +2903,8 @@ main(int Argc, cstr* Argv) {
     FILE* Tp = nullptr;
     bool Ok = false;
     i32 TimeStep = 0;
+    FilePtr = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+    InitWrite(&MetaStream, 1<<20);
     if (!Series) 
       goto START;
     Tp = fopen(Params.InFile, "rb");
@@ -3001,9 +2940,6 @@ START:
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
       //Params.LogDims3 = ComputeGrid(&ParticlesInt, MCOPY(Params.BBoxInt, .Max=Params.BBoxInt.Min+Params.Dims3), 0, ParticlesInt.size(), 0, Params.DimsStr);
       Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
-      //yxyxyzxyzxyzxyzxyzxyzxyzxyz
-      //sprintf(Params.DimsStr, "%s", "xyzxyzxyzxyzxyzxyzxyzxyzxyy");
-                                       //xyzxyzyyyzyzyzyzyzxyzxyzxyz
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
       Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);

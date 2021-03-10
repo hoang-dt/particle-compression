@@ -2288,25 +2288,6 @@ inline i64 NBlocksWritten = 0;
 #define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
 #define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
 
-
-/* tree block (including refinement block) */
-inline void
-WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
-//  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
-  if (Size(*Bs) > 0) {
-    Flush(Bs);
-    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
-    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
-    fclose(Fp);
-
-    // book-keeping
-    BlockBytes[Level].push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
-    MaxBlockSize = MAX(MaxBlockSize, (int)Size(*Bs));
-    Rewind(Bs);
-    ++NBlocksWritten;
-  }
-}
-
 inline void
 WriteMetaFile(const params& Params, cstr FileName) {
   FILE* Fp = fopen(FileName, "w");
