@@ -478,8 +478,14 @@ Error3(
     vec3i Diff = Q - P->Pos;
     Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
   }
+  auto BBox = ComputeBoundingBox(Particles2);
+  auto D3 = BBox.Max - BBox.Min;
+  auto M = MAX(D3.x, D3.y);
+  M = MAX(M, D3.z);
   int NDims = Dims3.z == 1 ? 2 : 3;
   Err = std::sqrt(Err / (NDims * Particles2.size()));
+  double Psnr = 20 * log10(M/Err);
+  printf("%f\n", Psnr);
   return f32(Err);
 }
 
@@ -780,10 +786,10 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-//#define FORCE_BINOMIAL 1
+#define FORCE_BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-#define NORMAL 1
+//#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -1876,8 +1882,10 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
 #if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+    GrowIfTooFull(&Stream.Coder.BitStream);
     EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
 #else
+    GrowIfTooFull(&Stream.Stream);
     EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
 #endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
@@ -1888,31 +1896,31 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       };
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
-        printf("hello1\n");
-        i32 NParticlesEncoded = 0;
-        while (NParticlesEncoded < Params.NParticles) {
-          auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
-          i8 DD = 0;
-          if (W3.y > W3[DD]) DD = 1;
-          if (W3.z > W3[DD]) DD = 2;
-          if (W3[DD] > 1) {
-            FOR_EACH(B, MyBlock.BBoxesAndIds) {
-              assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
-              i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-              bool Left = Particles[B->Id].Pos[DD] < M;
-              auto BBoxCopy = B->BBox;
-              if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
-              assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
-              GrowIfTooFull(&Stream.Stream);
-              Write(&Stream.Stream, Left);
-              if (B->BBox.Min+1 == B->BBox.Max) {
-                ++NParticlesEncoded; 
-              }
-            }
-          } else {
-            NParticlesEncoded = Params.NParticles;
-          }
-        }
+        //printf("hello1\n");
+        //i32 NParticlesEncoded = 0;
+        //while (NParticlesEncoded < Params.NParticles) {
+        //  auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
+        //  i8 DD = 0;
+        //  if (W3.y > W3[DD]) DD = 1;
+        //  if (W3.z > W3[DD]) DD = 2;
+        //  if (W3[DD] > 1) {
+        //    FOR_EACH(B, MyBlock.BBoxesAndIds) {
+        //      assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
+        //      i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
+        //      bool Left = Particles[B->Id].Pos[DD] < M;
+        //      auto BBoxCopy = B->BBox;
+        //      if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
+        //      assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
+        //      GrowIfTooFull(&Stream.Stream);
+        //      Write(&Stream.Stream, Left);
+        //      if (B->BBox.Min+1 == B->BBox.Max) {
+        //        ++NParticlesEncoded; 
+        //      }
+        //    }
+        //  } else {
+        //    NParticlesEncoded = Params.NParticles;
+        //  }
+        //}
       }
     } else if (Q.Begin < Mid) {
       split_type NextSplit = 
@@ -1936,31 +1944,31 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       };
       MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
       if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
-        printf("hello2\n");
-        i32 NParticlesEncoded = 0;
-        while (NParticlesEncoded < Params.NParticles) {
-          auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
-          i8 DD = 0;
-          if (W3.y > W3[DD]) DD = 1;
-          if (W3.z > W3[DD]) DD = 2;
-          if (W3[DD] > 1) {
-            FOR_EACH(B, MyBlock.BBoxesAndIds) {
-              assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
-              i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-              bool Left = Particles[B->Id].Pos[DD] < M;
-              auto BBoxCopy = B->BBox;
-              if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
-              assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
-              GrowIfTooFull(&Stream.Stream);
-              Write(&Stream.Stream, Left);
-              if (B->BBox.Min+1 == B->BBox.Max) {
-                ++NParticlesEncoded; 
-              }
-            }
-          } else {
-            NParticlesEncoded = Params.NParticles;
-          }
-        }
+        //printf("hello2\n");
+        //i32 NParticlesEncoded = 0;
+        //while (NParticlesEncoded < Params.NParticles) {
+        //  auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
+        //  i8 DD = 0;
+        //  if (W3.y > W3[DD]) DD = 1;
+        //  if (W3.z > W3[DD]) DD = 2;
+        //  if (W3[DD] > 1) {
+        //    FOR_EACH(B, MyBlock.BBoxesAndIds) {
+        //      assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
+        //      i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
+        //      bool Left = Particles[B->Id].Pos[DD] < M;
+        //      auto BBoxCopy = B->BBox;
+        //      if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
+        //      assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
+        //      GrowIfTooFull(&Stream.Stream);
+        //      Write(&Stream.Stream, Left);
+        //      if (B->BBox.Min+1 == B->BBox.Max) {
+        //        ++NParticlesEncoded; 
+        //      }
+        //    }
+        //  } else {
+        //    NParticlesEncoded = Params.NParticles;
+        //  }
+        //}
       }
     } else if (Mid < Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
@@ -2001,7 +2009,7 @@ DecodeTreeIntBFS(q_item_int Q) {
     auto& Stream = GlobalStream;
     bool Flip = CellCount-N < N;
     if (Flip) N = CellCount - N;
-    if (InTheCut) {
+    if (InTheCut && Q.Depth<=Params.DecodeDepth) {
       u32 P = 0;
 #if defined(FORCE_BINOMIAL)
       f64 Mean = f64(N) / 2; // mean
@@ -2014,10 +2022,15 @@ DecodeTreeIntBFS(q_item_int Q) {
       Mid = P + Q.Begin;
     } else { // out of the cut
       if (Flip) { N = CellCount - N; }
-      int M = int(N*Params.SubsamplingRatio);
-      NParticlesGenerated += M;
-      NParticlesDecoded += M;
-      GenerateParticlesPerNode(M, Q.Grid, &OutputParticles);
+      //int M = int(N*Params.SubsamplingRatio);
+      NParticlesGenerated += 1;
+      NParticlesDecoded += 1;
+      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = BBox.Min + Params.W3
+      };
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
@@ -2030,31 +2043,31 @@ DecodeTreeIntBFS(q_item_int Q) {
       };
       MyBlock.BBoxes.push_back(BBox);
       if (MyBlock.BBoxes.size() == Params.NParticles) {
-        printf("hello1\n");
-        while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
-          auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
-          i8 DD = 0;
-          if (W3.y > W3[DD]) DD = 1;
-          if (W3.z > W3[DD]) DD = 2;
-          FOR_EACH(B, MyBlock.BBoxes) {
-            if (W3[DD] > 1) {
-              bool Left = Read(&Stream.Stream);
-              ++BitCount;
-              InTheCut = BitCount < Params.DecodeBudget*8;
-              if (!InTheCut)
-                break;
-              i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-              if (Left) B->Max[DD] = M; else B->Min[DD] = M;
-            }
-            if (B->Min+1 == B->Max) {
-              ++MyBlock.NParticlesDecoded;
-              //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-              //++NParticlesGenerated;
-              //++NParticlesDecoded;
-            }
-          }
-          InTheCut = BitCount < Params.DecodeBudget*8;
-        }
+        //printf("hello1\n");
+        //while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
+        //  auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
+        //  i8 DD = 0;
+        //  if (W3.y > W3[DD]) DD = 1;
+        //  if (W3.z > W3[DD]) DD = 2;
+        //  FOR_EACH(B, MyBlock.BBoxes) {
+        //    if (W3[DD] > 1) {
+        //      bool Left = Read(&Stream.Stream);
+        //      ++BitCount;
+        //      InTheCut = BitCount < Params.DecodeBudget*8;
+        //      if (!InTheCut)
+        //        break;
+        //      i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+        //      if (Left) B->Max[DD] = M; else B->Min[DD] = M;
+        //    }
+        //    if (B->Min+1 == B->Max) {
+        //      ++MyBlock.NParticlesDecoded;
+        //      //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
+        //      //++NParticlesGenerated;
+        //      //++NParticlesDecoded;
+        //    }
+        //  }
+        //  InTheCut = BitCount < Params.DecodeBudget*8;
+        //}
       }
     } else if (InTheCut && Q.Begin<Mid) {
       split_type NextSplit = 
@@ -2081,28 +2094,28 @@ DecodeTreeIntBFS(q_item_int Q) {
       if (MyBlock.BBoxes.size() == Params.NParticles) {
         printf("hello2\n");
         while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
-          auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
-          i8 DD = 0;
-          if (W3.y > W3[DD]) DD = 1;
-          if (W3.z > W3[DD]) DD = 2;
-          FOR_EACH(B, MyBlock.BBoxes) {
-            if (W3[DD] > 1) {
-              bool Left = Read(&Stream.Stream);
-              ++BitCount;
-              InTheCut = BitCount < Params.DecodeBudget*8;
-              if (!InTheCut)
-                break;
-              i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-              if (Left) B->Max[DD] = M; else B->Min[DD] = M;
-            }
-            if (B->Min+1 == B->Max) {
-              ++MyBlock.NParticlesDecoded;
-              //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-              //++NParticlesGenerated;
-              //++NParticlesDecoded;
-            }
-          }
-          InTheCut = BitCount < Params.DecodeBudget*8;
+          //auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
+          //i8 DD = 0;
+          //if (W3.y > W3[DD]) DD = 1;
+          //if (W3.z > W3[DD]) DD = 2;
+          //FOR_EACH(B, MyBlock.BBoxes) {
+          //  if (W3[DD] > 1) {
+          //    bool Left = Read(&Stream.Stream);
+          //    ++BitCount;
+          //    InTheCut = BitCount < Params.DecodeBudget*8;
+          //    if (!InTheCut)
+          //      break;
+          //    i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+          //    if (Left) B->Max[DD] = M; else B->Min[DD] = M;
+          //  }
+          //  if (B->Min+1 == B->Max) {
+          //    ++MyBlock.NParticlesDecoded;
+          //    //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
+          //    //++NParticlesGenerated;
+          //    //++NParticlesDecoded;
+          //  }
+          //}
+          //InTheCut = BitCount < Params.DecodeBudget*8;
         }
       }
     } else if (InTheCut && Mid<Q.End) {
@@ -2117,10 +2130,11 @@ DecodeTreeIntBFS(q_item_int Q) {
       });
     }
   }
-  FOR_EACH(BB, MyBlock.BBoxesAndIds) {
-    OutputParticles.push_back(particle_int{.Pos=(BB->BBox.Min+BB->BBox.Max)/2});
+  FOR_EACH(BB, MyBlock.BBoxes) {
+    OutputParticles.push_back(particle_int{.Pos=(BB->Min+BB->Max)/2});
   }
-  NParticlesDecoded += MyBlock.BBoxesAndIds.size();
+  NParticlesDecoded += MyBlock.BBoxes.size();
+  NParticlesGenerated += MyBlock.BBoxes.size();
 }
 
 static void
@@ -3078,10 +3092,8 @@ START:
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     ReadMetaFile(PRINT("%s.idx", Params.InFile));
-    OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
-    OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
-    OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
     OptVal(Argc, Argv, "--sub_ratio", &Params.SubsamplingRatio);
+    OptVal(Argc, Argv, "--decode_depth", &Params.DecodeDepth);
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);
@@ -3137,13 +3149,14 @@ START:
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
+    WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
     printf("bit count = %d bytes\n", BitCount/8);
     vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
-    if (Budget)
+    if (Budget) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
+    }
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -3151,13 +3164,14 @@ START:
     if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
     auto Particles1 = ReadParticlesInt(Params.InFile);
     auto Particles2 = ReadParticlesInt(Params.OutFile);
-    //f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
+    f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
     //f32 Err2 = Error3(Particles2, Particles1, Params.Dims3);
     //printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
-    if (!CheckSame(Particles1, Particles2))
-      printf("not same\n");
-    else
-      printf("same\n");
+    printf("error = %f\n", Err1);
+    //if (!CheckSame(Particles1, Particles2))
+    //  printf("not same\n");
+    //else
+    //  printf("same\n");
   //================= CONVERT =======================
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -3190,8 +3204,8 @@ START:
     } else if (OptExists(Argc, Argv, "--ospray")) {
       Params.BBox = ComputeBoundingBox(Particles);
       vec3f Scale3 = 30.0 / vec3f(Params.BBox.Max - Params.BBox.Min);
-      //WriteXYZ(PRINT("%s.xyz", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
-      WriteVTU(PRINT("%s.vtu", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
+      //WriteVTU(PRINT("%s.vtu", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
     } else {
       fprintf(stderr, "Writing particles\n");
       WriteParticles(Params.OutFile, Particles);

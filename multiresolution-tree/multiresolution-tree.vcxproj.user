@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--action decode --in detonation_180m-adaptive --out detonation_180m-adaptive --adaptive --budget 16000000   </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments> --action encode --in dambreak-dedup.vtu --name dambreak-bfs --ndims 3 --nlevels 1 --start_depth 0 --bfs   </LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
