@@ -2012,11 +2012,12 @@ DecodeTreeIntBFS(q_item_int Q) {
 #endif
       if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
       Mid = P + Q.Begin;
-    } else {
+    } else { // out of the cut
       if (Flip) { N = CellCount - N; }
-      NParticlesGenerated += N;
-      NParticlesDecoded += N;
-      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      int M = int(N*Params.SubsamplingRatio);
+      NParticlesGenerated += M;
+      NParticlesDecoded += M;
+      GenerateParticlesPerNode(M, Q.Grid, &OutputParticles);
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
@@ -3080,6 +3081,7 @@ START:
     OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
     OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
+    OptVal(Argc, Argv, "--sub_ratio", &Params.SubsamplingRatio);
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);

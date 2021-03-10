@@ -2207,6 +2207,7 @@ struct params {
   //bool NoRefinement = false;
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
   int DecodeBudget = INT_MAX;
+  double SubsamplingRatio = 1.0;
 };
 
 /* the left side is favored if the dimension is odd */
