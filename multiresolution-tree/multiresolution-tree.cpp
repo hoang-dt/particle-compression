@@ -1608,7 +1608,7 @@ BuildIntAdaptiveDFSPhase(
           FOR_EACH(B, Block.BBoxesAndIds) {
             assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
             i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-            bool Left = Particles[B->Id].Pos[DD] <= M;
+            bool Left = Particles[B->Id].Pos[DD] < M;
             auto BBoxCopy = B->BBox;
             if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
             assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
