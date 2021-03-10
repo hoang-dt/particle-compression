@@ -1305,16 +1305,18 @@ Error3(
     auto Nearest = Tree.nearest(Point);
     vec3i Q(Nearest.coords_[0], Nearest.coords_[1], Nearest.coords_[2]);
     vec3i Diff = Q - P->Pos;
-    f64 D = Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
-    Err += D;
+    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
   }
+  auto BBox = ComputeBoundingBox(Particles2);
+  auto D3 = BBox.Max - BBox.Min;
+  auto M = MAX(D3.x, D3.y);
+  M = MAX(M, D3.z);
   int NDims = Dims3.z == 1 ? 2 : 3;
   Err = std::sqrt(Err / (NDims * Particles2.size()));
-  
-  printf("rmse = %f\n", Err);
-  return Err;
+  double Psnr = 20 * log10(M/Err);
+  printf("%f\n", Psnr);
+  return f32(Err);
 }
-
 static f32
 Error3( 
   const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
