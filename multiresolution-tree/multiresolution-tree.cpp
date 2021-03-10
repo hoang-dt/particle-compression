@@ -1620,11 +1620,11 @@ BuildIntAdaptiveDFSPhase(
             ++Block.BitCount;
           }
           if (NParticlesEncoded == Block.NParticles) {
-            printf("block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
+            //printf("block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
           }
         } else {
           NParticlesEncoded = Block.NParticles;
-          printf("- block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
+          //printf("- block %d bitcount %d\n", BlockIndex, (Block.BitCount+7)/8);
         }
       }
       // block is done, release memory
@@ -1743,6 +1743,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
+        printf("block %d: nparticles %lld\n", BlockIndex, Next.End-Next.Begin);
         auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxesAndIds.reserve(Block.NParticles);
@@ -1766,6 +1767,7 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
       if (Next.Depth < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
+        printf("block %d: nparticles %lld\n", BlockIndex, Next.End-Next.Begin);
         auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxesAndIds.reserve(Block.NParticles);
@@ -2212,18 +2214,18 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-        q_item_int Next{
-          .Begin = Q.Begin,
-          .End = Mid,
-          .Grid = GridLeft,
-          .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
-          .Depth = i8(Q.Depth+1),
-          .Split = NextSplit
-        };
+      q_item_int Next{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit
+      };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("block %d: bitcount %lld\n", BlockIndex, Size(Streams[BlockIndex].Stream.Stream));
+        printf("block %d: nparticles %lld\n", BlockIndex, Next.End-Next.Begin);
         auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
@@ -2254,7 +2256,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
       } else {
-        printf("block %d: bitcount %lld\n", BlockIndex, Size(Streams[BlockIndex].Stream.Stream));
+        printf("block %d: nparticles %lld\n", BlockIndex, Next.End-Next.Begin);
         auto& Block = OutputBlocks[BlockIndex];
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
