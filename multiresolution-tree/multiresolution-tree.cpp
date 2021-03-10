@@ -580,7 +580,6 @@ void BuildTreeNew(q_item_new Q, float Accuracy);
 void EncodeRootNew(i64 N);
 
 f64 RMSE = 0;
-i64 StreamSize = 0;
 i64 NParticlesGenerated = 0;
 
 static cdf_table CdfTable;
@@ -1514,6 +1513,8 @@ static constexpr i8 ContextLength = 1;
 struct stream {
   bitstream Stream;
   arithmetic_coder<> Coder;
+  u32 StreamSize = 0;
+  u32 CoderSize = 0;
 };
 static stream GlobalStream;
 static std::vector<stream> Streams; // one for each block
@@ -1578,9 +1579,38 @@ struct heap_data {
 };
 
 static int BitCount = 0;
+static FILE* FilePtr = nullptr;
+static bitstream MetaStream;
+static i64 StreamSize = 0;
 
 static bool IsPowerOfTwo(i64 x) { return (x & (x - 1)) == 0; }
 
+static i64
+WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
+  i64 AddedBytes = 0;
+  { // stream
+    S->StreamSize = (u32)Size(S->Stream);
+    if (S->StreamSize > 0) {
+      Flush(&S->Stream);
+      fwrite(S->Stream.Stream.Data, S->StreamSize, 1, Fp);
+      AddedBytes += S->StreamSize;
+    }
+    DeallocBuf(&S->Stream.Stream);
+    //std::cout << S->StreamSize << "\n";
+  }
+  { // coder
+    S->CoderSize = (u32)Size(S->Coder.BitStream);
+    if (S->CoderSize > 0) {
+      S->Coder.EncodeFinalize();
+      fwrite(S->Coder.BitStream.Stream.Data, S->CoderSize, 1, Fp);
+      AddedBytes += S->CoderSize;
+    }
+    DeallocBuf(&S->Coder.BitStream.Stream);
+  }
+  return AddedBytes;
+}
+
+static u32 BlockIndex = 0;
 static void
 BuildIntAdaptiveDFSPhase(
   std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -2761,81 +2791,43 @@ InitContext() {
   FOR_EACH (C, ContextTSR) { C->reserve(512); }
 }
 
-static i64
-WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
-  i64 StreamSize = 0;
-  { // stream
-    auto ByteCount = Size(S->Stream);
-    if (ByteCount > 0) {
-      Flush(&S->Stream);
-      fwrite(S->Stream.Stream.Data, ByteCount, 1, Fp);
-      StreamSize += ByteCount;
-    }
-    GrowToAccomodate(Bs, 8);
-    WriteVarByte(Bs, ByteCount);
-  }
-  { // coder
-    auto ByteCount = Size(S->Coder.BitStream);
-    if (ByteCount > 0) {
-      S->Coder.EncodeFinalize();
-      fwrite(S->Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
-      StreamSize += ByteCount;
-    }
-    GrowToAccomodate(Bs, 8);
-    WriteVarByte(Bs, ByteCount);
-  }
-  return StreamSize;
-}
-
 static std::tuple<i64, i64>
 WriteBinaryFiles() {
-  FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  i64 StreamSize = 0;
-  bitstream Bs;
-  InitWrite(&Bs, 10 << 20);
-  FOR_EACH(S, Streams) {
-    StreamSize += WriteBlock(Fp, &*S, &Bs);
+  FOR_EACH(S, Streams) { // write the block sizes
+    WriteBlock(FilePtr, &*S, &MetaStream);
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, S->StreamSize);
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, S->CoderSize);
   }
   { // global stream
     auto ByteCount = Size(GlobalStream.Stream);
     if (ByteCount > 0) {
       Flush(&GlobalStream.Stream);
-      fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, Fp);
+      fwrite(GlobalStream.Stream.Stream.Data, ByteCount, 1, FilePtr);
       StreamSize += ByteCount;
     }
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount); // global stream
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, ByteCount); // global stream
   }
   { // global coder
     auto ByteCount = Size(GlobalStream.Coder.BitStream);
     if (ByteCount > 0) {
       GlobalStream.Coder.EncodeFinalize();
-      fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, Fp);
+      fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, FilePtr);
       StreamSize += ByteCount;
     }
-    GrowToAccomodate(&Bs, 8);
-    WriteVarByte(&Bs, ByteCount); // global coder
+    GrowToAccomodate(&MetaStream, 8);
+    WriteVarByte(&MetaStream, ByteCount); // global coder
   }
   // write the meta data
-  Flush(&Bs);
-  fwrite(Bs.Stream.Data, Size(Bs), 1, Fp);
-  i64 MetaSize = Size(Bs);
-  fwrite(&MetaSize, sizeof(MetaSize), 1, Fp);
-  fclose(Fp);
-  Dealloc(&Bs);
+  Flush(&MetaStream);
+  fwrite(MetaStream.Stream.Data, Size(MetaStream), 1, FilePtr);
+  i64 MetaSize = Size(MetaStream);
+  fwrite(&MetaSize, sizeof(MetaSize), 1, FilePtr);
+  fclose(FilePtr);
+  Dealloc(&MetaStream);
   return {StreamSize, MetaSize};
-
-  //i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
-  //FILE* Fp = fopen(PRINT("%s.bin", Params.OutFile), "wb");
-  //i64 FirstStreamSize = Size(BlockStream);
-  //i64 SecondStreamSize = Size(Coder.BitStream);
-  //fwrite(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
-  //if (SecondStreamSize > 0)
-  //  fwrite(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
-  //fwrite(&FirstStreamSize, sizeof(FirstStreamSize), 1, Fp);
-  //fwrite(&SecondStreamSize, sizeof(SecondStreamSize), 1, Fp);
-  //fclose(Fp);
-  //return {BlockStreamSize, 0};
 }
 
 static void
@@ -2966,6 +2958,8 @@ main(int Argc, cstr* Argv) {
     FILE* Tp = nullptr;
     bool Ok = false;
     i32 TimeStep = 0;
+    FilePtr = fopen(PRINT("%s.bin", Params.OutFile), "wb");
+    InitWrite(&MetaStream, 1<<20);
     if (!Series) 
       goto START;
     Tp = fopen(Params.InFile, "rb");
