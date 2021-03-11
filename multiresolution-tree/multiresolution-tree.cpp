@@ -786,10 +786,10 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-#define FORCE_BINOMIAL 1
+//#define FORCE_BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -3178,10 +3178,10 @@ START:
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     bool Quantize = OptExists(Argc, Argv, "--quantize");
     f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
-    Particles = ReadParticles(Params.InFile);
-    //ParticlesInt = ReadParticlesInt(Params.InFile);
+    //Particles = ReadParticles(Params.InFile);
+    ParticlesInt = ReadParticlesInt(Params.InFile);
     fprintf(stderr, "Done reading particles\n");
-    ParticlesInt.resize(Particles.size());
+    //ParticlesInt.resize(Particles.size());
     if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
         MaxAbsX = MAX(MaxAbsX, fabs(P->Pos.x));
@@ -3202,9 +3202,10 @@ START:
       fprintf(stderr, "Writing particles\n");
       WriteParticlesInt(Params.OutFile, ParticlesInt);
     } else if (OptExists(Argc, Argv, "--ospray")) {
-      Params.BBox = ComputeBoundingBox(Particles);
-      vec3f Scale3 = 30.0 / vec3f(Params.BBox.Max - Params.BBox.Min);
-      WriteXYZ(PRINT("%s.xyz", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
+      //Params.BBox = ComputeBoundingBox(Particles);
+      Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
+      vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end(), Params.BBoxInt.Min, Scale3);      
       //WriteVTU(PRINT("%s.vtu", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
     } else {
       fprintf(stderr, "Writing particles\n");
