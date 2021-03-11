@@ -2565,10 +2565,10 @@ static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
-#define BINOMIAL 1
+//#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define FORCE_BINOMIAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
