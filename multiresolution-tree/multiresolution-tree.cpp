@@ -1305,7 +1305,7 @@ Error3(
     auto Nearest = Tree.nearest(Point);
     vec3i Q(Nearest.coords_[0], Nearest.coords_[1], Nearest.coords_[2]);
     vec3i Diff = Q - P->Pos;
-    Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
+    Err += f64(Diff.x) * f64(Diff.x) + f64(Diff.y) * f64(Diff.y) + f64(Diff.z) * f64(Diff.z);
   }
   auto BBox = ComputeBoundingBox(Particles2);
   auto D3 = BBox.Max - BBox.Min;
@@ -2560,10 +2560,10 @@ static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
-#define BINOMIAL 1
+//#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define FORCE_BINOMIAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
@@ -5136,7 +5136,7 @@ START:
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
-    printf("consumed stream size = %lld\n", Size(BlockStream));
+    printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
     WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
