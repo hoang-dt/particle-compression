@@ -1185,23 +1185,28 @@ BuildTreeInner(q_item Q, float Accuracy) {
 
 static vec3i
 ComputeGrid(
-  std::vector<particle_int>* Particles, const bbox_int& BBox, 
+  std::vector<particle_int>* Particles, const bbox_int& BBox,
   i64 Begin, i64 End, i8 Depth, str DimsStr)
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
-    D = 0;
-  else
-  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-    D = 1;
-  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-    D = 2;
-  DimsStr[Depth] = 'x' + D; 
-  assert((BBoxExt3[D]&1) == 0);
+  if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
+    D = Depth % Params.NDims;
+  } else { // take the largest dimension
+    vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+    if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+      D = 0;
+    else
+    if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+      D = 1;
+    else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
+      D = 2;
+  }
+  DimsStr[Depth] = 'x' + D;
+  //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
-  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] <= Middle; };
+  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left  = MCOPY(vec3i(0), [D]=1);
   vec3i LogDims3Right = MCOPY(vec3i(0), [D]=1);
@@ -1210,7 +1215,7 @@ ComputeGrid(
     ++LogDims3Left[D];
   }
   if (Mid+1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -2560,10 +2565,10 @@ static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
-//#define BINOMIAL 1
+#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-#define NORMAL 1
+//#define NORMAL 1
 //#define FORCE_BINOMIAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
@@ -4908,10 +4913,10 @@ START:
       Params.NParticles = ParticlesInt.size();
       if (TreePtrBackup == nullptr) {
         assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 8];
-        PrevFramePtr = new tree[Params.NParticles * 8];
-        TreePtrBackup      = TreePtr;
-        PrevFramePtrBackup = PrevFramePtr;
+        //TreePtr      = new tree[Params.NParticles * 8];
+        //PrevFramePtr = new tree[Params.NParticles * 8];
+        //TreePtrBackup      = TreePtr;
+        //PrevFramePtrBackup = PrevFramePtr;
       }
       printf("number of particles = %zu\n", ParticlesInt.size());
       double start_time = timer();
@@ -4926,7 +4931,8 @@ START:
       Params.Dims3 = EnlargeToPow2(Params.Dims3);
       Params.BBoxInt.Max = Params.BBoxInt.Min + Params.Dims3 - 1;
       printf("enlarged dims = %d %d %d\n", Params.Dims3[0], Params.Dims3[1], Params.Dims3[2]);
-      Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+      //Params.LogDims3 = ComputeGrid(&ParticlesInt, Params.BBoxInt, 0, ParticlesInt.size(), 0, Params.DimsStr);
+      Params.LogDims3 = ComputeGrid(&ParticlesInt, MCOPY(Params.BBoxInt, .Max=Params.BBoxInt.Min+Params.Dims3), 0, ParticlesInt.size(), 0, Params.DimsStr);
       //sprintf(Params.DimsStr, "%s", "yxyzxyzxyzxyzxyzxyzxyzxyzxy");
       //yyxyzxyzxyzxyzxyzxyzxyzxyzx
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
@@ -4985,8 +4991,8 @@ START:
       printf("Time: %f s\n", dec_time);
       ++TimeStep;
     }
-    delete[] TreePtrBackup;
-    delete[] PrevFramePtrBackup;
+    //delete[] TreePtrBackup;
+    //delete[] PrevFramePtrBackup;
     Coder.EncodeFinalize();
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
@@ -5113,8 +5119,8 @@ START:
     //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
     //}
     //fclose(Ff);
-    TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
-    auto TreePtrBackup = TreePtr;
+    //TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
+    //auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
     tree* MyNode = nullptr;
     //MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
@@ -5132,73 +5138,19 @@ START:
     } else {
       DecodeTreeIntDFS(0, N, Grid, Split, 0, 0);
     }
-    delete[] TreePtrBackup;
+    //delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
+    //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
+    WriteVTU(PRINT("%s-out.vtu", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
     vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
-    if (Budget)
+    if (Budget && OptExists(Argc, Argv, "--ospray")) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
-      //WriteXYZInt(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
-    //Blocks.resize(Params.NLevels + 1);
-    //Blocks[Params.NLevels].resize(1);
-    //Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
-    //bool Continue = true;
-    //int NBlocks = 0;
-    //while (Continue && /*NBlocks < Params.MaxNBlocks*/BlockBytesRead < Params.MaxNBlocks) {
-    //  //Continue = RefineByLevel();
-    //  Continue = RefineByError();
-    //  ++NBlocks;
-    //}
-    //if (!Blocks[Params.NLevels].empty()) {
-    //  Particles.reserve(Blocks[Params.NLevels][0].Nodes[0]);
-    //  i8 D = 0;
-    //  grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
-    //  i8 Level = Params.NLevels - 1;
-    //  u8 Height = 0;
-    //  if (Params.NLevels == 1) {
-    //    GenerateParticles(tree_node{
-    //      .Level = Level,
-    //      .Height = 0,
-    //      .NodeId = 1,
-    //      .Grid = Grid,
-    //      .D = 0
-    //    });
-    //  } else {
-    //    while (true) {
-    //      if (Level <= Params.MaxLevel && 0 == GenerateParticles(tree_node{
-    //        .Level = Level,
-    //        .Height = u8(Height + 1),
-    //        .NodeId = 1,
-    //        .Grid = SplitGrid(Grid, D, ResolutionSplit, Right),
-    //        .D = i8((D + 1) % Params.NDims)
-    //      })) {
-    //        //GenerateParticlesPerNode(Blocks[Params.NLevels][0].Nodes[LEVEL_TO_NODE(Level)], SplitGrid(Grid, D, ResolutionSplit, Right));
-    //      }
-    //      Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
-    //      D = (D + 1) % Params.NDims;
-    //      --Level;
-    //      ++Height;
-    //      if (Level == 0) {
-    //        GenerateParticles(tree_node{
-    //          .Level = Level,
-    //          .Height = Height,
-    //          .NodeId = 1,
-    //          .Grid = Grid,
-    //          .D = D
-    //        });
-    //        break;
-    //      } 
-    //    }
-    //  }
-    //  printf("ncount = %lld %lld\n", NCount, NCount2);
-    //  printf("bytes read = %lld\n", BlockBytesRead);
-    //  WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
-    //}
+    }
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
