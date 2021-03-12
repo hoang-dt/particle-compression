@@ -357,18 +357,27 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
-    D = Depth % Params.NDims;
-  } else { // take the largest dimension
-    vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
-    if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
-      D = 0;
-    else
-    if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-      D = 1;
-    else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-      D = 2;
+  vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  D = Depth % Params.NDims;
+  if (BBoxExt3[D] <= 1) {
+    D = (D+1) % Params.NDims;
+    if (BBoxExt3[D] <= 1) {
+      D = (D+1) % Params.NDims;
+      REQUIRE(BBoxExt3[D] > 1);
+    }
   }
+  //if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
+  //  D = Depth % Params.NDims;
+  //} else { // take the largest dimension
+  //  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  //  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+  //    D = 0;
+  //  else
+  //  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+  //    D = 1;
+  //  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
+  //    D = 2;
+  //}
   DimsStr[Depth] = 'x' + D;
   //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
