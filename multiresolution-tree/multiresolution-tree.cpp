@@ -1191,17 +1191,14 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
-    D = Depth % Params.NDims;
-  } else { // take the largest dimension
-    vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
-    if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
-      D = 0;
-    else
-    if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-      D = 1;
-    else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-      D = 2;
+  vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  D = Depth % Params.NDims;
+  if (BBoxExt3[D] <= 1) {
+    D = (D+1) % Params.NDims;
+    if (BBoxExt3[D] <= 1) {
+      D = (D+1) % Params.NDims;
+      REQUIRE(BBoxExt3[D] > 1);
+    }
   }
   DimsStr[Depth] = 'x' + D;
   //assert((BBoxExt3[D]&1) == 0);
@@ -2565,10 +2562,10 @@ static f64 ResidualCodeLengthGamma = 0;
 static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
-#define BINOMIAL 1
+//#define BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-//#define NORMAL 1
+#define NORMAL 1
 //#define FORCE_BINOMIAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
@@ -3902,7 +3899,7 @@ DecodeTreeIntBFS(q_item_int Q) {
       //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
+        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
       };
       OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
@@ -3914,6 +3911,7 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 NParticlesLeft = 0;
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
+      printf("hello1\n");
       bbox_int BBox;
       BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
       BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
@@ -3948,6 +3946,7 @@ DecodeTreeIntBFS(q_item_int Q) {
     }
     i64 NParticlesRight = 0;
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
+      printf("hello2\n");
       bbox_int BBox;
       BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
       BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
