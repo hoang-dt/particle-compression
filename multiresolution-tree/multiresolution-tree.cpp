@@ -32,6 +32,7 @@ struct block_info {
   i32 NParticles = 0;
   i32 NParticlesDecoded = 0;
   std::vector<bbox_int> BBoxes;
+  std::vector<u32> ParticleCount;
   std::vector<particle_id_and_bbox> BBoxesAndIds;
   std::vector<u64> PId; // particle id
   int BitCount = 0;
@@ -2374,6 +2375,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Max = BBox.Min + Params.W3
       };
       Block.BBoxes.push_back(BBox);
+      Block.ParticleCount.push_back(N);
+      //printf("N = %d\n", N);
       REQUIRE(Block.BBoxes.size() <= Block.NParticles);
       Stack->pop_back();
       continue;
@@ -2531,10 +2534,21 @@ DecodeIntAdaptive(q_item_int Q) {
   // generate the particles
   FOR_EACH(B, OutputBlocks) {
     printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
-    FOR_EACH(BB, B->BBoxes) {
-      OutputParticles.push_back(particle_int{.Pos=(BB->Min+BB->Max)/2});
+    for (size_t I = 0; I < B->BBoxes.size(); ++I) {
+      vec3i Dims3 = B->BBoxes[I].Max - B->BBoxes[I].Min + 1;
+      for (u32 J = 0; J < B->ParticleCount[I]; ++J) {
+        i32 X = rand() % Dims3.x;
+        i32 Y = rand() % Dims3.y;
+        i32 Z = rand() % Dims3.z;
+        vec3i P3 = B->BBoxes[I].Min + vec3i(X, Y, Z);
+        OutputParticles.push_back(particle_int{.Pos=P3});
+        // TODO: here we don't really care if we have duplicated points
+      }
+      NParticlesDecoded += B->ParticleCount[I];
     }
-    NParticlesDecoded += B->BBoxes.size();
+    //FOR_EACH(BB, B->BBoxes) {
+    //  OutputParticles.push_back(particle_int{.Pos=(BB->Min+BB->Max)/2});
+    //}
   }
 }
 
