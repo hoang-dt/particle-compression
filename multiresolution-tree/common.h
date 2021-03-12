@@ -2209,6 +2209,7 @@ struct params {
   int DecodeBudget = INT_MAX;
   double SubsamplingRatio = 1.0;
   i8 DecodeDepth = 127;
+  i8 RefinementDepth = 127;
 };
 
 /* the left side is favored if the dimension is odd */
@@ -2242,46 +2243,6 @@ SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
 }
 
 inline params Params;
-struct ref_block {
-  i8 Level = 0;
-  u64 BlockId = 0;
-};
-struct block_meta {
-  i64 Size = 0;
-  u64 BlockId = 0;
-};
-INLINE bool operator<(const block_meta& Lhs, const block_meta& Rhs) {
-  return Lhs.BlockId < Rhs.BlockId;
-}
-
-struct block {
-  std::vector<i64> Nodes; // used when level <= BaseHeight
-//  bitset BitSet = bitset{ nullptr, 0 }; // used when level > BaseHeight
-  bitstream Bs;
-  int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
-  block() { Nodes.resize(POW2(Params.BlockBits)); }
-  block(bitstream* Bs) { 
-    Nodes.resize(Size(Bs->Stream) / sizeof(Nodes[0]) + 1);
-    memcpy(Nodes.data(), Bs->Stream.Data, Size(Bs->Stream));
-    this->Bs.Stream.Data = (byte*)Nodes.data();
-    this->Bs.Stream.Bytes = Bs->Stream.Bytes;
-    InitRead(&this->Bs, this->Bs.Stream); 
-  }
-};
-using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
-inline block_table Blocks;
-inline std::vector<particle> Particles;
-inline std::vector<particle_int> ParticlesInt;
-inline std::vector<particle> ParticlesDecoded;
-inline std::vector<bitstream> BlockStreams; // [level] -> bitstream (of the current block)
-inline std::vector<bitstream> RefBlockStreams; // [height] -> bitstream (of the current block)
-inline std::vector<u64> CurrBlocks; // [level] -> current block id
-inline std::vector<ref_block> CurrRefBlocks; // [height] -> current refinement block
-inline std::vector<std::vector<block_meta>> BlockOffsets; // [level] -> [block id] -> block offset
-inline int MaxBlockSize = 0; // max block size
-inline std::vector<byte> Padding;
-inline std::vector<std::vector<block_meta>> BlockBytes; // [level] -> [block id] -> block size
-inline i64 NBlocksWritten = 0;
 
 #define NODE_TO_BLOCK_INDEX(Idx) ((Idx) >> (Params.BlockBits))
 #define NODE_INDEX_IN_BLOCK(Idx) ((Idx) & (POW2(Params.BlockBits) - 1))
@@ -2289,25 +2250,6 @@ inline i64 NBlocksWritten = 0;
 #define NUM_BLOCKS_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level) - Params.BlockBits))
 #define NUM_NODES_AT_LEAF(Level) POW2(MAX(0, Params.BaseHeight - LEVEL_TO_HEIGHT(Level)))
 #define LEVEL_TO_NODE(Level) (((Level) > 0) + (Params.NLevels - 1 - (Level)) * 2)
-
-
-/* tree block (including refinement block) */
-inline void
-WriteBlock(bitstream* Bs, i8 Level, u64 BlockIdx) {
-//  printf("--------- writing level %d block %llu\n", Level, BlockIdx);
-  if (Size(*Bs) > 0) {
-    Flush(Bs);
-    FILE* Fp = fopen(PRINT("%s-%d.bin", Params.OutFile, Level), "ab");
-    fwrite(Bs->Stream.Data, Size(*Bs), 1, Fp);
-    fclose(Fp);
-
-    // book-keeping
-    BlockBytes[Level].push_back(block_meta{.Size = Size(*Bs), .BlockId = BlockIdx});
-    MaxBlockSize = MAX(MaxBlockSize, (int)Size(*Bs));
-    Rewind(Bs);
-    ++NBlocksWritten;
-  }
-}
 
 inline void
 WriteMetaFile(const params& Params, cstr FileName) {
