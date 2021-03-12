@@ -2209,6 +2209,7 @@ struct params {
   int DecodeBudget = INT_MAX;
   double SubsamplingRatio = 1.0;
   i8 DecodeDepth = 127;
+  i8 AddToW3 = 0;
 };
 
 /* the left side is favored if the dimension is odd */
@@ -2945,8 +2946,6 @@ RMSError(const buffer_t<t>& FBuf, const buffer_t<t>& GBuf) {
   auto SqErr = SqError(FBuf, GBuf);
   return sqrt(SqErr / FBuf.Size);
 }
-
-inline bitstream BlockStream; // compressed stream for the current block
 
 inline vec3i Factors[] = {
   vec3i{0, 0, 0}, // 0
