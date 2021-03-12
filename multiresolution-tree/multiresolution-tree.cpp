@@ -20,11 +20,12 @@ struct particle_id_and_bbox {
   i64 Id = 0;
   bbox_int BBox;
 };
+enum class coding_phase { Bfs, Dfs, Refinement, IndividualParticle };
 struct block_info {
   u32 NParticles = 0;
   union {
     u32 NParticlesDecoded = 0;
-    u32 NParticlesEncoded;
+    u32 NParticlesSeen;
   };
   std::vector<bbox_int> BBoxes;
   std::vector<particle_id_and_bbox> BBoxesAndIds;
@@ -32,6 +33,7 @@ struct block_info {
   i64 BlockId;
   int BitCount = 0;
   bool AtRefinement = false;
+  coding_phase Phase = coding_phase::Bfs;
 };
 static std::vector<block_info> OutputBlocks;
 
@@ -818,7 +820,6 @@ static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 std::vector<vec2i> SRList;
 
-static i64 BlockCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -944,7 +945,6 @@ DecodeTreeIntPredict(
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
-    ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     //FOR_EACH(Context, ContextS ) { Context->clear(); }
     //FOR_EACH(Context, ContextTS) { Context->clear(); }
@@ -1319,7 +1319,6 @@ BuildTreeIntPredict(
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
-    ++BlockCount;
     //REQUIRE(Split == ResolutionSplit);
     //FOR_EACH(Context, ContextS ) { Context->clear(); }
     //FOR_EACH(Context, ContextTS) { Context->clear(); }
@@ -1611,13 +1610,88 @@ WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
 }
 
 static void
-BuildIntAdaptiveRefinementPhase(block_info& Block, std::queue<q_item_int>& BlockQueue, std::vector<particle_int>& Particles) {
-  //printf("-------------Refinement phase-----------------\n");
+DecodeIntAdaptiveRefinementPhase(block_info& Block, std::queue<q_item_int>& BlockQueue) {
+  bool InTheCut = true;
   while (!BlockQueue.empty()) {
     auto Q = BlockQueue.front();
     BlockQueue.pop();
     i64 N = Q.End - Q.Begin;
+    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
+    if (CellCount==1 && N==1) {
+      // TODO: decode the final bits
+      const auto& G = Q.Grid;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+        .Max = BBox.Min + Params.W3
+      };
+      Block.BBoxes.push_back(BBox);
+      continue;
+    }
     i64 Mid = Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    bool InTheCut = BitCount < Params.DecodeBudget*8;
+    auto& Stream = Streams[Block.BlockId];
+    bool Flip = CellCount-N < N;
+    if (Flip) N = CellCount - N;
+    if (InTheCut) {
+      u32 P = 0;
+      BitCount += DecodeCenteredMinimal(u32(N+1), &Stream.Stream, P);
+      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      Mid = P + Q.Begin;
+    } else { // out of the cut
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = Params.BBoxInt.Min + (Q.Grid.From3+(Q.Grid.Dims3-1)*Q.Grid.Stride3+1)*Params.W3
+      };
+      Block.BBoxes.push_back(BBox);
+      continue;
+    }
+    /* ---------------------- LEFT ----------------- */
+    InTheCut = BitCount < Params.DecodeBudget*8;
+    if (InTheCut && Q.Begin<Mid) {
+      split_type NextSplit = SpatialSplit;
+      BlockQueue.push(q_item_int{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit
+      });
+    }
+    /* ---------------------- RIGHT ----------------- */
+    InTheCut = BitCount < Params.DecodeBudget*8;
+    if (InTheCut && Mid<Q.End) {
+      split_type NextSplit = SpatialSplit;
+      BlockQueue.push(q_item_int{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit
+      });
+    }
+  }
+}
+
+static void
+BuildIntAdaptiveRefinementPhase(block_info& Block, std::queue<q_item_int>& BlockQueue, std::vector<particle_int>& Particles) {
+  //printf("-------------Refinement phase-----------------\n");
+  while (!BlockQueue.empty()) {
+    auto Q = BlockQueue.front();
+    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
+    BlockQueue.pop();
+    i64 N = Q.End - Q.Begin;
+    if (CellCount==1 && N==1) {
+      // TODO: encode the final bits
+      continue;
+    }
+    i64 Mid =  Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     i32 MM = Q.Grid.From3[D];
     REQUIRE(Q.Split == SpatialSplit);
@@ -1631,7 +1705,6 @@ BuildIntAdaptiveRefinementPhase(block_info& Block, std::queue<q_item_int>& Block
     auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
-    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 P = Mid - Q.Begin;
     if (CellCount-N < N) {
       N = CellCount - N;
@@ -1734,21 +1807,15 @@ BuildIntAdaptiveDFSPhase(
 {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
-  //auto Stream = GetStream(Grid, Depth);
   auto Stream = &Streams[Block.BlockId];
 
   /* ------------- CHECK FOR REFINEMENT --------------- */
   if (Depth == Params.RefinementDepth) {
-    const auto& G = Grid;
-    bbox_int BBox {
-      .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3
-    };
     //for (int DD = 0; DD < Params.NDims; ++DD) {
     //  REQUIRE(Particles[Begin].Pos[DD] >= BBox.Min[DD]);
     //  REQUIRE(Particles[Begin].Pos[DD] < BBox.Max[DD]);
     //}
-    Block.NParticlesEncoded += N;
+    Block.NParticlesSeen += N;
     BlockQueue.push(q_item_int{
       .Begin = Begin,
       .End = End,
@@ -1757,8 +1824,8 @@ BuildIntAdaptiveDFSPhase(
       .Depth = Depth,
       .Split = SpatialSplit
     });
-    REQUIRE(Block.NParticlesEncoded <= Block.NParticles);
-    if (Block.NParticlesEncoded == Block.NParticles) {
+    REQUIRE(Block.NParticlesSeen <= Block.NParticles);
+    if (Block.NParticlesSeen == Block.NParticles) {
       BuildIntAdaptiveRefinementPhase(Block, BlockQueue, Particles);  
     }
     // check if all particles have been seen
@@ -1898,7 +1965,6 @@ BuildIntAdaptiveBFSPhase(std::vector<particle_int>& Particles, std::queue<q_item
         Block.BlockId = BlockIdx;
         std::queue<q_item_int> BlockQueue;
         BuildIntAdaptiveDFSPhase(Block, BlockQueue, Particles, Next.Begin, Next.End, Next.Grid, Next.Split, Next.ResLvl, Next.Depth);
-        ++BlockCount;
       }
     }
   }
@@ -2322,18 +2388,14 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     InTheCut = BitCount < Params.DecodeBudget*8;
-    auto Stream = GetStream(Q.Grid, Q.Depth);
+    //auto Stream = GetStream(Q.Grid, Q.Depth);
+    auto Stream = &GlobalStream;
+    /*--------------- DECODE P --------------*/
     if (InTheCut) {
       bool Flip = CellCount-N < N;
       if (Flip) N = CellCount - N;
       u32 P = 0;
-#if defined(FORCE_BINOMIAL)
-      f64 Mean = f64(N) / 2; // mean
-      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-      BitCount += DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &Stream->Stream, &Stream->Coder, P);
-#else
       BitCount += DecodeCenteredMinimal(u32(N+1), &Stream->Stream, P);
-#endif
       if (Flip) { P = (u32)(CellCountLeft-P); N = CellCount-N; }
       Mid = P + Q.Begin;
       //printf("P = %u\n", P);
@@ -2343,7 +2405,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
       continue;
     }
-    i64 NParticlesLeft = 0;
+
+    /*----------------- LEFT -------------------*/
     InTheCut = BitCount < Params.DecodeBudget*8;
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
       REQUIRE(false); // should not happen
@@ -2361,12 +2424,14 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
-      } else {
+      } else { // start the next phase (DFS)
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         auto& Block = OutputBlocks[BlockIdx];
+        Block.BlockId = BlockIdx;
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
+        Block.Phase = coding_phase::Dfs;
         Stacks[BlockIdx].push_back(Next);
         Heap.push(
           heap_priority{
@@ -2376,10 +2441,10 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
             .Stream=&Streams[BlockIdx],
             .Stack=&Stacks[BlockIdx],
             .BlockId=BlockIdx});
-        ++BlockCount;
       }
     }
-    i64 NParticlesRight = 0;
+
+    /*----------------- RIGHT -------------------*/
     InTheCut = BitCount < Params.DecodeBudget*8;
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
       REQUIRE(false);
@@ -2399,8 +2464,10 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
         auto& Block = OutputBlocks[BlockIdx];
+        Block.BlockId = BlockIdx;
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
+        Block.Phase = coding_phase::Dfs;
         Stacks[BlockIdx].push_back(Next);
         Heap.push(heap_priority{
             .Level=100, 
@@ -2409,14 +2476,13 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
             .Stream=&Streams[BlockIdx],
             .Stack=&Stacks[BlockIdx],
             .BlockId=BlockIdx});
-        ++BlockCount;
       }
     }
   }
 }
 
 static int
-DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
+DecodeIntAdaptiveDFSPhase(block_info& Block, std::queue<q_item_int>& BlockQueue, heap_priority& TopPriority) {
   auto Stack = TopPriority.Stack;
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
@@ -2430,23 +2496,40 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       TopPriority.NParticles = i32(Q.End - Q.Begin);
       TopPriority.TotalNParticlesOnLevel = i32(Q.End - Q.Begin);
     }
-    i8 D = Params.DimsStr[Q.Depth] - 'x';
     i64 N = Q.End - Q.Begin;
-    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
-    i64 Mid = Q.Begin;
-    auto BlockIdx = GetBlockIndex(Q.Grid.From3);
-    //assert(BlockIdx == TopPriority.BlockId);
-    if (N==1 && CellCount==1) {
-      block_info& Block = OutputBlocks[BlockIdx];
-      const auto& G = Q.Grid;
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      Block.BBoxes.push_back(BBox);
-      REQUIRE(Block.BBoxes.size() <= Block.NParticles);
+    if (Q.Depth == Params.RefinementDepth) { // switch to the next phase (BFS Refinement)
+      Block.NParticlesSeen += N;
+      BlockQueue.push(q_item_int{
+        .Begin = Q.Begin,
+        .End = Q.End,
+        .Grid= Q.Grid,
+        .ResLvl = Q.ResLvl,
+        .Depth = Q.Depth,
+        .Split = SpatialSplit
+      });
+      REQUIRE(Block.NParticlesSeen <= Block.NParticles);
+      if (Block.NParticlesSeen == Block.NParticles) {
+        Block.Phase = coding_phase::Refinement;
+        REQUIRE(Stack->empty());
+        return PCount;
+      }
       continue;
     }
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
+    i64 Mid = Q.Begin;
+    //assert(BlockIdx == TopPriority.BlockId);
+    // TODO: do we need to check for 1 cell below?
+    //if (N==1 && CellCount==1) {
+    //  const auto& G = Q.Grid;
+    //  bbox_int BBox {
+    //    .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+    //    .Max = BBox.Min + Params.W3
+    //  };
+    //  Block.BBoxes.push_back(BBox);
+    //  REQUIRE(Block.BBoxes.size() <= Block.NParticles);
+    //  continue;
+    //}
 
     InTheCut = BitCount < Params.DecodeBudget*8;
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
@@ -2457,17 +2540,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       bool Flip = CellCount-N < N;
       if (Flip) N = CellCount - N;
       u32 P = 0; // TODO: make it possible to allow P to be 64 bits
-  #if defined(FORCE_BINOMIAL)
-      if (Q.Split == ResolutionSplit) {
-        f64 Mean = f64(N) / 2; // mean
-        f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-        BitCount += DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &Stream->Stream, &Stream->Coder, P);
-      } else {
-        BitCount += DecodeCenteredMinimal(u32(N+1), &Stream->Stream, P);
-      }
-  #else
       BitCount += DecodeCenteredMinimal(u32(N+1), &Stream->Stream, P);
-  #endif
       if (Flip) P = u32(CellCountLeft-P);
       Mid = P + Q.Begin;
     } else { // stop going down in this branch
@@ -2475,6 +2548,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     }
 
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
+    /*-------------- LEFT -----------------*/
     InTheCut = BitCount < Params.DecodeBudget*8;
     if (InTheCut && Mid+1<=Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
@@ -2488,6 +2562,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       };
       Stack->push_back(Next);
     }
+    /*-------------- RIGHT -----------------*/
     if (InTheCut && Q.Begin+1<=Mid) {
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
@@ -2521,9 +2596,10 @@ DecodeIntAdaptive(q_item_int Q) {
   /*-------------------- BFS phase ---------------------- */
   if (Params.StartResolutionSplit > 0) {
     DecodeIntAdaptiveBFSPhase(Queue, Heap, Stacks);
-  } else {
+  } else { // single block, no BFS phase
     i64 BlockIdx = GetBlockIndex(Q.Grid.From3);
     auto& Block = OutputBlocks[BlockIdx];
+    Block.BlockId = BlockIdx;
     Block.NParticles = i32(Q.End - Q.Begin);
     Block.BBoxes.reserve(Block.NParticles);
     Stacks[BlockIdx].push_back(Q);
@@ -2539,19 +2615,20 @@ DecodeIntAdaptive(q_item_int Q) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   std::vector<i64> BlockCount(Stacks.size(), 0);
   // TODO: we need to prioritize blocks where particles are less refined
+  std::queue<q_item_int> BlockQueue;
   while (InTheCut && !Heap.empty()) {
     heap_priority TopPriority = Heap.top();
     auto& Block = OutputBlocks[TopPriority.BlockId];
+    Block.BlockId = TopPriority.BlockId;
     if (Block.BBoxes.size() == Block.NParticles) { // every particle has been seen once
       if (!Block.AtRefinement) {
         Block.AtRefinement = true;
         TopPriority.Level = -1;
       }
       auto W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
-      i8 DD = 0;
-      if (W3.y > W3[DD]) DD = 1;
-      if (W3.z > W3[DD]) DD = 2;
+      i8 DD = 0; if (W3.y > W3[DD]) DD = 1; if (W3.z > W3[DD]) DD = 2;
       auto& Stream = Streams[TopPriority.BlockId];
+      /* decode one bit plane from all particles in the block */
       FOR_EACH(B, Block.BBoxes) {
         if (W3[DD] > 1) {
           bool Left = Read(&Stream.Stream);
@@ -2563,7 +2640,7 @@ DecodeIntAdaptive(q_item_int Q) {
           i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
           if (Left) B->Max[DD] = M; else B->Min[DD] = M;
         }
-        if (B->Min+1 == B->Max) {
+        if (B->Min+1 == B->Max) { // one particle fully decoded
           ++Block.NParticlesDecoded;
         }
       }
@@ -2574,24 +2651,18 @@ DecodeIntAdaptive(q_item_int Q) {
       if (Block.NParticlesDecoded != Block.NParticles) {
         Heap.push(TopPriority);
       }
-      //if (Block.NParticlesDecoded == Block.NParticles) {
-      //  Heap.pop();
-      //  //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
-      //  // TODO: debug here to see if we pop everything at the end (where all bits are used)
-      //}
-    } else { // still in the DFS phase, not refinement
+    } else if (Block.Phase == coding_phase::Refinement) { // switch to the refinement BFS
+      DecodeIntAdaptiveRefinementPhase(Block, BlockQueue);
+    } else { // not seen every particle, still in the DFS phase, not refinement
+      REQUIRE(Block.Phase == coding_phase::Dfs);
       Heap.pop();
-      auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
-      const auto& Stack = *(TopPriority.Stack);
+      auto PCount = DecodeIntAdaptiveDFSPhase(Block, BlockQueue, TopPriority);
       Heap.push(TopPriority);
     }
-    //++BlockCount[TopPriority.BlockId];
     InTheCut = BitCount < Params.DecodeBudget*8;
   }
-  //printf("heap size = %d\n", Heap.size());
-  // generate the particles
+  /*---------- Generate particles ---------------*/
   FOR_EACH(B, OutputBlocks) {
-    printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
     FOR_EACH(BB, B->BBoxes) {
       OutputParticles.push_back(particle_int{.Pos=BB->Min});
     }
