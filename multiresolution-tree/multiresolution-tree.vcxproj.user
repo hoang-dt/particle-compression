@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments> --action decode --in uintah_t03001-adaptive --out uintah_t03001-adaptive --adaptive --budget 1444776 --ospray --decode_depth 27    </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action decode --in uintah_t03001-bfs-new --out uintah_t03001-bfs-new --bfs --budget 1386248 --ospray</LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>

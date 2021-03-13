@@ -262,14 +262,11 @@ GenerateOneParticle(const bbox& BBox) {
   Particles.push_back(particle{.Pos = P3});
 }
 
-static i64 NCount2 = 0;
-
 static void
 GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>* Output) {
   if (N == 0) return;
-  assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
+  assert(Grid.Dims3.x>=1 && Grid.Dims3.y>=1 && Grid.Dims3.z>=1);
   static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
-  //GridPoints.resize(N);
   vec3i Dims3 = Grid.Dims3;
   
   i64 NElems = N;
@@ -278,7 +275,7 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
     i32 X = rand() % Dims3.x;
     i32 Y = rand() % Dims3.y;
     i32 Z = rand() % Dims3.z;
-    vec3i P3 = Grid.From3 + Grid.Stride3*vec3i(X, Y, Z);
+    vec3i P3 = Grid.From3 + Grid.Stride3*vec3i(X,Y,Z);
     bbox_int BBox{
       .Min = Params.BBoxInt.Min + P3*Params.W3,
       .Max = Params.BBoxInt.Min + (P3+1)*Params.W3 // TODO -1
@@ -286,72 +283,6 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
     Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     // TODO: here we don't really care if we have duplicated points
   }
-  //FOR(i32, Z, 0, Dims3.z) {
-  //FOR(i32, Y, 0, Dims3.y) {
-  //FOR(i32, X, 0, Dims3.x) {
-  //  if (I < N) {
-  //    GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-  //  } else {
-  //    ++NElems;
-  //    i64 J = rand() % NElems; // exclusive
-  //    if (J < N)
-  //      GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-  //  }
-  //  ++I;
-  //}}}
-  //FOR_EACH(P, GridPoints) {
-  //  bbox_int BBox{
-  //    .Min = Params.BBoxInt.Min + (*P) * Params.W3,
-  //    .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
-  //  };
-  //  //vec3i P3 = GenerateOneParticle(BBox);
-  //  Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
-  //}
-  //NCount2 += GridPoints.size();
-}
-
-/* Generate N random particles inside Grid */
-static void
-GenerateParticlesPerNode(i64 N, const grid& Grid, const vec3f& W3) {
-  if (N == 0) return;
-  //if (N <= Params.MaxParticleSubSampling)
-  //  N = 1;
-  //printf("generating %lld particles\n", N);
-  assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
-  //GridPoints.reserve(N);
-  //GridPoints.clear();
-  static std::vector<vec3f> GridPoints; // stores the grid points that contain the (to be generated) particles
-  GridPoints.resize(N);
-  //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
-  vec3f Dims3 = Grid.Dims3;
-  
-  i64 NElems = N;
-  i64 I = 0;
-//  f32 M = f32(Dims3.z) * f32(Dims3.y) * f32(Dims3.x);
-  FOR(float, Z, 0, Dims3.z) {
-  FOR(float, Y, 0, Dims3.y) {
-  FOR(float, X, 0, Dims3.x) {
-    if (I < N) {
-      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
-    } else {
-      ++NElems;
-      //f32 K = rand() * 1.0 / RAND_MAX;
-      i64 J = rand() % NElems; // exclusive
-      if (J < N)
-      //if (K < N * 1.0 / M && GridPoints.size() < N)
-        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z);
-        //GridPoints.push_back(Grid.From3 + Grid.Stride3 * vec3f(X, Y, Z));
-    }
-    ++I;
-  }}}
-  FOR_EACH(P, GridPoints) {
-    bbox BBox{
-      .Min = Params.BBox.Min + (vec3f(*P)) * W3,
-      .Max = Params.BBox.Min + (vec3f(*P) + 1) * W3
-    };
-    GenerateOneParticle(BBox);
-  }
-  NCount2 += GridPoints.size();
 }
 
 struct Range {
@@ -604,7 +535,6 @@ void BuildTreeNew(q_item_new Q, float Accuracy);
 void EncodeRootNew(i64 N);
 
 f64 RMSE = 0;
-i64 NParticlesGenerated = 0;
 
 static cdf_table CdfTable;
 static std::vector<cdf_table> BinomialTables;
@@ -1889,49 +1819,9 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
       P = CellCountLeft - P;
     }
     auto& Stream = GlobalStream;
-#if defined(FORCE_BINOMIAL)
-    f64 Mean = f64(N) / 2; // mean
-    f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    GrowIfTooFull(&Stream.Coder.BitStream);
-    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
-#else
     GrowIfTooFull(&Stream.Stream);
     EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
-#endif
     if (Q.Begin+1==Mid && CellCountLeft==1) {
-      const auto& G = GridLeft;
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
-      if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
-        //printf("hello1\n");
-        //i32 NParticlesEncoded = 0;
-        //while (NParticlesEncoded < Params.NParticles) {
-        //  auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
-        //  i8 DD = 0;
-        //  if (W3.y > W3[DD]) DD = 1;
-        //  if (W3.z > W3[DD]) DD = 2;
-        //  if (W3[DD] > 1) {
-        //    FOR_EACH(B, MyBlock.BBoxesAndIds) {
-        //      assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
-        //      i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-        //      bool Left = Particles[B->Id].Pos[DD] < M;
-        //      auto BBoxCopy = B->BBox;
-        //      if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
-        //      assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
-        //      GrowIfTooFull(&Stream.Stream);
-        //      Write(&Stream.Stream, Left);
-        //      if (B->BBox.Min+1 == B->BBox.Max) {
-        //        ++NParticlesEncoded; 
-        //      }
-        //    }
-        //  } else {
-        //    NParticlesEncoded = Params.NParticles;
-        //  }
-        //}
-      }
     } else if (Q.Begin < Mid) {
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
@@ -1947,39 +1837,6 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
     }
 
     if (Mid+1==Q.End && CellCountRight==1) {
-      const auto& G = GridRight;
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      MyBlock.BBoxesAndIds.push_back({Q.Begin, BBox});
-      if (MyBlock.BBoxesAndIds.size() == Params.NParticles) {
-        //printf("hello2\n");
-        //i32 NParticlesEncoded = 0;
-        //while (NParticlesEncoded < Params.NParticles) {
-        //  auto W3 = MyBlock.BBoxesAndIds[0].BBox.Max - MyBlock.BBoxesAndIds[0].BBox.Min;
-        //  i8 DD = 0;
-        //  if (W3.y > W3[DD]) DD = 1;
-        //  if (W3.z > W3[DD]) DD = 2;
-        //  if (W3[DD] > 1) {
-        //    FOR_EACH(B, MyBlock.BBoxesAndIds) {
-        //      assert(B->BBox.Max[DD]-B->BBox.Min[DD] == W3[DD]);
-        //      i32 M = (B->BBox.Max[DD]+B->BBox.Min[DD]) >> 1;
-        //      bool Left = Particles[B->Id].Pos[DD] < M;
-        //      auto BBoxCopy = B->BBox;
-        //      if (Left) B->BBox.Max[DD] = M; else B->BBox.Min[DD] = M;
-        //      assert(IsPowerOfTwo(B->BBox.Max[DD]-B->BBox.Min[DD]));
-        //      GrowIfTooFull(&Stream.Stream);
-        //      Write(&Stream.Stream, Left);
-        //      if (B->BBox.Min+1 == B->BBox.Max) {
-        //        ++NParticlesEncoded; 
-        //      }
-        //    }
-        //  } else {
-        //    NParticlesEncoded = Params.NParticles;
-        //  }
-        //}
-      }
     } else if (Mid < Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
@@ -2015,71 +1872,27 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
-    IN_THE_CUT
+    InTheCut = BitCount<Params.DecodeBudget*8/* && Q.Depth<=Params.DecodeDepth*/;
     auto& Stream = GlobalStream;
     bool Flip = CellCount-N < N;
     if (Flip) N = CellCount - N;
-    if (InTheCut && Q.Depth<=Params.DecodeDepth) {
+    if (InTheCut) {
       u32 P = 0;
-#if defined(FORCE_BINOMIAL)
-      f64 Mean = f64(N) / 2; // mean
-      f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-      BitCount += DecodeRange(Mean, StdDev, f64(0), f64(N), CdfTable, &Stream.Stream, &Stream.Coder, P);
-#else
       BitCount += DecodeCenteredMinimal(u32(N+1), &Stream.Stream, P);
-#endif
-      if (Flip) { P = CellCountLeft - P; N = CellCount - N; }
+      InTheCut = BitCount<Params.DecodeBudget*8;
+      if (Flip) { P = u32(CellCountLeft-P); N = CellCount-N; }
       Mid = P + Q.Begin;
     } else { // out of the cut
       if (Flip) { N = CellCount - N; }
-      //int M = int(N*Params.SubsamplingRatio);
-      NParticlesGenerated += 1;
       NParticlesDecoded += 1;
-      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
       continue;
-      // TODO: we should try to generate N particles in the Q.Grid
     }
-    IN_THE_CUT
+    /* ---------------------- LEFT ----------------- */
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
-      const auto& G = GridLeft;
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      MyBlock.BBoxes.push_back(BBox);
-      if (MyBlock.BBoxes.size() == Params.NParticles) {
-        //printf("hello1\n");
-        //while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
-        //  auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
-        //  i8 DD = 0;
-        //  if (W3.y > W3[DD]) DD = 1;
-        //  if (W3.z > W3[DD]) DD = 2;
-        //  FOR_EACH(B, MyBlock.BBoxes) {
-        //    if (W3[DD] > 1) {
-        //      bool Left = Read(&Stream.Stream);
-        //      ++BitCount;
-        //      InTheCut = BitCount < Params.DecodeBudget*8;
-        //      if (!InTheCut)
-        //        break;
-        //      i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-        //      if (Left) B->Max[DD] = M; else B->Min[DD] = M;
-        //    }
-        //    if (B->Min+1 == B->Max) {
-        //      ++MyBlock.NParticlesDecoded;
-        //      //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-        //      //++NParticlesGenerated;
-        //      //++NParticlesDecoded;
-        //    }
-        //  }
-        //  InTheCut = BitCount < Params.DecodeBudget*8;
-        //}
-      }
-    } else if (InTheCut && Q.Begin<Mid) {
+      NParticlesDecoded += 1;
+      GenerateParticlesPerNode(1, GridLeft, &OutputParticles);
+    } else if (InTheCut && Q.Begin<Mid) { // recurse
       split_type NextSplit = 
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
@@ -2092,43 +1905,11 @@ DecodeTreeIntBFS(q_item_int Q) {
         .Split = NextSplit
       });
     }
-    IN_THE_CUT
     /* ---------------------- RIGHT ----------------- */
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
-      const auto& G = GridRight;
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-        .Max = BBox.Min + Params.W3
-      };
-      MyBlock.BBoxes.push_back(BBox);
-      if (MyBlock.BBoxes.size() == Params.NParticles) {
-        printf("hello2\n");
-        while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
-          //auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
-          //i8 DD = 0;
-          //if (W3.y > W3[DD]) DD = 1;
-          //if (W3.z > W3[DD]) DD = 2;
-          //FOR_EACH(B, MyBlock.BBoxes) {
-          //  if (W3[DD] > 1) {
-          //    bool Left = Read(&Stream.Stream);
-          //    ++BitCount;
-          //    InTheCut = BitCount < Params.DecodeBudget*8;
-          //    if (!InTheCut)
-          //      break;
-          //    i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-          //    if (Left) B->Max[DD] = M; else B->Min[DD] = M;
-          //  }
-          //  if (B->Min+1 == B->Max) {
-          //    ++MyBlock.NParticlesDecoded;
-          //    //OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-          //    //++NParticlesGenerated;
-          //    //++NParticlesDecoded;
-          //  }
-          //}
-          //InTheCut = BitCount < Params.DecodeBudget*8;
-        }
-      }
-    } else if (InTheCut && Mid<Q.End) {
+      NParticlesDecoded += 1;
+      GenerateParticlesPerNode(1, GridRight, &OutputParticles);
+    } else if (InTheCut && Mid<Q.End) { // recurse
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
         .Begin = Mid,
@@ -2139,12 +1920,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         .Split = NextSplit
       });
     }
-  }
-  FOR_EACH(BB, MyBlock.BBoxes) {
-    OutputParticles.push_back(particle_int{.Pos=(BB->Min+BB->Max)/2});
-  }
-  NParticlesDecoded += MyBlock.BBoxes.size();
-  NParticlesGenerated += MyBlock.BBoxes.size();
+  } // end of loop
 }
 
 static void
@@ -2267,7 +2043,6 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       Mid = P + Q.Begin;
       //printf("P = %u\n", P);
     } else { // do not read any more bits, just generate particles
-      NParticlesGenerated += N;
       NParticlesDecoded += N;
       GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
       continue;
@@ -2358,9 +2133,6 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     }
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     assert((Q.Grid.Dims3[D]&1) == 0);
-    if (Q.Begin==13478056 && Q.End==13478058) {
-      int Stop = 0;
-    }
     i64 N = Q.End - Q.Begin;
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     assert(CellCount > 0);
@@ -2375,7 +2147,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Max = BBox.Min + Params.W3
       };
       Block.BBoxes.push_back(BBox);
-      Block.ParticleCount.push_back(N);
+      Block.ParticleCount.push_back(u32(N));
       //printf("N = %d\n", N);
       REQUIRE(Block.BBoxes.size() <= Block.NParticles);
       Stack->pop_back();
@@ -2422,9 +2194,6 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
           .Split = NextSplit
         };
         Stack->push_back(Next);
-        if (Next.Begin==13478055 && Next.End==13478056) {
-          int Stop = 0;
-        }
       }
       if (InTheCut && CellCountRight>=1 && Q.Begin+1<=Mid) {
         split_type NextSplit = 
@@ -2439,9 +2208,6 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
           .Split = NextSplit
         };
         Stack->push_back(Next);
-        if (Next.Begin==13478055 && Next.End==13478056) {
-          int Stop = 0;
-        }
       }
     }
   }
@@ -2485,55 +2251,49 @@ DecodeIntAdaptive(q_item_int Q) {
     heap_priority TopPriority = Heap.top();
     auto& Block = OutputBlocks[TopPriority.BlockId];
     if (Block.BBoxes.size() == Block.NParticles) { // every particle has been seen once
-      //if (!Block.AtRefinement) {
-      //  Block.AtRefinement = true;
-      //  TopPriority.Level = -1;
-      //}
-      //auto W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
-      //i8 DD = 0;
-      //if (W3.y > W3[DD]) DD = 1;
-      //if (W3.z > W3[DD]) DD = 2;
-      //auto& Stream = Streams[TopPriority.BlockId];
-      //FOR_EACH(B, Block.BBoxes) {
-      //  if (W3[DD] > 1) {
-      //    bool Left = Read(&Stream.Stream);
-      //    ++Block.BitCount;
-      //    ++BitCount;
-      //    InTheCut = BitCount < Params.DecodeBudget*8;
-      //    if (!InTheCut)
-      //      break;
-      //    i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
-      //    if (Left) B->Max[DD] = M; else B->Min[DD] = M;
-      //  }
-      //  if (B->Min+1 == B->Max) {
-      //    ++Block.NParticlesDecoded;
-      //  }
-      //}
-      //++TopPriority.Level;
-      //// TODO: need to update the priority so that the same block does not pop up multiple times
-      //REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
+      if (!Block.AtRefinement) {
+        Block.AtRefinement = true;
+        TopPriority.Level = -1;
+      }
+      auto W3 = Block.BBoxes[0].Max - Block.BBoxes[0].Min;
+      i8 DD = 0;
+      if (W3.y > W3[DD]) DD = 1;
+      if (W3.z > W3[DD]) DD = 2;
+      auto& Stream = Streams[TopPriority.BlockId];
+      FOR_EACH(B, Block.BBoxes) {
+        if (W3[DD] > 1) {
+          bool Left = Read(&Stream.Stream);
+          ++Block.BitCount;
+          ++BitCount;
+          InTheCut = BitCount < Params.DecodeBudget*8;
+          if (!InTheCut)
+            break;
+          i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
+          if (Left) B->Max[DD] = M; else B->Min[DD] = M;
+        }
+        if (B->Min+1 == B->Max) {
+          ++Block.NParticlesDecoded;
+        }
+      }
+      ++TopPriority.Level;
+      // TODO: need to update the priority so that the same block does not pop up multiple times
+      REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
       Heap.pop();
-      //if (Block.NParticlesDecoded != Block.NParticles) {
-      //  Heap.push(TopPriority);
-      //}
-      ////if (Block.NParticlesDecoded == Block.NParticles) {
-      ////  Heap.pop();
-      ////  //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
-      ////  // TODO: debug here to see if we pop everything at the end (where all bits are used)
-      ////}
+      if (Block.NParticlesDecoded != Block.NParticles) {
+        Heap.push(TopPriority);
+      }
     } else { // still in the DFS phase, not refinement
       Heap.pop();
       auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
       const auto& Stack = *(TopPriority.Stack);
       Heap.push(TopPriority);
     }
-    //++BlockCount[TopPriority.BlockId];
     InTheCut = BitCount < Params.DecodeBudget*8;
   }
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
   FOR_EACH(B, OutputBlocks) {
-    printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
+    printf("n %d ndecoded %d bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
     for (size_t I = 0; I < B->BBoxes.size(); ++I) {
       vec3i Dims3 = B->BBoxes[I].Max - B->BBoxes[I].Min + 1;
       for (u32 J = 0; J < B->ParticleCount[I]; ++J) {
@@ -2546,9 +2306,6 @@ DecodeIntAdaptive(q_item_int Q) {
       }
       NParticlesDecoded += B->ParticleCount[I];
     }
-    //FOR_EACH(BB, B->BBoxes) {
-    //  OutputParticles.push_back(particle_int{.Pos=(BB->Min+BB->Max)/2});
-    //}
   }
 }
 
@@ -2587,7 +2344,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     //  return nullptr;
     //}
   }
-  if (Flip) P = CellCountLeft - P;
+  if (Flip) P = u32(CellCountLeft-P);
   assert(P <= CellCountLeft);
   Mid = P + Begin;
 
@@ -2617,7 +2374,6 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     }
   GENERATE_PARTICLE_LEFT:
     OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-    ++NParticlesGenerated;
     ++NParticlesDecoded;
     //LeftTree = new (TreePtr++) tree;
     //LeftTree->Count = 1;
@@ -2655,7 +2411,6 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     }
   GENERATE_PARTICLE_RIGHT:
     OutputParticles.push_back(particle_int{.Pos=BBox.Min});
-    ++NParticlesGenerated;
     ++NParticlesDecoded;
     //RightTree = new (TreePtr++) tree;
     //RightTree->Count = 1;
@@ -3187,7 +2942,6 @@ START:
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
-    printf("num particles generated = %lld\n", NParticlesGenerated);
     printf("bit count = %d bytes\n", BitCount/8);
     vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
     if (Budget) {
