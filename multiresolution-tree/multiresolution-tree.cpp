@@ -2968,10 +2968,10 @@ START:
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     bool Quantize = OptExists(Argc, Argv, "--quantize");
     f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
-    //Particles = ReadParticles(Params.InFile);
-    ParticlesInt = ReadParticlesInt(Params.InFile);
+    Particles = ReadParticles(Params.InFile);
+    //ParticlesInt = ReadParticlesInt(Params.InFile);
     fprintf(stderr, "Done reading particles\n");
-    //ParticlesInt.resize(Particles.size());
+    ParticlesInt.resize(Particles.size());
     if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
         MaxAbsX = MAX(MaxAbsX, fabs(P->Pos.x));
