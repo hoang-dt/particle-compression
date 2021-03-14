@@ -749,35 +749,24 @@ static i64 NCount2 = 0;
 static void
 GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>* Output) {
   if (N == 0) return;
-  assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
+  assert(Grid.Dims3.x>=1 && Grid.Dims3.y>=1 && Grid.Dims3.z>=1);
   static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
-  GridPoints.resize(N);
   vec3i Dims3 = Grid.Dims3;
   
   i64 NElems = N;
   i64 I = 0;
-  FOR(i32, Z, 0, Dims3.z) {
-  FOR(i32, Y, 0, Dims3.y) {
-  FOR(i32, X, 0, Dims3.x) {
-    if (I < N) {
-      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    } else {
-      ++NElems;
-      i64 J = rand() % NElems; // exclusive
-      if (J < N)
-        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    }
-    ++I;
-  }}}
-  FOR_EACH(P, GridPoints) {
+  FOR(i32, I, 0, N) {
+    i32 X = rand() % Dims3.x;
+    i32 Y = rand() % Dims3.y;
+    i32 Z = rand() % Dims3.z;
+    vec3i P3 = Grid.From3 + Grid.Stride3*vec3i(X,Y,Z);
     bbox_int BBox{
-      .Min = Params.BBoxInt.Min + (*P) * Params.W3,
-      .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
+      .Min = Params.BBoxInt.Min + P3*Params.W3,
+      .Max = Params.BBoxInt.Min + (P3+1)*Params.W3 // TODO -1
     };
-    //vec3i P3 = GenerateOneParticle(BBox);
     Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    // TODO: here we don't really care if we have duplicated points
   }
-  NCount2 += GridPoints.size();
 }
 
 /* Generate N random particles inside Grid */
@@ -4139,7 +4128,6 @@ static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) 
 {
-  printf("------------- dfs encoder -------------\n");
   i64 N = End - Begin;
   i64 CellCount = Prod(Grid.Dims3);
   if (CellCount == 1) { // one particle in one cell
@@ -4285,7 +4273,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
         P = N * K / M;  // P <= N
         P = MIN(P, CellCountLeft);
       }
-    } else {
+    } else { // out of budget and no prediction
       P = N / 2;
     }
   }
