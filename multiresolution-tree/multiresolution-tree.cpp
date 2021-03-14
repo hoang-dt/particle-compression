@@ -2799,64 +2799,6 @@ BuildTreeIntPredict(
   i64 P = Mid - Begin;
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
-#if defined(BINOMIAL)
-  f64 Mean = f64(N) / 2; // mean
-  f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-  EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &BlockStream, &Coder);
-#elif defined(SOTA)
-  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-#elif defined(NORMAL)
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
-  //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
-  EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
-  //EncodeUniform(N, P, &Coder);
-  BinomialCodeSize += log2(N+1);
-#elif defined(LIGHT_PREDICT)
-  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
-  bool EncodeEmptyCells = false;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
-  //u32 CIdx = Depth;
-  if (!FullGrid && T>0) { // no prediction, try 1-context
-    if (ContextTS[CIdx][T][S+1] == 0) {
-      ContextTS[CIdx][T][0] = 1;
-      EncodeWithContext(T, 0, ContextTS[CIdx][T].data(), &Coder);
-      EncodeCenteredMinimal(S, T+1, &BlockStream);  // TODO: try the binomial one
-      //EncodeGeometric(T, S, &Coder);
-      //EncodeUniform(T, S, &Coder);
-    } else {
-      ContextTS[CIdx][T][0] = 1;
-      EncodeWithContext(T, S+1, ContextTS[CIdx][T].data(), &Coder);
-    }
-    ++ContextTS[CIdx][T][S+1];
-  }
-
-  if (T > 0) {
-    u32 CR = T*(ContextMax+2) + S;
-    if (FullGrid) {
-      assert(R == T-1);
-    } else if (T==1 && S==1) {
-      assert(R == 0);
-    } else if (S == 0) {
-      assert(R == T);
-    } else {
-      if (ContextTSR[CIdx][CR][R+1] == 0) {
-        ContextTSR[CIdx][CR][0] = 1;
-        EncodeWithContext(T, 0, ContextTSR[CIdx][CR].data(), &Coder);
-        EncodeCenteredMinimal(R, T+1, &BlockStream);
-        //EncodeUniform(T, S, &Coder);
-        //EncodeGeometric(T, R, &Coder);
-      } else { // there is a context
-        ContextTSR[CIdx][CR][0] = 1;
-        EncodeWithContext(T, R+1, ContextTSR[CIdx][CR].data(), &Coder);
-      }
-      ++ContextTSR[CIdx][CR][R+1];
-    }
-  }
-#elif defined(PREDICTION) || defined(TIME_PREDICT)
-  //static int SRCounter = 0;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   //if ((1<<T) >= CellCount) { // more particles than empty cells
@@ -2869,7 +2811,6 @@ BuildTreeIntPredict(
   //  REQUIRE(T >= R);
   //}
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
-  //u32 CIdx = Depth;
   if (!FullGrid && T>0 && PredNode /*&& (PredNode->Count > 1)*/) { // predict P
     i64 M = PredNode->Count;
     i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
@@ -2879,7 +2820,7 @@ BuildTreeIntPredict(
     i8 KK = Msb(u64(K)) + 1;
     i8 LL = Msb(u64(L)) + 1;
     u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
-    {
+    { // encode S
       auto It = ContextS[CIdx].find(C);
       if (It == ContextS[CIdx].end()) {
         auto Pair = ContextS[CIdx].insert({C, one_context_type()});
@@ -2901,7 +2842,7 @@ BuildTreeIntPredict(
       }
     }
     C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
-    {
+    { // encode R
       auto It = ContextR[CIdx].find(C);
       if (It == ContextR[CIdx].end()) {
         auto Pair = ContextR[CIdx].insert({C, one_context_type()});
@@ -2924,7 +2865,7 @@ BuildTreeIntPredict(
     }
   } else 
   if (!FullGrid && T>0) { // no prediction, try 1-context
-    {
+    { // encode S
       auto It = ContextTS[CIdx].find(T);
       if (It == ContextTS[CIdx].end()) {
         auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
@@ -2945,7 +2886,7 @@ BuildTreeIntPredict(
         ++It->second[S+1];
       }
     }
-    {
+    { // encode R
       u32 CR = T*(ContextMax+2) + S;
       if (FullGrid) {
         assert(R == T-1);
@@ -2977,10 +2918,6 @@ BuildTreeIntPredict(
     }
   }
 
-#endif
-  //SRList.push_back(vec2i{S, R});
-  //++SRCounter;
-
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
@@ -2998,20 +2935,12 @@ BuildTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-#if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
-  if (S == 1) {
-#elif defined(PREDICTION)
   if (S==1 && CellCountLeft==1) {
     assert(Depth+1 == Params.MaxDepth);
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Begin+1 == Mid) {
-#endif
     assert(Begin+1 == Mid);
-#if defined(PREDICTION) || defined(TIME_PREDICT)
     Left = new (TreePtr++) tree;
     Left->Count = 1;
     ++NumNodeAllocated;
-#endif
     ++NParticlesDecoded;
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
@@ -3026,48 +2955,25 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  } else if (Begin < Mid) {
-#endif
     assert(Depth+1 < Params.MaxDepth);
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-#endif
-#if defined(TIME_PREDICT)
-    if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
-#else
     if (Split == SpatialSplit)
       Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
-#endif
   }
 
   /* recurse on the right */
   tree* Right = nullptr;
-#if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
-  if (R == 1) {
-#elif defined(PREDICTION)
   if (R==1 && CellCountRight==1) {
     assert(Depth+1 == Params.MaxDepth);
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Mid+1 == End) {
-#endif
     assert(Mid+1 == End);
-#if defined(PREDICTION) || defined(TIME_PREDICT)
     Right = new (TreePtr++) tree;
     Right->Count = 1;
     ++NumNodeAllocated;
-#endif
     ++NParticlesDecoded;
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
@@ -3080,33 +2986,17 @@ BuildTreeIntPredict(
         Write(&BlockStream, Left);
       }
     }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   } else if (R >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  } else if (Mid < End) {
-#endif
     assert(Depth+1 < Params.MaxDepth);
-#if defined(RESOLUTION_ALWAYS)
-    split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#else
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-#endif
-#if defined(TIME_PREDICT)
-    if (Split == SpatialSplit)
-      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
-#else
     if (Split == SpatialSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
-#endif
   }
 
   /* construct the prediction tree */
   tree* Node = nullptr; // TODO: try to move this to the beginning and see if that improves performance?
-#if defined(PREDICTION)
   if (Split == ResolutionSplit) {
     Node = BuildPredTree(Left, Right, Depth, D);
   } else if (Split == SpatialSplit) {
@@ -3123,17 +3013,6 @@ BuildTreeIntPredict(
     *TreePtr = *Node;
     Node = TreePtr++;
   }
-#elif defined(TIME_PREDICT)
-  if (Left || Right) {
-    Node = new (TreePtr++) tree;
-    ++NumNodeAllocated;
-    Node->Left = Left;
-    Node->Right = Right;
-    if (Left ) Node->Count = Left->Count; else Node->Count = 0;
-    if (Right) Node->Count += Right->Count;
-  }
-#endif
-
   return Node;
 }
 
