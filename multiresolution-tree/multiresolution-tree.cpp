@@ -2817,13 +2817,12 @@ BuildTreeIntPredict(
   assert(Msb(u64(N))+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
-  i8 D = Params.DimsStr[Depth] - 'x';
   bool InSmallBlock = Depth >= Params.StartSmallBlock;
   if (InSmallBlock) {
     REQUIRE(Prod(Grid.Dims3) <= Prod(Params.SmallBlockDims3));
   }
   if (CellCount==1) { // one single particle and cell
-    assert(Depth+1 == Params.MaxDepth);
+    assert(Depth == Params.MaxDepth);
     //assert(Begin+1 == Mid);
     tree* Node = new (TreePtr++) tree;
     Node->Count = 1;
@@ -2834,6 +2833,7 @@ BuildTreeIntPredict(
       auto IdxInSmallBlock = GetIndexInSmallBlock(Grid.From3);
       SmallBlocks[SmallBlockIndex].Data[IdxInSmallBlock] = true;
       SmallBlocks[SmallBlockIndex].Count++;
+      //printf("%d %d\n", SmallBlockIndex, SmallBlocks[SmallBlockIndex]);
     }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
@@ -2852,6 +2852,7 @@ BuildTreeIntPredict(
   }
 
   /* split in either resolution or precision */
+  i8 D = Params.DimsStr[Depth] - 'x';
   i64 Mid = Begin;
   i32 MM = Grid.From3[D]; // the beginning of the right child
   if (Split == ResolutionSplit) {
@@ -2882,10 +2883,10 @@ BuildTreeIntPredict(
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   u32 CIdx = ResLvl*Params.NLevels + Depth;
   auto [S3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
-  bool CanUseSmallGrid = InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels && SmallBlocks[SmallBlockIndex].Count>0;
+  bool CanUseSmallGrid = InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels && SmallBlocks[SmallBlockIndex].Count>0 /*&& Grid.Dims3[DRes] <= 4*/;
   if (!FullGrid && T>0 && (PredNode || CanUseSmallGrid) /*&& (PredNode->Count > 1)*/) { // predict P
     i64 M=0, K=0, L=0;
-    if (InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels) {
+    if (CanUseSmallGrid) {
       // go in the small grid and count K and L
       REQUIRE(Grid.Stride3[DRes] > 1);
       i32 K1 = CountParticles(ShiftGrid(GridLeft, DRes, Grid.Stride3[DRes] / 2, -1));
@@ -2894,6 +2895,8 @@ BuildTreeIntPredict(
       i32 L1 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2, -1));
       i32 L2 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2,  1));
       L = (L1+L2) / 2;
+      if (K>0 || L>0)
+        printf("P = %d K = (%d %d) L = (%d %d)\n", P, K1, K2, L1, L2);
     } else
     if (PredNode) {
       M = PredNode->Count; // whole
@@ -3016,8 +3019,8 @@ BuildTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (CellCountLeft>1 && S>=1) { //recurse
-    assert(Depth+1 < Params.MaxDepth);
+  if (CellCountLeft>=1 && S>=1) { //recurse
+   // assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
@@ -3029,8 +3032,8 @@ BuildTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (CellCountRight>1 && R>=1) { //recurse
-    assert(Depth+1 < Params.MaxDepth);
+  if (CellCountRight>=1 && R>=1) { //recurse
+    //assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, DRes);
