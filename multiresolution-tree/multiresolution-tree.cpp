@@ -1160,20 +1160,25 @@ ComputeGrid(vec3i BBoxExt3, str DimsStr)
 
 static vec3i
 ComputeGrid(
-  std::vector<particle_int>* Particles, const bbox_int& BBox, 
+  std::vector<particle_int>* Particles, const bbox_int& BBox,
   i64 Begin, i64 End, i8 Depth, str DimsStr)
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-    D = 1;
-  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-    D = 2;
-  DimsStr[Depth] = 'x' + D; 
-  assert((BBoxExt3[D]&1) == 0);
+  vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  D = Depth % Params.NDims;
+  if (BBoxExt3[D] <= 1) {
+    D = (D+1) % Params.NDims;
+    if (BBoxExt3[D] <= 1) {
+      D = (D+1) % Params.NDims;
+      REQUIRE(BBoxExt3[D] > 1);
+    }
+  }
+  DimsStr[Depth] = 'x' + D;
+  //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
-  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] <= Middle; };
+  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left  = MCOPY(vec3i(0), [D]=1);
   vec3i LogDims3Right = MCOPY(vec3i(0), [D]=1);
@@ -1182,7 +1187,7 @@ ComputeGrid(
     ++LogDims3Left[D];
   }
   if (Mid+1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -4148,17 +4153,6 @@ RemoveRepeatedParticles(std::vector<particle_int>& Input) {
 // TODO: add the number of blocks to the .idx file
 // TODO: 
 
-//int 
-//main(int Argc, cstr* Argv) {
-//  f64 Accuracy = 0;
-//  bool Ok = ToDouble(Argv[1], &Accuracy);
-//  if (Ok)
-//    TestCompressSeries(Accuracy);
-//  else
-//    printf("ERROR: provide an accuracy");
-//  return 0;
-//}
-
 static std::vector<particle>
 ReadParticles(cstr FileName) {
   if (strstr(FileName, ".xyz"))
@@ -4273,10 +4267,6 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
-    if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
-      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
-        EXIT_ERROR("missing --height and --accuracy");
-    }
     //Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
     char Temp[32];
     cstr Str = Temp;
@@ -4311,8 +4301,8 @@ START:
       Params.NParticles = ParticlesInt.size();
       if (TreePtrBackup == nullptr) {
         assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 8];
-        PrevFramePtr = new tree[Params.NParticles * 8];
+        TreePtr      = new tree[Params.NParticles * 20];
+        //PrevFramePtr = new tree[Params.NParticles * 8];
         TreePtrBackup      = TreePtr;
         PrevFramePtrBackup = PrevFramePtr;
       }
@@ -4367,8 +4357,8 @@ START:
       printf("Time: %f s\n", dec_time);
       ++TimeStep;
     }
-    delete[] TreePtrBackup;
-    delete[] PrevFramePtrBackup;
+    //delete[] TreePtrBackup;
+    //delete[] PrevFramePtrBackup;
     Coder.EncodeFinalize();
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
