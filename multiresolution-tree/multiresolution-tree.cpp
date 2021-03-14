@@ -1164,7 +1164,7 @@ ComputeGrid(
   i64 Begin, i64 End, i8 Depth, str DimsStr)
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
+  //REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
   vec3i BBoxExt3 = BBox.Max - BBox.Min;
   D = Depth % Params.NDims;
@@ -3017,7 +3017,7 @@ BuildTreeIntPredict(
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
         //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -3073,7 +3073,7 @@ BuildTreeIntPredict(
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
     BBox.Max = BBox.Min + Params.W3;
     for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Mid].Pos[DD] < M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
