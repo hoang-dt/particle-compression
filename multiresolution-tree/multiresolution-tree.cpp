@@ -1202,20 +1202,25 @@ ComputeGrid(vec3i BBoxExt3, str DimsStr)
 
 static vec3i
 ComputeGrid(
-  std::vector<particle_int>* Particles, const bbox_int& BBox, 
+  std::vector<particle_int>* Particles, const bbox_int& BBox,
   i64 Begin, i64 End, i8 Depth, str DimsStr)
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
-  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-    D = 1;
-  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-    D = 2;
-  DimsStr[Depth] = 'x' + D; 
-  assert((BBoxExt3[D]&1) == 0);
+  vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  D = Depth % Params.NDims;
+  if (BBoxExt3[D] <= 1) {
+    D = (D+1) % Params.NDims;
+    if (BBoxExt3[D] <= 1) {
+      D = (D+1) % Params.NDims;
+      REQUIRE(BBoxExt3[D] > 1);
+    }
+  }
+  DimsStr[Depth] = 'x' + D;
+  //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
-  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] <= Middle; };
+  auto Pred = [D, Middle](const particle_int& P) { return P.Pos[D] < Middle; };
   i64 Mid = std::partition(RANGE(*Particles, Begin, End), Pred) - Particles->begin();
   vec3i LogDims3Left  = MCOPY(vec3i(0), [D]=1);
   vec3i LogDims3Right = MCOPY(vec3i(0), [D]=1);
@@ -1224,7 +1229,7 @@ ComputeGrid(
     ++LogDims3Left[D];
   }
   if (Mid+1 < End) {
-    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle+1), Mid, End, Depth+1, DimsStr);
+    LogDims3Right = ComputeGrid(Particles, MCOPY(BBox, .Min[D]=Middle), Mid, End, Depth+1, DimsStr);
     ++LogDims3Right[D];
   }
   return max(LogDims3Left, LogDims3Right);
@@ -4134,6 +4139,7 @@ static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) 
 {
+  printf("------------- dfs encoder -------------\n");
   i64 N = End - Begin;
   i64 CellCount = Prod(Grid.Dims3);
   if (CellCount == 1) { // one particle in one cell
@@ -4922,15 +4928,6 @@ ProcessSemantic3D(cstr FileNameIn, cstr FileNameOut) {
 
 int
 main(int Argc, cstr* Argv) {
-  //ProcessSemantic3D("D:/Downloads/sg27_station8_intensity_rgb.txt", "D:/Downloads/sg27_station8_intensity_rgb.vtu");
-  //return 0;
-  //{
-  //  i32 Prob = 0;
-  //  ToInt(Argv[1], &Prob);
-  //  auto Particles = GenerateRandomParticles(Prob);
-  //  WritePLYInt(PRINT("%random-%d.ply", Prob), Particles);
-  //  return 0;
-  //}
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -4953,10 +4950,6 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
-    if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
-      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
-        EXIT_ERROR("missing --height and --accuracy");
-    }
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);
@@ -4995,10 +4988,10 @@ START:
       Params.NParticles = ParticlesInt.size();
       if (TreePtrBackup == nullptr) {
         assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 8];
-        PrevFramePtr = new tree[Params.NParticles * 8];
-        TreePtrBackup      = TreePtr;
-        PrevFramePtrBackup = PrevFramePtr;
+        //TreePtr      = new tree[Params.NParticles * 8];
+        //PrevFramePtr = new tree[Params.NParticles * 8];
+        //TreePtrBackup      = TreePtr;
+        //PrevFramePtrBackup = PrevFramePtr;
       }
       printf("number of particles = %zu\n", ParticlesInt.size());
       double start_time = timer();
@@ -5066,27 +5059,12 @@ START:
       printf("Time: %f s\n", dec_time);
       ++TimeStep;
     }
-    delete[] TreePtrBackup;
-    delete[] PrevFramePtrBackup;
+    //delete[] TreePtrBackup;
+    //delete[] PrevFramePtrBackup;
     Coder.EncodeFinalize();
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
     printf("block count = %lld\n", BlockCount);
-    //for (i64 I = 0; I < Residuals.size(); ++I) {
-    //  printf("%d\n", Residuals[I]);
-    //}
-    //bitstream Bs;
-    //InitWrite(&Bs, 100 << 20); // 100 MB
-    //for (int I = 0; I < Residuals.size(); ++I) {
-    //  WriteVarByte(&Bs, Residuals[I]);
-    //}
-    //FILE* Rf = fopen("residuals.dat", "wb");
-    //fwrite(Bs.Stream.Data, Size(Bs), 1, Rf);
-    //fclose(Rf);
-
-    //auto ResidualTree = BuildBinaryTreeForResiduals(Residuals);
-    //i64 ResidualCodeLength = CountCodeLength(ResidualTree);
-    //printf("Residual code length        = %lld\n", ResidualCodeLength);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     //Rans64EncFlush(&Rans, &RansPtr);
@@ -5119,14 +5097,6 @@ START:
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
-    ///* dump the debug info */
-    //FILE* Ff = fopen("debug.dat", "wb");
-    //i64 DebugSize = SRList.size();
-    //fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
-    //}
-    //fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -5192,7 +5162,7 @@ START:
     //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
     //}
     //fclose(Ff);
-    TreePtr = new tree[Params.NParticles * 10]; // TODO: avoid this
+    TreePtr = new tree[Params.NParticles * 20]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
     tree* MyNode = nullptr;
@@ -5223,61 +5193,6 @@ START:
     if (Budget)
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
       //WriteXYZInt(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
-    //Blocks.resize(Params.NLevels + 1);
-    //Blocks[Params.NLevels].resize(1);
-    //Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
-    //bool Continue = true;
-    //int NBlocks = 0;
-    //while (Continue && /*NBlocks < Params.MaxNBlocks*/BlockBytesRead < Params.MaxNBlocks) {
-    //  //Continue = RefineByLevel();
-    //  Continue = RefineByError();
-    //  ++NBlocks;
-    //}
-    //if (!Blocks[Params.NLevels].empty()) {
-    //  Particles.reserve(Blocks[Params.NLevels][0].Nodes[0]);
-    //  i8 D = 0;
-    //  grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
-    //  i8 Level = Params.NLevels - 1;
-    //  u8 Height = 0;
-    //  if (Params.NLevels == 1) {
-    //    GenerateParticles(tree_node{
-    //      .Level = Level,
-    //      .Height = 0,
-    //      .NodeId = 1,
-    //      .Grid = Grid,
-    //      .D = 0
-    //    });
-    //  } else {
-    //    while (true) {
-    //      if (Level <= Params.MaxLevel && 0 == GenerateParticles(tree_node{
-    //        .Level = Level,
-    //        .Height = u8(Height + 1),
-    //        .NodeId = 1,
-    //        .Grid = SplitGrid(Grid, D, ResolutionSplit, Right),
-    //        .D = i8((D + 1) % Params.NDims)
-    //      })) {
-    //        //GenerateParticlesPerNode(Blocks[Params.NLevels][0].Nodes[LEVEL_TO_NODE(Level)], SplitGrid(Grid, D, ResolutionSplit, Right));
-    //      }
-    //      Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
-    //      D = (D + 1) % Params.NDims;
-    //      --Level;
-    //      ++Height;
-    //      if (Level == 0) {
-    //        GenerateParticles(tree_node{
-    //          .Level = Level,
-    //          .Height = Height,
-    //          .NodeId = 1,
-    //          .Grid = Grid,
-    //          .D = D
-    //        });
-    //        break;
-    //      } 
-    //    }
-    //  }
-    //  printf("ncount = %lld %lld\n", NCount, NCount2);
-    //  printf("bytes read = %lld\n", BlockBytesRead);
-    //  WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
-    //}
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
