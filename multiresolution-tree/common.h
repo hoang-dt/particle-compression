@@ -2024,6 +2024,7 @@ struct params {
   refinement_mode RefinementMode = refinement_mode::ERROR_BASED;
   i8 SmallBlockBits = 0; // number of bits used for the small block
   vec3i SmallBlockDims3 = vec3i(1, 1, 1);
+  vec3i NSmallBlocks3 = vec3i(1, 1, 1);
 };
 
 /* the left side is favored if the dimension is odd */

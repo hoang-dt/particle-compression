@@ -15,6 +15,11 @@
 #include "platform.h"
 #include <algorithm>
 
+struct small_block {
+  std::vector<i32> Data;
+};
+static std::vector<small_block> SmallBlocks; // all the small blocks in one big block
+
 static bbox
 ComputeBoundingBox(const std::vector<particle>& Particles) {
   REQUIRE(!Particles.empty());
@@ -2922,15 +2927,6 @@ BuildTreeIntPredict(
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
     ++BlockCount;
-    //REQUIRE(Split == ResolutionSplit);
-    //FOR_EACH(Context, ContextS ) { Context->clear(); }
-    //FOR_EACH(Context, ContextTS) { Context->clear(); }
-    //FOR_EACH(Context, ContextR ) { Context->clear(); }
-    static bool Done = false;
-    if (!Done) {
-      printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
-      Done = true;
-    }
   }
 
   /* recurse */
@@ -4113,6 +4109,22 @@ ProcessSemantic3D(cstr FileNameIn, cstr FileNameOut) {
   WriteParticles(FileNameOut, Particles);
 }
 
+static void
+AllocateMemoryForBlocks(grid_int G) {
+  for (int I = 0; I < Params.StartResolutionSplit; ++I) {
+    G = SplitGrid(G, Params.DimsStr[I]-'x', SpatialSplit, side::Left);
+  }
+  Params.BlockDims3 = G.Dims3;
+  Params.NSmallBlocks3 = Params.BlockDims3 / Params.SmallBlockDims3;
+  REQUIRE(Params.BlockDims3.x >= Params.SmallBlockDims3.x);
+  REQUIRE(Params.BlockDims3.y >= Params.SmallBlockDims3.y);
+  REQUIRE(Params.BlockDims3.z >= Params.SmallBlockDims3.z);
+  printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
+  printf("small block dims = %d %d %d\n", Params.SmallBlockDims3.x, Params.SmallBlockDims3.y, Params.SmallBlockDims3.z);
+  printf("n small block = %d %d %d\n", Params.NSmallBlocks3.x, Params.NSmallBlocks3.y, Params.NSmallBlocks3.z);
+  SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
+}
+
 int
 main(int Argc, cstr* Argv) {
   //ProcessSemantic3D("D:/Downloads/sg27_station8_intensity_rgb.txt", "D:/Downloads/sg27_station8_intensity_rgb.vtu");
@@ -4195,13 +4207,6 @@ START:
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
       Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
-      if (OptVal(Argc, Argv, "--block_bits", &Params.SmallBlockBits)) {
-        for (i8 I = 0; I < Params.SmallBlockBits; ++I) {
-          i8 J = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z - 1 - I;
-          i8 D = Params.DimsStr[J] - 'x';
-          Params.SmallBlockDims3[D] *= 2;
-        }
-      }
       printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
       Params.Dims3 = Params.Dims3 / Params.W3;
@@ -4217,6 +4222,14 @@ START:
       FOR_EACH (C, ContextTSR ) { C->reserve(512); }
       printf("max depth = %d\n", Params.MaxDepth);
       grid_int Grid{.From3 = vec3i(0), .Dims3 = Params.Dims3, .Stride3 = vec3i(1)};
+      if (OptVal(Argc, Argv, "--block_bits", &Params.SmallBlockBits)) {
+        for (i8 I = 0; I < Params.SmallBlockBits; ++I) {
+          i8 J = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z - 1 - I;
+          i8 D = Params.DimsStr[J] - 'x';
+          Params.SmallBlockDims3[D] *= 2;
+        }
+        AllocateMemoryForBlocks(Grid);
+      }
       printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
       printf("dims string = %s\n", Params.DimsStr);
       i64 N = ParticlesInt.size();
@@ -4242,21 +4255,6 @@ START:
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
     printf("block count = %lld\n", BlockCount);
-    //for (i64 I = 0; I < Residuals.size(); ++I) {
-    //  printf("%d\n", Residuals[I]);
-    //}
-    //bitstream Bs;
-    //InitWrite(&Bs, 100 << 20); // 100 MB
-    //for (int I = 0; I < Residuals.size(); ++I) {
-    //  WriteVarByte(&Bs, Residuals[I]);
-    //}
-    //FILE* Rf = fopen("residuals.dat", "wb");
-    //fwrite(Bs.Stream.Data, Size(Bs), 1, Rf);
-    //fclose(Rf);
-
-    //auto ResidualTree = BuildBinaryTreeForResiduals(Residuals);
-    //i64 ResidualCodeLength = CountCodeLength(ResidualTree);
-    //printf("Residual code length        = %lld\n", ResidualCodeLength);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     //Rans64EncFlush(&Rans, &RansPtr);
@@ -4341,15 +4339,6 @@ START:
     split_type Split = SpatialSplit;
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
-    /* read the debug info */
-    //FILE* Ff = fopen("debug.dat", "rb");
-    //i64 DebugSize = 0;
-    //fread(&DebugSize, sizeof(DebugSize), 1, Ff);
-    //SRList.resize(DebugSize);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
-    //}
-    //fclose(Ff);
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
