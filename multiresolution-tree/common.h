@@ -2044,6 +2044,14 @@ SplitGrid(const grid_int& Grid, int D, split_type SplitType, side Side) {
   return Out;
 }
 
+// shift the input grid along D by Amount*Stride
+INLINE grid_int
+ShiftGrid(const grid_int& G, int D, int Stride, int Amount) {
+  auto Out = G;
+  Out.From3[D] += G.From3[D] + Stride*Amount;
+  return Out;
+}
+
 inline grid
 SplitGrid(const grid& Grid, int D, split_type SplitType, side Side) {
   grid Out = Grid;

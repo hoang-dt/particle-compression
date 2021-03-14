@@ -2781,13 +2781,34 @@ GetIndexInSmallBlock(const vec3i& P3) {
   return Index(I3, Params.SmallBlockDims3);
 }
 
+static i32
+CountParticles(const grid_int& G) {
+  auto [S3, SmallBlockIdx] = GetSmallBlock(G.From3);
+  vec3i I3 = Mod(S3, Params.SmallBlockDims3);
+  vec3i P3;
+  i32 Count = 0;
+  for (int Z = 0; Z < G.Dims3.z; ++Z) {
+    P3.z = I3.z + Z*G.Stride3.z;
+    if (P3.z<0 || P3.z>=Params.SmallBlockDims3.z) continue;
+  for (int Y = 0; Y < G.Dims3.y; ++Y) {
+    P3.y = I3.y + Y*G.Stride3.y;
+    if (P3.y<0 || P3.y>=Params.SmallBlockDims3.y) continue;
+  for (int X = 0; X < G.Dims3.x; ++X) {
+    P3.x = I3.x + X*G.Stride3.x;
+    if (P3.x<0 || P3.x>=Params.SmallBlockDims3.x) continue;
+    i64 Idx = Index(P3, Params.SmallBlockDims3);
+    Count += SmallBlocks[SmallBlockIdx].Data[Idx];
+  }}}
+  return Count;
+}
+
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static u32 NumNodeAllocated = 0;
 static tree*
 BuildTreeIntPredict(
   const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, 
-  i8 T, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth)
+  i8 T, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth, i8 DRes)
 {
   assert(ResLvl < Params.NLevels);
   assert(Depth <= Params.MaxDepth);
@@ -2796,13 +2817,22 @@ BuildTreeIntPredict(
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
   i8 D = Params.DimsStr[Depth] - 'x';
+  bool InSmallBlock = Depth >= Params.StartSmallBlock;
+  if (InSmallBlock) {
+    REQUIRE(Prod(Grid.Dims3) <= Prod(Params.SmallBlockDims3));
+  }
   if (CellCount==1) { // one single particle and cell
     assert(Depth+1 == Params.MaxDepth);
-    assert(Begin+1 == Mid);
+    //assert(Begin+1 == Mid);
     tree* Node = new (TreePtr++) tree;
     Node->Count = 1;
     ++NumNodeAllocated;
     ++NParticlesDecoded;
+    if (InSmallBlock) { // deposit the particle in the small block grid
+      auto [SmallBlock3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
+      auto IdxInSmallBlock = GetIndexInSmallBlock(Grid.From3);
+      SmallBlocks[SmallBlockIndex].Data[IdxInSmallBlock] = true;
+    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
@@ -2849,14 +2879,23 @@ BuildTreeIntPredict(
   i8 R = Msb(u32(N-P)) + 1;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
-  bool InSmallBlock = Depth >= Params.StartSmallBlock;
-  if (InSmallBlock) {
-    REQUIRE(Prod(Grid.Dims3) <= Prod(Params.SmallBlockDims3));
-  }
-  if (!FullGrid && T>0 && PredNode /*&& (PredNode->Count > 1)*/) { // predict P
-    i64 M = PredNode->Count;
-    i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-    i64 L = M - K;
+  if (!FullGrid && T>0 && (PredNode || (InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels)) /*&& (PredNode->Count > 1)*/) { // predict P
+    i64 M=0, K=0, L=0;
+    if (InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels) {
+      // go in the small grid and count K and L
+      REQUIRE(Grid.Stride3[DRes] > 1);
+      i32 K1 = CountParticles(ShiftGrid(GridLeft, DRes, Grid.Stride3[DRes] / 2, -1));
+      i32 K2 = CountParticles(ShiftGrid(GridLeft, DRes, Grid.Stride3[DRes] / 2,  1));
+      K = (K1+K2) / 2;
+      i32 L1 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2, -1));
+      i32 L2 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2,  1));
+      L = (L1+L2) / 2;
+    } else
+    if (PredNode) {
+      M = PredNode->Count; // whole
+      K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count; // left
+      L = M - K; // right
+    } 
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     i8 LL = Msb(u64(L)) + 1;
@@ -2961,6 +3000,10 @@ BuildTreeIntPredict(
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
+    SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
+    FOR_EACH(Sb, SmallBlocks) {
+      Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
+    }
     SaveTreePtr = TreePtr;
     ++BlockCount;
   }
@@ -2973,9 +3016,9 @@ BuildTreeIntPredict(
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1);
+      Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1, DRes);
     else if (Split == ResolutionSplit)
-      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1);
+      Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1, D);
   }
 
   /* recurse on the right */
@@ -2984,9 +3027,9 @@ BuildTreeIntPredict(
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
-      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
+      Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, DRes);
     else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
+      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1, D);
   }
 
   /* construct the prediction tree */
@@ -4120,10 +4163,10 @@ AllocateMemoryForBlocks(grid_int G) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   printf("small block dims = %d %d %d\n", Params.SmallBlockDims3.x, Params.SmallBlockDims3.y, Params.SmallBlockDims3.z);
   printf("n small block = %d %d %d\n", Params.NSmallBlocks3.x, Params.NSmallBlocks3.y, Params.NSmallBlocks3.z);
-  SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
-  FOR_EACH(Sb, SmallBlocks) {
-    Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
-  }
+  //SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
+  //FOR_EACH(Sb, SmallBlocks) {
+  //  Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
+  //}
 }
 
 int
@@ -4241,7 +4284,7 @@ START:
       i8 T = Msb(u64(N)) + 1;
       split_type Split = (Params.NLevels>1 && Params.StartResolutionSplit==0) ? ResolutionSplit : SpatialSplit;
       printf("--------------- Encoding %s\n", Buf);
-      tree* MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
+      tree* MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0, 0);
       PrevFramePtr = MyNode;
       i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
       printf("Stream size                        = %lld\n", BlockStreamSize);
