@@ -4146,13 +4146,6 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
-    //Params.NoRefinement = OptExists(Argc, Argv, "--no_refinement");
-    char Temp[32];
-    cstr Str = Temp;
-    OptVal(Argc, Argv, "--refinement", &Str);
-    if (strcmp(Str, "error"     ) == 0) Params.RefinementMode = refinement_mode::ERROR_BASED;
-    if (strcmp(Str, "lossless"  ) == 0) Params.RefinementMode = refinement_mode::LOSSLESS;
-    if (strcmp(Str, "separation") == 0) Params.RefinementMode = refinement_mode::SEPARATION_ONLY;
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     char Buf[512]; 
     strncpy(Buf, Params.InFile, sizeof(Buf));
@@ -4202,6 +4195,13 @@ START:
       Params.W3[0] = Params.Dims3[0] / (1<<Params.LogDims3[0]);
       Params.W3[1] = Params.Dims3[1] / (1<<Params.LogDims3[1]);
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
+      if (OptVal(Argc, Argv, "--block_bits", &Params.SmallBlockBits)) {
+        for (i8 I = 0; I < Params.SmallBlockBits; ++I) {
+          i8 J = Params.LogDims3.x + Params.LogDims3.y + Params.LogDims3.z - 1 - I;
+          i8 D = Params.DimsStr[J] - 'x';
+          Params.SmallBlockDims3[D] *= 2;
+        }
+      }
       printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
       Params.Dims3 = Params.Dims3 / Params.W3;
@@ -4289,14 +4289,6 @@ START:
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
     printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
-    ///* dump the debug info */
-    //FILE* Ff = fopen("debug.dat", "wb");
-    //i64 DebugSize = SRList.size();
-    //fwrite(&DebugSize, sizeof(DebugSize), 1, Fp);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fwrite(&SRList[I], sizeof(SRList[I]), 1, Fp);
-    //}
-    //fclose(Ff);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
@@ -4370,61 +4362,6 @@ START:
     WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
-    //Blocks.resize(Params.NLevels + 1);
-    //Blocks[Params.NLevels].resize(1);
-    //Heap.insert(block_data{.Level = Params.NLevels, .Height = 0, .BlockId = 0}, block_priority{.Level = Params.NLevels, .BlockId = 0, .Error = 0});
-    //bool Continue = true;
-    //int NBlocks = 0;
-    //while (Continue && /*NBlocks < Params.MaxNBlocks*/BlockBytesRead < Params.MaxNBlocks) {
-    //  //Continue = RefineByLevel();
-    //  Continue = RefineByError();
-    //  ++NBlocks;
-    //}
-    //if (!Blocks[Params.NLevels].empty()) {
-    //  Particles.reserve(Blocks[Params.NLevels][0].Nodes[0]);
-    //  i8 D = 0;
-    //  grid Grid{.From3 = vec3f(0), .Dims3 = vec3f(Params.Dims3), .Stride3 = vec3f(1)};
-    //  i8 Level = Params.NLevels - 1;
-    //  u8 Height = 0;
-    //  if (Params.NLevels == 1) {
-    //    GenerateParticles(tree_node{
-    //      .Level = Level,
-    //      .Height = 0,
-    //      .NodeId = 1,
-    //      .Grid = Grid,
-    //      .D = 0
-    //    });
-    //  } else {
-    //    while (true) {
-    //      if (Level <= Params.MaxLevel && 0 == GenerateParticles(tree_node{
-    //        .Level = Level,
-    //        .Height = u8(Height + 1),
-    //        .NodeId = 1,
-    //        .Grid = SplitGrid(Grid, D, ResolutionSplit, Right),
-    //        .D = i8((D + 1) % Params.NDims)
-    //      })) {
-    //        //GenerateParticlesPerNode(Blocks[Params.NLevels][0].Nodes[LEVEL_TO_NODE(Level)], SplitGrid(Grid, D, ResolutionSplit, Right));
-    //      }
-    //      Grid = SplitGrid(Grid, D, ResolutionSplit, Left);
-    //      D = (D + 1) % Params.NDims;
-    //      --Level;
-    //      ++Height;
-    //      if (Level == 0) {
-    //        GenerateParticles(tree_node{
-    //          .Level = Level,
-    //          .Height = Height,
-    //          .NodeId = 1,
-    //          .Grid = Grid,
-    //          .D = D
-    //        });
-    //        break;
-    //      } 
-    //    }
-    //  }
-    //  printf("ncount = %lld %lld\n", NCount, NCount2);
-    //  printf("bytes read = %lld\n", BlockBytesRead);
-    //  WriteXYZ(Params.OutFile, Particles.begin(), Particles.end());
-    //}
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
