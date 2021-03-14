@@ -17,6 +17,7 @@
 
 struct small_block {
   std::vector<bool> Data;
+  i32 Count = 0;
 };
 static std::vector<small_block> SmallBlocks; // all the small blocks in one big block
 
@@ -2832,6 +2833,7 @@ BuildTreeIntPredict(
       auto [SmallBlock3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
       auto IdxInSmallBlock = GetIndexInSmallBlock(Grid.From3);
       SmallBlocks[SmallBlockIndex].Data[IdxInSmallBlock] = true;
+      SmallBlocks[SmallBlockIndex].Count++;
     }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
@@ -2878,8 +2880,10 @@ BuildTreeIntPredict(
   i8 S = Msb(u32(P)) + 1;
   i8 R = Msb(u32(N-P)) + 1;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
-  if (!FullGrid && T>0 && (PredNode || (InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels)) /*&& (PredNode->Count > 1)*/) { // predict P
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
+  auto [S3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
+  bool CanUseSmallGrid = InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels && SmallBlocks[SmallBlockIndex].Count>0;
+  if (!FullGrid && T>0 && (PredNode || CanUseSmallGrid) /*&& (PredNode->Count > 1)*/) { // predict P
     i64 M=0, K=0, L=0;
     if (InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels) {
       // go in the small grid and count K and L
@@ -3000,9 +3004,11 @@ BuildTreeIntPredict(
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
-    SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
     FOR_EACH(Sb, SmallBlocks) {
-      Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
+      if (Sb->Count > 0) {
+        std::fill(Sb->Data.begin(), Sb->Data.end(), false);
+        Sb->Count = 0;
+      }
     }
     SaveTreePtr = TreePtr;
     ++BlockCount;
@@ -3010,7 +3016,7 @@ BuildTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (S >= 1) { //recurse
+  if (CellCountLeft>1 && S>=1) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
@@ -3023,7 +3029,7 @@ BuildTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (R >= 1) { //recurse
+  if (CellCountRight>1 && R>=1) { //recurse
     assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
@@ -3034,15 +3040,17 @@ BuildTreeIntPredict(
 
   /* construct the prediction tree */
   tree* Node = nullptr; // TODO: try to move this to the beginning and see if that improves performance?
-  if (Split == ResolutionSplit) {
-    Node = BuildPredTree(Left, Right, Depth, D);
-  } else if (Split == SpatialSplit) {
-    if (Depth > Params.StartResolutionSplit) {
-      Node = new (TreePtr++) tree;
-      Node->Left  = Left;
-      Node->Right = Right;
-      if (Left ) Node->Count = Left->Count; else Node->Count = 0;
-      if (Right) Node->Count += Right->Count;
+  if (Left || Right) {
+    if (Split == ResolutionSplit) {
+      Node = BuildPredTree(Left, Right, Depth, D);
+    } else if (Split == SpatialSplit) {
+      if (Depth > Params.StartResolutionSplit) {
+        Node = new (TreePtr++) tree;
+        Node->Left  = Left;
+        Node->Right = Right;
+        if (Left ) Node->Count = Left->Count; else Node->Count = 0;
+        if (Right) Node->Count += Right->Count;
+      }
     }
   }
   if (Depth==Params.StartResolutionSplit && Node!=nullptr) {
@@ -4163,10 +4171,10 @@ AllocateMemoryForBlocks(grid_int G) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   printf("small block dims = %d %d %d\n", Params.SmallBlockDims3.x, Params.SmallBlockDims3.y, Params.SmallBlockDims3.z);
   printf("n small block = %d %d %d\n", Params.NSmallBlocks3.x, Params.NSmallBlocks3.y, Params.NSmallBlocks3.z);
-  //SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
-  //FOR_EACH(Sb, SmallBlocks) {
-  //  Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
-  //}
+  SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
+  FOR_EACH(Sb, SmallBlocks) {
+    Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
+  }
 }
 
 int
