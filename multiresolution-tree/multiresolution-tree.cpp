@@ -3010,14 +3010,14 @@ BuildTreeIntPredict(
     ++NParticlesDecoded;
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    BBox.Max = BBox.Min + Params.W3;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
         //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
         //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        bool Left = Particles[Begin].Pos[DD] < M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         Write(&BlockStream, Left);
       }
     }
@@ -3066,14 +3066,12 @@ BuildTreeIntPredict(
     ++NParticlesDecoded;
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    BBox.Max = BBox.Min + Params.W3;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Mid].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+        bool Left = Particles[Mid].Pos[DD] < M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
         Write(&BlockStream, Left);
       }
     }
