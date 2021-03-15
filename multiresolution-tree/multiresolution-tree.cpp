@@ -2818,9 +2818,6 @@ BuildTreeIntPredict(
   assert(Msb(u64(N))+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
-  if (ResLvl < Params.CodingLevel) {
-    return nullptr;
-  }
   if (CellCount==1) { // one single particle and cell
     assert(Depth == Params.MaxDepth);
     //assert(Begin+1 == Mid);
@@ -2998,10 +2995,11 @@ BuildTreeIntPredict(
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
+    if (Split == SpatialSplit) {
       Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1, DRes);
-    else if (Split == ResolutionSplit)
+    } else if (Split == ResolutionSplit) {
       Left = BuildTreeIntPredict(nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl+1, Depth+1, D);
+    }
   }
 
   /* recurse on the right */
@@ -3009,10 +3007,12 @@ BuildTreeIntPredict(
   if (CellCountRight>=1 && R>=1) { //recurse
     //assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
+    if (Split == SpatialSplit) {
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, DRes);
-    else if (Split == ResolutionSplit)
-      Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1, D);
+    } else if (Split == ResolutionSplit) {
+      if (ResLvl+1 >= Params.CodingLevel)
+        Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1, D);
+    }
   }
 
   /* construct the prediction tree */
@@ -4263,6 +4263,7 @@ START:
         printf("start small block = %d\n", Params.StartSmallBlock);
         AllocateMemoryForBlocks(Grid);
       }
+      OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel);
       printf("bounding box = (" PRIvec3i ") - (" PRIvec3i ")\n", EXPvec3(Params.BBoxInt.Min), EXPvec3(Params.BBoxInt.Max));
       printf("dims string = %s\n", Params.DimsStr);
       i64 N = ParticlesInt.size();
