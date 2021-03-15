@@ -55,6 +55,7 @@ ComputeBoundingBox(const std::vector<particle_int>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
+std::vector<particle_int> ParticleOuts;
 
 /* Bit set stuffs */
 using word = u64;
@@ -2817,9 +2818,8 @@ BuildTreeIntPredict(
   assert(Msb(u64(N))+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   //if (CellCount == N) return nullptr;
-  bool InSmallBlock = Depth >= Params.StartSmallBlock;
-  if (InSmallBlock) {
-    REQUIRE(Prod(Grid.Dims3) <= Prod(Params.SmallBlockDims3));
+  if (ResLvl < Params.CodingLevel) {
+    return nullptr;
   }
   if (CellCount==1) { // one single particle and cell
     assert(Depth == Params.MaxDepth);
@@ -2828,26 +2828,20 @@ BuildTreeIntPredict(
     Node->Count = 1;
     ++NumNodeAllocated;
     ++NParticlesDecoded;
-    if (InSmallBlock) { // deposit the particle in the small block grid
-      auto [SmallBlock3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
-      auto IdxInSmallBlock = GetIndexInSmallBlock(Grid.From3);
-      SmallBlocks[SmallBlockIndex].Data[IdxInSmallBlock] = true;
-      SmallBlocks[SmallBlockIndex].Count++;
-      //printf("%d %d\n", SmallBlockIndex, SmallBlocks[SmallBlockIndex]);
-    }
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] < M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        Write(&BlockStream, Left);
-      }
-    }
+    ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]+1) {
+    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[DD] < M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
     return Node;
   }
 
@@ -2882,23 +2876,9 @@ BuildTreeIntPredict(
   i8 R = Msb(u32(N-P)) + 1;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   u32 CIdx = ResLvl*Params.NLevels + Depth;
-  auto [S3, SmallBlockIndex] = GetSmallBlock(Grid.From3);
-  bool CanUseSmallGrid = InSmallBlock && Split==SpatialSplit && ResLvl+1<Params.NLevels && SmallBlocks[SmallBlockIndex].Count>0 /*&& Grid.Dims3[DRes] <= 4*/;
-  if (!FullGrid && T>0 && (PredNode || CanUseSmallGrid) /*&& (PredNode->Count > 1)*/) { // predict P
+  if (!FullGrid && T>0 && (PredNode)) { // predict P
     i64 M=0, K=0, L=0;
-    if (CanUseSmallGrid) {
-      // go in the small grid and count K and L
-      REQUIRE(Grid.Stride3[DRes] > 1);
-      i32 K1 = CountParticles(ShiftGrid(GridLeft, DRes, Grid.Stride3[DRes] / 2, -1));
-      i32 K2 = CountParticles(ShiftGrid(GridLeft, DRes, Grid.Stride3[DRes] / 2,  1));
-      K = (K1+K2) / 2;
-      i32 L1 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2, -1));
-      i32 L2 = CountParticles(ShiftGrid(GridRight, DRes, Grid.Stride3[DRes] / 2,  1));
-      L = (L1+L2) / 2;
-      if (K>0 || L>0)
-        printf("P = %d K = (%d %d) L = (%d %d)\n", P, K1, K2, L1, L2);
-    } else
-    if (PredNode) {
+    {
       M = PredNode->Count; // whole
       K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count; // left
       L = M - K; // right
@@ -3007,12 +2987,6 @@ BuildTreeIntPredict(
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
-    FOR_EACH(Sb, SmallBlocks) {
-      if (Sb->Count > 0) {
-        std::fill(Sb->Data.begin(), Sb->Data.end(), false);
-        Sb->Count = 0;
-      }
-    }
     SaveTreePtr = TreePtr;
     ++BlockCount;
   }
@@ -4174,10 +4148,10 @@ AllocateMemoryForBlocks(grid_int G) {
   printf("block dims = %d %d %d\n", Params.BlockDims3.x, Params.BlockDims3.y, Params.BlockDims3.z);
   printf("small block dims = %d %d %d\n", Params.SmallBlockDims3.x, Params.SmallBlockDims3.y, Params.SmallBlockDims3.z);
   printf("n small block = %d %d %d\n", Params.NSmallBlocks3.x, Params.NSmallBlocks3.y, Params.NSmallBlocks3.z);
-  SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
-  FOR_EACH(Sb, SmallBlocks) {
-    Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
-  }
+  //SmallBlocks.resize(Params.NSmallBlocks3.x*Params.NSmallBlocks3.y*Params.NSmallBlocks3.z);
+  //FOR_EACH(Sb, SmallBlocks) {
+  //  Sb->Data.resize(Prod(Params.SmallBlockDims3), false);
+  //}
 }
 
 int
@@ -4264,6 +4238,7 @@ START:
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
       printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
+      OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel);
       Params.Dims3 = Params.Dims3 / Params.W3;
       Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
       // TODO: maybe not clear the context at the end of each time step?

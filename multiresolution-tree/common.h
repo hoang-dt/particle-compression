@@ -2026,6 +2026,7 @@ struct params {
   i8 StartSmallBlock = 0; // the depth where we start the small block
   vec3i SmallBlockDims3 = vec3i(1, 1, 1);
   vec3i NSmallBlocks3 = vec3i(1, 1, 1);
+  i8 CodingLevel = 0; // the resolution level where we stop coding
 };
 
 /* the left side is favored if the dimension is odd */
