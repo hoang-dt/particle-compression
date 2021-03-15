@@ -3879,8 +3879,8 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
-    //bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
-    bool InTheCut = Q.Depth<=Params.DecodeDepth;
+    bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    //bool InTheCut = Q.Depth<=Params.DecodeDepth;
     if (InTheCut) {
 #if defined(BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
@@ -3911,7 +3911,6 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     i64 NParticlesLeft = 0;
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
-      printf("hello1\n");
       bbox_int BBox;
       BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
       BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
@@ -3946,7 +3945,6 @@ DecodeTreeIntBFS(q_item_int Q) {
     }
     i64 NParticlesRight = 0;
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
-      printf("hello2\n");
       bbox_int BBox;
       BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
       BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
