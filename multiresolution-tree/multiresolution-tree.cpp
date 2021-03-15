@@ -4238,7 +4238,6 @@ START:
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
       printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
-      OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel);
       Params.Dims3 = Params.Dims3 / Params.W3;
       Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
       // TODO: maybe not clear the context at the end of each time step?
@@ -4293,6 +4292,10 @@ START:
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     //Rans64EncFlush(&Rans, &RansPtr);
     //printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr) * sizeof(u32));
+    vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    if (OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel))
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticleOuts.begin(), ParticleOuts.end(), Params.BBoxInt.Min, Scale3);
+
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("%s\n", Params.DimsStr);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
