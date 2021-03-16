@@ -5143,7 +5143,11 @@ START:
     //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
-    vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    vec3f Scale3(30.0, 30.0, 30.0);
+    vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
+    Scale3.y *= (Dims3.y/Dims3.x);
+    Scale3.z *= (Dims3.z/Dims3.x);
+    Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
     if (Budget && OptExists(Argc, Argv, "--ospray")) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
     } else {
