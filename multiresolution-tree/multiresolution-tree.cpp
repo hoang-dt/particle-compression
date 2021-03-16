@@ -4018,20 +4018,20 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   BitCount[Depth] += 2; // one bit for the left and one bit for the right
   tree* Left = nullptr;
   if (Begin+1==Mid && CellCountLeft==1) {
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    //BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
-    BBox.Max = Params.BBoxInt.Min + (GridLeft.From3+(GridLeft.Dims3-1)*GridLeft.Stride3+1)*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
-      }
-    }
+    //bbox_int BBox;
+    //BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+    ////BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    //BBox.Max = Params.BBoxInt.Min + (GridLeft.From3+(GridLeft.Dims3-1)*GridLeft.Stride3+1)*Params.W3 - 1;
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]) {
+    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[DD] <= M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
   } else if (Begin < Mid) {
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
@@ -4043,18 +4043,18 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   }
   tree* Right = nullptr;
   if (Mid+1==End && CellCountRight==1) {
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
-    BBox.Max = Params.BBoxInt.Min + (GridRight.From3+(GridRight.Dims3-1)*GridRight.Stride3+1)*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Mid].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
-      }
-    }
+  //  bbox_int BBox;
+  //  BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+  //  //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+  //  BBox.Max = Params.BBoxInt.Min + (GridRight.From3+(GridRight.Dims3-1)*GridRight.Stride3+1)*Params.W3 - 1;
+  //  for (int DD = 0; DD < 3; ++DD) {
+  //    while (BBox.Max[DD] > BBox.Min[DD]) {
+  //      i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+  //      bool Left = Particles[Mid].Pos[DD] <= M;
+  //      if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+  //      Write(&BlockStream, Left);
+  //    }
+  //  }
   } else if (Mid < End) {
     // TODO: handle the case where we want to do resolution split on the right as well
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
