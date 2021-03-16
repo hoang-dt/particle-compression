@@ -1617,6 +1617,7 @@ WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
     S->CoderSize = (u32)Size(S->Coder.BitStream);
     if (S->CoderSize > 0) {
       S->Coder.EncodeFinalize();
+      S->CoderSize = (u32)Size(S->Coder.BitStream);
       fwrite(S->Coder.BitStream.Stream.Data, S->CoderSize, 1, Fp);
       AddedBytes += S->CoderSize;
     }
@@ -2838,6 +2839,7 @@ WriteBinaryFiles() {
     auto ByteCount = Size(GlobalStream.Coder.BitStream);
     if (ByteCount > 0) {
       GlobalStream.Coder.EncodeFinalize();
+      ByteCount = Size(GlobalStream.Coder.BitStream);
       fwrite(GlobalStream.Coder.BitStream.Stream.Data, ByteCount, 1, FilePtr);
       StreamSize += ByteCount;
     }
