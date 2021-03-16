@@ -4293,7 +4293,11 @@ START:
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     //Rans64EncFlush(&Rans, &RansPtr);
     //printf("RANS stream size = %d bytes\n", int(OutEnd - RansPtr) * sizeof(u32));
-    vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    vec3f Scale3(30.0, 30.0, 30.0);
+    vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
+    Scale3.y *= (Dims3.y/Dims3.x);
+    Scale3.z *= (Dims3.z/Dims3.x);
+    Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
     if (OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel))
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticleOuts.begin(), ParticleOuts.end(), Params.BBoxInt.Min, Scale3);
 
