@@ -3164,7 +3164,11 @@ START:
     printf("num particles decoded = %lld\n", NParticlesDecoded);
     printf("num particles generated = %lld\n", NParticlesGenerated);
     printf("bit count = %d bytes\n", BitCount/8);
-    vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    vec3f Scale3(30.0, 30.0, 30.0);
+    vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
+    Scale3.y *= (Dims3.y/Dims3.x);
+    Scale3.z *= (Dims3.z/Dims3.x);
+    Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
     if (Budget) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
     }
