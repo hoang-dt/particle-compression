@@ -751,35 +751,46 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
   if (N == 0) return;
   assert(Grid.Dims3.x >= 1 && Grid.Dims3.y >= 1 && Grid.Dims3.z >= 1);
   static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
-  GridPoints.resize(N);
+  //GridPoints.resize(N);
   vec3i Dims3 = Grid.Dims3;
   
   i64 NElems = N;
   i64 I = 0;
-  FOR(i32, Z, 0, Dims3.z) {
-  FOR(i32, Y, 0, Dims3.y) {
-  FOR(i32, X, 0, Dims3.x) {
-    if (I < N) {
-      GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    } else {
-      ++NElems;
-      i64 J = rand() % NElems; // exclusive
-      if (J < N)
-        GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
-    }
-    ++I;
-  }}}
-  FOR_EACH(P, GridPoints) {
+  FOR(i32, I, 0, N) {
+    i32 X = rand() % Dims3.x;
+    i32 Y = rand() % Dims3.y;
+    i32 Z = rand() % Dims3.z;
+    vec3i P3 = Grid.From3 + Grid.Stride3*vec3i(X, Y, Z);
     bbox_int BBox{
-      .Min = Params.BBoxInt.Min + (*P) * Params.W3,
-      .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
+      .Min = Params.BBoxInt.Min + P3*Params.W3,
+      .Max = Params.BBoxInt.Min + (P3+1)*Params.W3 // TODO -1
     };
-    vec3i P3 = GenerateOneParticle(BBox);
-    Output->push_back(particle_int{.Pos=P3});
+    Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    // TODO: here we don't really care if we have duplicated points
   }
-  NCount2 += GridPoints.size();
+  //FOR(i32, Z, 0, Dims3.z) {
+  //FOR(i32, Y, 0, Dims3.y) {
+  //FOR(i32, X, 0, Dims3.x) {
+  //  if (I < N) {
+  //    GridPoints[I] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+  //  } else {
+  //    ++NElems;
+  //    i64 J = rand() % NElems; // exclusive
+  //    if (J < N)
+  //      GridPoints[J] = Grid.From3 + Grid.Stride3 * vec3i(X,Y,Z);
+  //  }
+  //  ++I;
+  //}}}
+  //FOR_EACH(P, GridPoints) {
+  //  bbox_int BBox{
+  //    .Min = Params.BBoxInt.Min + (*P) * Params.W3,
+  //    .Max = Params.BBoxInt.Min + ((*P) + 1) * Params.W3 // TODO -1
+  //  };
+  //  //vec3i P3 = GenerateOneParticle(BBox);
+  //  Output->push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+  //}
+  //NCount2 += GridPoints.size();
 }
-
 /* Generate N random particles inside Grid */
 static void
 GenerateParticlesPerNode(i64 N, const grid& Grid, const vec3f& W3) {
@@ -3799,7 +3810,7 @@ INLINE f64
 ComputeScore(i64 Begin, i64 End, const vec3i& Dims3, i8 D) {
   i64 N = End - Begin;
   i32 Err = Dims3[D]/2;
-  return N*f64(Err)*f64(Err)/log2(f64(N+1));
+  return /*N**/f64(Err)*f64(Err)/log2(f64(N+1));
 }
 
 static void
@@ -3820,15 +3831,15 @@ DecodeTreeIntPriority(q_item_int Q) {
     } else {
       //NParticlesGenerated += N;
       //NParticlesDecoded += N;
-      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
-      NParticlesGenerated += N;
-      NParticlesDecoded += N;
+      //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      NParticlesGenerated += 1;
+      NParticlesDecoded += 1;
       //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
-      //bbox_int BBox {
-      //  .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-      //  .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
-      //};
-      //OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+      };
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
     }
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
@@ -4049,14 +4060,14 @@ DecodeTreeIntBFS(q_item_int Q) {
       //NParticlesGenerated += N;
       //NParticlesDecoded += N;
       //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
-      NParticlesGenerated += N;
-      NParticlesDecoded += N;
-      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
-      //bbox_int BBox {
-      //  .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-      //  .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
-      //};
-      //OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      NParticlesGenerated += 1;
+      NParticlesDecoded += 1;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+      };
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
