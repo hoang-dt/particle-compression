@@ -1202,14 +1202,26 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  vec3i BBoxExt3 = BBox.Max - BBox.Min;
-  D = Depth % Params.NDims;
-  if (BBoxExt3[D] <= 1) {
-    D = (D+1) % Params.NDims;
-    if (BBoxExt3[D] <= 1) {
-      D = (D+1) % Params.NDims;
-      REQUIRE(BBoxExt3[D] > 1);
-    }
+  //vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  //D = Depth % Params.NDims;
+  //if (BBoxExt3[D] <= 1) {
+  //  D = (D+1) % Params.NDims;
+  //  if (BBoxExt3[D] <= 1) {
+  //    D = (D+1) % Params.NDims;
+  //    REQUIRE(BBoxExt3[D] > 1);
+  //  }
+  //}
+  if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
+    D = Depth % Params.NDims;
+  } else { // take the largest dimension
+    vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+    if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+      D = 0;
+    else
+    if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+      D = 1;
+    else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
+      D = 2;
   }
   DimsStr[Depth] = 'x' + D;
   //assert((BBoxExt3[D]&1) == 0);
@@ -3810,7 +3822,143 @@ INLINE f64
 ComputeScore(i64 Begin, i64 End, const vec3i& Dims3, i8 D) {
   i64 N = End - Begin;
   i32 Err = Dims3[D]/2;
-  return /*N**/f64(Err)*f64(Err)/log2(f64(N+1));
+  //return f64(Err)*f64(Err)/log2(f64(N+1)); // best for surfaces
+  return N*f64(Err)*f64(Err)/log2(f64(N+1)); // best in general
+}
+
+
+static void
+DecodeTreeIntEntropy(q_item_int Q) {
+  printf("------Entropy decoder------\n");
+  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  std::deque<q_item_int> Queue;
+  Queue.push_front(Q);
+  while (!Queue.empty()) {
+    Q = Queue.front();
+    Queue.pop_front();
+    i64 N = Q.End - Q.Begin;
+    i64 Mid = Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    if (InTheCut) {
+      Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Q.Begin;
+    } else {
+      NParticlesGenerated += 1;
+      NParticlesDecoded += 1;
+      bbox_int BBox {
+        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+      };
+      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      continue;
+    }
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    f64 Prob = f64(Mid-Q.Begin) / (N);
+    f64 Entropy = Prob==0 || Prob==1? 0 : -Prob*log2(Prob)-(1-Prob)*log2(1-Prob);
+    bool PushFront = Entropy < 0.8; // DFS
+    if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+      BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    GENERATE_PARTICLE_LEFT:
+      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      ++NParticlesGenerated;
+      ++NParticlesDecoded;
+    } else if (InTheCut && Q.Begin<Mid) {
+      q_item_int NextLeft{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = SpatialSplit,
+        .Score = 0
+      };
+      if (PushFront) Queue.push_front(NextLeft);
+      else Queue.push_back(NextLeft);
+    }
+    if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+      BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    GENERATE_PARTICLE_RIGHT:
+      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      ++NParticlesGenerated;
+      ++NParticlesDecoded;
+    } else if (InTheCut && Mid<Q.End) {
+      q_item_int NextRight{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = SpatialSplit,
+        .Score = 0
+      };
+      if (PushFront) Queue.push_front(NextRight);
+      else Queue.push_back(NextRight);
+    }
+  }
+}
+
+static void
+BuildTreeIntEntropy(q_item_int Q, std::vector<particle_int>& Particles) {
+  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  printf("------Entropy builder------\n");
+  std::deque<q_item_int> Queue;
+  Queue.push_front(Q);
+  while (!Queue.empty()) {
+    Q = Queue.front();
+    Queue.pop_front();
+    i64 N = Q.End - Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    i32 MM = Q.Grid.From3[D] + (((Q.Grid.Dims3[D]+1)>>1)-1) * Q.Grid.Stride3[D];
+    auto SPred = [&Q, MM, D](const particle_int& P) {
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      return Bin <= MM;
+    };
+    i64 Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+    i64 P = Mid - Q.Begin;
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    f64 Prob = f64(P) / (N);
+    f64 Entropy = Prob==0 || Prob==1? 0 : -Prob*log2(Prob)-(1-Prob)*log2(1-Prob);
+    bool PushFront = Entropy < 0.8; // DFS
+    if (Q.Begin+1==Mid && CellCountLeft==1) {
+    } else if (Q.Begin < Mid) {
+      q_item_int NextLeft{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = SpatialSplit,
+        .Score = 0
+      };
+      if (PushFront) Queue.push_front(NextLeft);
+      else Queue.push_back(NextLeft);
+    }
+    if (Mid+1==Q.End && CellCountRight==1) {
+    } else if (Mid < Q.End) {
+      q_item_int NextRight{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = SpatialSplit,
+        .Score = 0
+      };
+      if (PushFront) Queue.push_front(NextRight);
+      else Queue.push_back(NextRight);
+    }
+  }
 }
 
 static void
@@ -3888,7 +4036,6 @@ DecodeTreeIntPriority(q_item_int Q) {
     }
   }
 }
-
 
 static void
 BuildTreeIntPriority(q_item_int Q, std::vector<particle_int>& Particles) {
@@ -4046,7 +4193,8 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
-    //bool InTheCut = Q.Depth<=Params.DecodeDepth;
+    if (Params.DecodeDepth < 127)
+      InTheCut = Q.Depth<=Params.DecodeDepth;
     if (InTheCut) {
 #if defined(BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
@@ -5123,6 +5271,15 @@ START:
       bool Bfs = OptExists(Argc, Argv, "--bfs");
       bool Dfs = OptExists(Argc, Argv, "--dfs");
       bool Priority = OptExists(Argc, Argv, "--priority");
+      bool Entropy = OptExists(Argc, Argv, "--entropy");
+      q_item_int Q {
+        .Begin = 0,
+        .End = N,
+        .Grid = Grid,
+        .ResLvl = 0,
+        .Depth = 0,
+        .Split = Split,
+      };
       if (Dfs) {
         BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
         for (int I = 0; I <= Params.MaxDepth; ++I) {
@@ -5130,25 +5287,11 @@ START:
         }
         printf("-----------------------------\n");
       } else if (Bfs) {
-        q_item_int Q {
-          .Begin = 0,
-          .End = N,
-          .Grid = Grid,
-          .ResLvl = 0,
-          .Depth = 0,
-          .Split = Split,
-        };
         BuildTreeIntBFS(Q, ParticlesInt);
       } else if (Priority) {
-        q_item_int Q {
-          .Begin = 0,
-          .End = N,
-          .Grid = Grid,
-          .ResLvl = 0,
-          .Depth = 0,
-          .Split = Split,
-        };
         BuildTreeIntPriority(Q, ParticlesInt);
+      } else if (Entropy) {
+        BuildTreeIntEntropy(Q, ParticlesInt);
       }
       PrevFramePtr = MyNode;
       i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
@@ -5264,28 +5407,23 @@ START:
     bool Bfs = OptExists(Argc, Argv, "--bfs");
     bool Dfs = OptExists(Argc, Argv, "--dfs");
     bool Priority = OptExists(Argc, Argv, "--priority");
+    bool Entropy = OptExists(Argc, Argv, "--entropy");
+    q_item_int Q {
+      .Begin = 0,
+      .End = N,
+      .Grid = Grid,
+      .ResLvl = 0,
+      .Depth = 0,
+      .Split = Split,
+    };
     if (Bfs) {
-      q_item_int Q {
-        .Begin = 0,
-        .End = N,
-        .Grid = Grid,
-        .ResLvl = 0,
-        .Depth = 0,
-        .Split = Split,
-      };
       DecodeTreeIntBFS(Q);
     } else if (Dfs) {
       DecodeTreeIntDFS(0, N, Grid, Split, 0, 0);
     } else if (Priority) {
-      q_item_int Q {
-        .Begin = 0,
-        .End = N,
-        .Grid = Grid,
-        .ResLvl = 0,
-        .Depth = 0,
-        .Split = Split,
-      };
       DecodeTreeIntPriority(Q);
+    } else if (Entropy) {
+      DecodeTreeIntEntropy(Q);
     }
     //delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
