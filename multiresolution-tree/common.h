@@ -1983,6 +1983,7 @@ struct q_item_int {
   i8 ResLvl;
   i8 Depth;
   split_type Split;
+  f64 Score = 0;
 };
 
 struct q_item {

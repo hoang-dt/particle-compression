@@ -3777,6 +3777,161 @@ BuildTreeDFS(i64 Begin, i64 End, u64 Code, const grid& Grid, i8 Level, split_typ
   }
 }
 
+INLINE bool
+operator<(const q_item_int& Q1, const q_item_int& Q2) {
+  return Q1.Score < Q2.Score;
+}
+//INLINE bool
+//operator<(const q_item_int& Q1, const q_item_int& Q2) {
+//  // the cost of going down Q1: log2(Q1.End-Q1.Begin)
+//  // the benefit of going down Q1: we halve the error for (Q1.End-Q1.Begin) particles (reduced by half of bounding box of Q1[Q1.D])
+//  i64 N1 = Q1.End - Q1.Begin;
+//  i32 Err1 = Q1.Grid.Dims3[Params.DimsStr[Q1.Depth]-'x']/2;
+//  i64 N2 = Q2.End - Q2.Begin;
+//  i32 Err2 = Q2.Grid.Dims3[Params.DimsStr[Q2.Depth]-'x']/2;
+//  //return f64(Err1)/log2(f64(N1+1)) < f64(Err2)/log2(f64(N2+1)); // version 0
+//  //return N1*f64(Err1)/log2(f64(N1+1)) < N2*f64(Err2)/log2(f64(N2+1)); // version 1
+//  return N1*f64(Err1)*f64(Err1)/log2(f64(N1+1)) < N2*f64(Err2)*f64(Err2)/log2(f64(N2+1)); // version 2
+//  //return f64(Err1)*f64(Err1)/log2(f64(N1+1)) < f64(Err2)*f64(Err2)/log2(f64(N2+1)); // version 3
+//}
+
+INLINE f64
+ComputeScore(i64 Begin, i64 End, const vec3i& Dims3, i8 D) {
+  i64 N = End - Begin;
+  i32 Err = Dims3[D]/2;
+  return N*f64(Err)*f64(Err)/log2(f64(N+1));
+}
+
+static void
+DecodeTreeIntPriority(q_item_int Q) {
+  printf("------Priority decoder------\n");
+  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  std::priority_queue<q_item_int> Queue;
+  Queue.push(Q);
+  while (!Queue.empty()) {
+    Q = Queue.top();
+    Queue.pop();
+    i64 N = Q.End - Q.Begin;
+    i64 Mid = Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
+    if (InTheCut) {
+      Mid = DecodeCenteredMinimal(u32(N+1), &BlockStream) + Q.Begin;
+    } else {
+      //NParticlesGenerated += N;
+      //NParticlesDecoded += N;
+      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      NParticlesGenerated += N;
+      NParticlesDecoded += N;
+      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
+      //bbox_int BBox {
+      //  .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+      //  .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+      //};
+      //OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      continue;
+    }
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+      BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
+    GENERATE_PARTICLE_LEFT:
+      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      ++NParticlesGenerated;
+      ++NParticlesDecoded;
+    } else if (InTheCut && Q.Begin<Mid) {
+      split_type NextSplit = SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit,
+        .Score = ComputeScore(Q.Begin, Mid, GridLeft.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+      });
+    }
+    if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
+      bbox_int BBox;
+      BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+      BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    GENERATE_PARTICLE_RIGHT:
+      OutputParticles.push_back(particle_int{.Pos=GenerateOneParticle(BBox)});
+      ++NParticlesGenerated;
+      ++NParticlesDecoded;
+    } else if (InTheCut && Mid<Q.End) {
+      split_type NextSplit = SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit,
+        .Score = ComputeScore(Mid, Q.End, GridRight.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+      });
+    }
+  }
+}
+
+
+static void
+BuildTreeIntPriority(q_item_int Q, std::vector<particle_int>& Particles) {
+  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  printf("------Priority builder------\n");
+  std::priority_queue<q_item_int> Queue;
+  Queue.push(Q);
+  while (!Queue.empty()) {
+    Q = Queue.top();
+    Queue.pop();
+    i64 N = Q.End - Q.Begin;
+    i8 D = Params.DimsStr[Q.Depth] - 'x';
+    i32 MM = Q.Grid.From3[D] + (((Q.Grid.Dims3[D]+1)>>1)-1) * Q.Grid.Stride3[D];
+    auto SPred = [&Q, MM, D](const particle_int& P) {
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      return Bin <= MM;
+    };
+    i64 Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+    i64 P = Mid - Q.Begin;
+    EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
+    auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
+    auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
+    i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
+    i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
+    if (Q.Begin+1==Mid && CellCountLeft==1) {
+    } else if (Q.Begin < Mid) {
+      split_type NextSplit = SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Q.Begin,
+        .End = Mid,
+        .Grid = GridLeft,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit,
+        .Score = ComputeScore(Q.Begin, Mid, GridLeft.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+      });
+    }
+
+    if (Mid+1==Q.End && CellCountRight==1) {
+    } else if (Mid < Q.End) {
+      split_type NextSplit = SpatialSplit;
+      Queue.push(q_item_int{
+        .Begin = Mid,
+        .End = Q.End,
+        .Grid = GridRight,
+        .ResLvl = Q.ResLvl,
+        .Depth = i8(Q.Depth+1),
+        .Split = NextSplit,
+        .Score = ComputeScore(Mid, Q.End, GridRight.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+      });
+    }
+  }
+}
+
 static void
 BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
   printf("------BFS builder------\n");
@@ -3894,14 +4049,14 @@ DecodeTreeIntBFS(q_item_int Q) {
       //NParticlesGenerated += N;
       //NParticlesDecoded += N;
       //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
-      NParticlesGenerated += 1;
-      NParticlesDecoded += 1;
-      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
-      };
-      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      NParticlesGenerated += N;
+      NParticlesDecoded += N;
+      GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
+      //bbox_int BBox {
+      //  .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+      //  .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+      //};
+      //OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
       // TODO: we should try to generate N particles in the Q.Grid
     }
@@ -4868,10 +5023,6 @@ main(int Argc, cstr* Argv) {
     if (!OptVal(Argc, Argv, "--ndims", &Params.NDims)) EXIT_ERROR("missing --ndims");
     if (!OptVal(Argc, Argv, "--nlevels", &Params.NLevels)) EXIT_ERROR("missing --nlevels");
     if (!OptVal(Argc, Argv, "--start_depth", &Params.StartResolutionSplit)) EXIT_ERROR("missing --start_depth");
-    if (!OptVal(Argc, Argv, "--height", &Params.MaxHeight)) {
-      if (!OptVal(Argc, Argv, "--accuracy", &Params.Accuracy))
-        EXIT_ERROR("missing --height and --accuracy");
-    }
     bool Budget = OptExists(Argc, Argv, "--budget");
     if (Budget) {
       OptVal(Argc, Argv, "--budget", &Params.DecodeBudget);
@@ -4959,13 +5110,15 @@ START:
       tree* MyNode = nullptr;
       //MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
       bool Bfs = OptExists(Argc, Argv, "--bfs");
-      if (!Bfs) {
+      bool Dfs = OptExists(Argc, Argv, "--dfs");
+      bool Priority = OptExists(Argc, Argv, "--priority");
+      if (Dfs) {
         BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
         for (int I = 0; I <= Params.MaxDepth; ++I) {
           printf("%f\n", BitCount[I]/8);
         }
         printf("-----------------------------\n");
-      } else {
+      } else if (Bfs) {
         q_item_int Q {
           .Begin = 0,
           .End = N,
@@ -4975,6 +5128,16 @@ START:
           .Split = Split,
         };
         BuildTreeIntBFS(Q, ParticlesInt);
+      } else if (Priority) {
+        q_item_int Q {
+          .Begin = 0,
+          .End = N,
+          .Grid = Grid,
+          .ResLvl = 0,
+          .Depth = 0,
+          .Split = Split,
+        };
+        BuildTreeIntPriority(Q, ParticlesInt);
       }
       PrevFramePtr = MyNode;
       i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
@@ -4994,21 +5157,6 @@ START:
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
     printf("block count = %lld\n", BlockCount);
-    //for (i64 I = 0; I < Residuals.size(); ++I) {
-    //  printf("%d\n", Residuals[I]);
-    //}
-    //bitstream Bs;
-    //InitWrite(&Bs, 100 << 20); // 100 MB
-    //for (int I = 0; I < Residuals.size(); ++I) {
-    //  WriteVarByte(&Bs, Residuals[I]);
-    //}
-    //FILE* Rf = fopen("residuals.dat", "wb");
-    //fwrite(Bs.Stream.Data, Size(Bs), 1, Rf);
-    //fclose(Rf);
-
-    //auto ResidualTree = BuildBinaryTreeForResiduals(Residuals);
-    //i64 ResidualCodeLength = CountCodeLength(ResidualTree);
-    //printf("Residual code length        = %lld\n", ResidualCodeLength);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
     //Rans64EncFlush(&Rans, &RansPtr);
@@ -5054,14 +5202,6 @@ START:
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     ReadMetaFile(PRINT("%s.idx", Params.InFile));
-    u8 MaxHeight = 0;
-    f32 Accuracy = 0;
-    if (!OptVal(Argc, Argv, "--height", &MaxHeight)) {
-      if (OptVal(Argc, Argv, "--accuracy", &Accuracy)) {
-        //EXIT_ERROR("missing --height and --accuracy");
-        Params.DecodeAccuracy = Accuracy;
-      }
-    }
     OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
     OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
@@ -5107,21 +5247,12 @@ START:
     split_type Split = SpatialSplit;
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
-    /* read the debug info */
-    //FILE* Ff = fopen("debug.dat", "rb");
-    //i64 DebugSize = 0;
-    //fread(&DebugSize, sizeof(DebugSize), 1, Ff);
-    //SRList.resize(DebugSize);
-    //for (i64 I = 0; I < DebugSize; ++I) {
-    //  fread(&SRList[I], sizeof(SRList[I]), 1, Ff);
-    //}
-    //fclose(Ff);
-    //TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
-    //auto TreePtrBackup = TreePtr;
     ParticlesInt.reserve(N);
     tree* MyNode = nullptr;
     //MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
     bool Bfs = OptExists(Argc, Argv, "--bfs");
+    bool Dfs = OptExists(Argc, Argv, "--dfs");
+    bool Priority = OptExists(Argc, Argv, "--priority");
     if (Bfs) {
       q_item_int Q {
         .Begin = 0,
@@ -5132,8 +5263,18 @@ START:
         .Split = Split,
       };
       DecodeTreeIntBFS(Q);
-    } else {
+    } else if (Dfs) {
       DecodeTreeIntDFS(0, N, Grid, Split, 0, 0);
+    } else if (Priority) {
+      q_item_int Q {
+        .Begin = 0,
+        .End = N,
+        .Grid = Grid,
+        .ResLvl = 0,
+        .Depth = 0,
+        .Split = Split,
+      };
+      DecodeTreeIntPriority(Q);
     }
     //delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
