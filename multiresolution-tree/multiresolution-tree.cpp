@@ -3824,6 +3824,7 @@ ComputeScore(i64 Begin, i64 End, const vec3i& Dims3, i8 D) {
   i32 Err = Dims3[D]/2;
   //return f64(Err)*f64(Err)/log2(f64(N+1)); // best for surfaces
   return N*f64(Err)*f64(Err)/log2(f64(N+1)); // best in general
+  //return N*f64(Err)/log2(f64(N+1)); // best in general
 }
 
 
@@ -3961,6 +3962,8 @@ BuildTreeIntEntropy(q_item_int Q, std::vector<particle_int>& Particles) {
   }
 }
 
+static int NItemsInContainer = 0;
+
 static void
 DecodeTreeIntPriority(q_item_int Q) {
   printf("------Priority decoder------\n");
@@ -3968,6 +3971,7 @@ DecodeTreeIntPriority(q_item_int Q) {
   std::priority_queue<q_item_int> Queue;
   Queue.push(Q);
   while (!Queue.empty()) {
+    NItemsInContainer = MAX(NItemsInContainer, Queue.size());
     Q = Queue.top();
     Queue.pop();
     i64 N = Q.End - Q.Begin;
@@ -4187,6 +4191,7 @@ DecodeTreeIntBFS(q_item_int Q) {
   std::queue<q_item_int> Queue;
   Queue.push(Q);
   while (!Queue.empty()) {
+    NItemsInContainer = MAX(NItemsInContainer, Queue.size());
     Q = Queue.front();
     Queue.pop();
     i64 N = Q.End - Q.Begin;
@@ -4463,6 +4468,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 
 static i64
 DecodeTreeIntDFS(i64 Begin, i64 End, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
+  NItemsInContainer = MAX(NItemsInContainer, Depth);
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
@@ -5387,8 +5393,6 @@ START:
     fread(BlockStream.Stream.Data, FirstStreamSize, 1, Fp);
     fread(Coder.BitStream.Stream.Data, SecondStreamSize, 1, Fp);
     if (Fp) fclose(Fp);
-    double start_time = timer();
-    uint64_t dec_start_time = __rdtsc();
     //BinomialTables = CreateGeneralBinomialTables();
     CdfTable = CreateBinomialTable(BinomialCutoff);
     Coder.InitRead();
@@ -5416,6 +5420,8 @@ START:
       .Depth = 0,
       .Split = Split,
     };
+    double start_time = timer();
+    uint64_t dec_start_time = __rdtsc();
     if (Bfs) {
       DecodeTreeIntBFS(Q);
     } else if (Dfs) {
@@ -5432,13 +5438,13 @@ START:
     printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
     //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
-    printf("num particles generated = %lld\n", NParticlesGenerated);
+    printf("nitems in container = %d\n", NItemsInContainer);
     vec3f Scale3(30.0, 30.0, 30.0);
     vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
     Scale3.y *= (Dims3.y/Dims3.x);
     Scale3.z *= (Dims3.z/Dims3.x);
     Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
-    if (Budget && OptExists(Argc, Argv, "--ospray")) {
+    if (OptExists(Argc, Argv, "--ospray")) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
     } else {
       WriteVTU(PRINT("%s-out.vtu", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
@@ -5463,9 +5469,13 @@ START:
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     bool Quantize = OptExists(Argc, Argv, "--quantize");
     f32 MaxAbsX = 0, MaxAbsY = 0, MaxAbsZ = 0;
-    Particles = ReadParticles(Params.InFile);
-    fprintf(stderr, "Done reading particles\n");
-    ParticlesInt.resize(Particles.size());
+    if (OptExists(Argc, Argv, "--int")) {
+      ParticlesInt = ReadParticlesInt(Params.InFile);
+    } else {
+      Particles = ReadParticles(Params.InFile);
+      fprintf(stderr, "Done reading particles\n");
+      ParticlesInt.resize(Particles.size());
+    }
     if (Quantize) { // quantize everything to 23 bits
       FOR_EACH(P, Particles) {
         MaxAbsX = MAX(MaxAbsX, fabs(P->Pos.x));
@@ -5486,8 +5496,13 @@ START:
       fprintf(stderr, "Writing particles\n");
       WriteParticlesInt(Params.OutFile, ParticlesInt);
     } else {
-      fprintf(stderr, "Writing particles\n");
-      WriteParticles(Params.OutFile, Particles);
+      if (OptExists(Argc, Argv, "--int")) {
+        fprintf(stderr, "Writing particles\n");
+        WriteParticlesInt(Params.OutFile, ParticlesInt);
+      } else {
+        fprintf(stderr, "Writing particles\n");
+        WriteParticles(Params.OutFile, Particles);
+      }
     }
   } else if (Params.Action == action::Dedup) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
