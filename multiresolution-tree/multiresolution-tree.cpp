@@ -2350,7 +2350,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
   auto BitCountBackup = BitCount;
-  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<512) {
+  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<4096) {
     auto Q = Stack->back();
     Stack->pop_back();
     auto Stream = GetStream(Q.Grid, Q.Depth);
@@ -2451,6 +2451,7 @@ DecodeIntAdaptive(q_item_int Q) {
   /*-------------------- BFS phase ---------------------- */
   if (Params.StartResolutionSplit > 0) {
     DecodeIntAdaptiveBFSPhase(Queue, Heap, Stacks);
+    printf("done bfs phase, heap size = %d\n", Heap.size());
   } else {
     i64 BlockIdx = GetBlockIndex(Q.Grid.From3);
     auto& Block = OutputBlocks[BlockIdx];

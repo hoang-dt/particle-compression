@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>--action convert --in detonation_180m-bfs-out-24-5768555.vtu --out detonation_180m-bfs-out-24-5768555 --ospray </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action decode --in station-adaptive --out station-adaptive --adaptive --budget 2982000</LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
