@@ -2102,7 +2102,7 @@ DecodeTreeIntBFS(q_item_int Q) {
       };
       MyBlock.BBoxes.push_back(BBox);
       if (MyBlock.BBoxes.size() == Params.NParticles) {
-        printf("hello2\n");
+        //printf("hello2\n");
         while (InTheCut && MyBlock.NParticlesDecoded < Params.NParticles) {
           //auto W3 = MyBlock.BBoxes[0].Max - MyBlock.BBoxes[0].Min;
           //i8 DD = 0;
@@ -2438,6 +2438,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
 // TODO: reserve memory in advance
 // TODO: allocate a large memory arena upfront for the bit streams
 // TODO: we can't simply decode the right particle before going all the way to the left because it may belong to the next resolution
+u64 ClockCycleCount= 0;
 static void
 DecodeIntAdaptive(q_item_int Q) {
   printf("------Adaptive decoder------\n");
@@ -2469,7 +2470,9 @@ DecodeIntAdaptive(q_item_int Q) {
   std::vector<i64> BlockCount(Stacks.size(), 0);
   // TODO: we need to prioritize blocks where particles are less refined
   while (InTheCut && !Heap.empty()) {
+    uint64_t dec_start_time = __rdtsc();
     heap_priority TopPriority = Heap.top();
+    ClockCycleCount += __rdtsc() - dec_start_time;
     auto& Block = OutputBlocks[TopPriority.BlockId];
     if (Block.BBoxes.size() == Block.NParticles) { // every particle has been seen once
       if (!Block.AtRefinement) {
@@ -2499,33 +2502,38 @@ DecodeIntAdaptive(q_item_int Q) {
       ++TopPriority.Level;
       // TODO: need to update the priority so that the same block does not pop up multiple times
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
+      uint64_t dec_start_time = __rdtsc();
       Heap.pop();
       if (Block.NParticlesDecoded != Block.NParticles) {
         Heap.push(TopPriority);
       }
+      ClockCycleCount += __rdtsc() - dec_start_time;
       //if (Block.NParticlesDecoded == Block.NParticles) {
       //  Heap.pop();
       //  //printf("block %lld bitcount %d\n", TopPriority.BlockId, Block.BitCount);
       //  // TODO: debug here to see if we pop everything at the end (where all bits are used)
       //}
     } else { // still in the DFS phase, not refinement
+      uint64_t dec_start_time = __rdtsc();
       Heap.pop();
+      ClockCycleCount += __rdtsc() - dec_start_time;
       auto PCount = DecodeIntAdaptiveDFSPhase(TopPriority);
-      const auto& Stack = *(TopPriority.Stack);
+      dec_start_time = __rdtsc();
       Heap.push(TopPriority);
+      ClockCycleCount += __rdtsc() - dec_start_time;
     }
     //++BlockCount[TopPriority.BlockId];
     InTheCut = BitCount < Params.DecodeBudget*8;
   }
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
-  FOR_EACH(B, OutputBlocks) {
-    printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
-    FOR_EACH(BB, B->BBoxes) {
-      OutputParticles.push_back(particle_int{.Pos=BB->Min});
-    }
-    NParticlesDecoded += B->BBoxes.size();
-  }
+  //FOR_EACH(B, OutputBlocks) {
+  //  //printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
+  //  FOR_EACH(BB, B->BBoxes) {
+  //    OutputParticles.push_back(particle_int{.Pos=BB->Min});
+  //  }
+  //  NParticlesDecoded += B->BBoxes.size();
+  //}
 }
 
 static tree*
@@ -2793,9 +2801,9 @@ AllocateMemoryForBlocks(const grid_int& Grid) {
   printf("nblocks = %d\n", int(Streams.size()));
   OutputBlocks.resize(Streams.size());
   FOR_EACH(S, Streams) {
-    InitWrite(&S->Stream, 1 << 20); // 1 MB
+    InitWrite(&S->Stream, 4 << 10); // 4 KB
 #if defined(FORCE_BINOMIAL)
-    S->Coder.InitWrite(1 << 20);
+    S->Coder.InitWrite(4 << 10);
 #endif
   }
   InitWrite(&GlobalStream.Stream, 1 << 20); // 1 MB
@@ -3159,6 +3167,7 @@ START:
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
+    printf("new %lld clocks, %f s\n", dec_clocks-ClockCycleCount, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
     //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
