@@ -26,7 +26,7 @@ struct block_info {
   std::vector<bbox_int> BBoxes;
   std::vector<particle_id_and_bbox> BBoxesAndIds;
   std::vector<u64> PId; // particle id
-  int BitCount = 0;
+  //int BitCount = 0;
   bool AtRefinement = false;
 };
 static std::vector<block_info> OutputBlocks;
@@ -1570,14 +1570,12 @@ struct heap_priority {
   i32 TotalNParticlesOnLevel = 0; // total of particles on the current level
   //i64 TotalNParticles = 0; // total of particles on the current level
   //i64 ParticleCount = 0; // number of particles read so far
-  stream* Stream = nullptr;
-  stack* Stack = nullptr;
   i64 BlockId = 0;
   INLINE bool operator<(const heap_priority& Other) const { 
     if (Level == Other.Level) {
       if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
       //if (NParticles == Other.NParticles) {
-        return Stream < Other.Stream;
+        return BlockId < Other.BlockId;
       }
       return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
       //return (NParticles) < (Other.NParticles);
@@ -1671,14 +1669,14 @@ BuildIntAdaptiveDFSPhase(
             if (B->BBox.Min+1 == B->BBox.Max) {
               ++NParticlesEncoded; 
             }
-            ++Block.BitCount;
+            //++Block.BitCount;
           }
           if (NParticlesEncoded == Block.NParticles) {
-            printf("block %lld bitcount %d\n", BlockIdx, Block.BitCount);
+            //printf("block %lld bitcount %d\n", BlockIdx, Block.BitCount);
           }
         } else {
           NParticlesEncoded = Block.NParticles;
-          printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
+          //printf("- block %lld bitcount %d\n", BlockIdx, Block.BitCount);
         }
       }
       // block is done, release memory
@@ -2235,9 +2233,10 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
       BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
 }
+static std::vector<stack> Stacks; // one stack for each block
 
 static void
-DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<heap_priority>& Heap, std::vector<stack>& Stacks) {
+DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<heap_priority>& Heap) {
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   while (!Queue.empty()) {
     auto Q = Queue.front();
@@ -2302,8 +2301,6 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
             .Level=100, 
             .NParticles=i32(Next.End-Next.Begin),
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
-            .Stream=&Streams[BlockIdx],
-            .Stack=&Stacks[BlockIdx],
             .BlockId=BlockIdx});
         ++BlockCount;
       }
@@ -2335,8 +2332,6 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
             .Level=100, 
             .NParticles=i32(Next.End-Next.Begin), 
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin), 
-            .Stream=&Streams[BlockIdx],
-            .Stack=&Stacks[BlockIdx],
             .BlockId=BlockIdx});
         ++BlockCount;
       }
@@ -2346,7 +2341,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
 
 static int
 DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
-  auto Stack = TopPriority.Stack;
+  auto Stack = &Stacks[TopPriority.BlockId];
   bool InTheCut = BitCount < Params.DecodeBudget*8;
   int PCount = 0;
   auto BitCountBackup = BitCount;
@@ -2445,12 +2440,11 @@ DecodeIntAdaptive(q_item_int Q) {
   // TODO: resize the Stacks to the number of blocks
   std::queue<q_item_int> Queue;
   std::priority_queue<heap_priority> Heap;
-  std::vector<stack> Stacks; // one stack for each block
   Stacks.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   Queue.push(Q);
   /*-------------------- BFS phase ---------------------- */
   if (Params.StartResolutionSplit > 0) {
-    DecodeIntAdaptiveBFSPhase(Queue, Heap, Stacks);
+    DecodeIntAdaptiveBFSPhase(Queue, Heap);
     printf("done bfs phase, heap size = %d\n", Heap.size());
   } else {
     i64 BlockIdx = GetBlockIndex(Q.Grid.From3);
@@ -2462,8 +2456,6 @@ DecodeIntAdaptive(q_item_int Q) {
       .Level=100, 
       .NParticles=i32(Q.End-Q.Begin), 
       .TotalNParticlesOnLevel=i32(Q.End-Q.Begin), 
-      .Stream=&Streams[BlockIdx],
-      .Stack=&Stacks[BlockIdx],
       .BlockId=BlockIdx});
   }
   /*-------------------- DFS phase ---------------------- */
@@ -2488,7 +2480,6 @@ DecodeIntAdaptive(q_item_int Q) {
       FOR_EACH(B, Block.BBoxes) {
         if (W3[DD] > 1) {
           bool Left = Read(&Stream.Stream);
-          ++Block.BitCount;
           ++BitCount;
           InTheCut = BitCount < Params.DecodeBudget*8;
           if (!InTheCut)
@@ -2528,13 +2519,13 @@ DecodeIntAdaptive(q_item_int Q) {
   }
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
-  //FOR_EACH(B, OutputBlocks) {
-  //  //printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
-  //  FOR_EACH(BB, B->BBoxes) {
-  //    OutputParticles.push_back(particle_int{.Pos=BB->Min});
-  //  }
-  //  NParticlesDecoded += B->BBoxes.size();
-  //}
+  FOR_EACH(B, OutputBlocks) {
+    //printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
+    FOR_EACH(BB, B->BBoxes) {
+      OutputParticles.push_back(particle_int{.Pos=BB->Min});
+    }
+    NParticlesDecoded += B->BBoxes.size();
+  }
 }
 
 static tree*
