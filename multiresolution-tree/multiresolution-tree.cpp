@@ -3187,8 +3187,10 @@ START:
     Scale3.y *= (Dims3.y/Dims3.x);
     Scale3.z *= (Dims3.z/Dims3.x);
     Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
-    if (Budget) {
+    if (OptExists(Argc, Argv, "--ospray")) {
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), OutputParticles.begin(), OutputParticles.end(), Params.BBoxInt.Min, Scale3);
+    } else {
+      WriteVTU(PRINT("%s-out.vtu", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     }
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
