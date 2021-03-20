@@ -2234,6 +2234,10 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   }
 }
 static std::vector<stack> Stacks; // one stack for each block
+static i64 MyHeapSize = 0;
+static i64 StackSize = 0;
+static i64 QueueSize = 0;
+static i64 NItems = 0;
 
 static void
 DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<heap_priority>& Heap) {
@@ -2241,6 +2245,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
   while (!Queue.empty()) {
     auto Q = Queue.front();
     Queue.pop();
+    --QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     i64 N = Q.End - Q.Begin;
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
@@ -2289,6 +2294,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
+        ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
       } else {
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
@@ -2296,6 +2302,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
         Stacks[BlockIdx].push_back(Next);
+        ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
         Heap.push(
           heap_priority{
             .Level=100, 
@@ -2303,6 +2310,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
             .BlockId=BlockIdx});
         ++BlockCount;
+        ++MyHeapSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
       }
     }
     i64 NParticlesRight = 0;
@@ -2321,6 +2329,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
+        ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
       } else {
         //printf("%lld: %lld %lld\n", BlockCount, Next.Begin, Next.End);
         i64 BlockIdx = GetBlockIndex(Next.Grid.From3);
@@ -2328,12 +2337,14 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         Block.NParticles = i32(Next.End - Next.Begin);
         Block.BBoxes.reserve(Block.NParticles);
         Stacks[BlockIdx].push_back(Next);
+        ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
         Heap.push(heap_priority{
             .Level=100, 
             .NParticles=i32(Next.End-Next.Begin), 
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin), 
             .BlockId=BlockIdx});
         ++BlockCount;
+        ++MyHeapSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
       }
     }
   }
@@ -2348,6 +2359,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
   while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<4096) {
     auto Q = Stack->back();
     Stack->pop_back();
+    --StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     auto Stream = GetStream(Q.Grid, Q.Depth);
     if (Q.ResLvl != TopPriority.Level) { // TODO: move the update out of the loop
       TopPriority.Level = Q.ResLvl;
@@ -2411,6 +2423,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Split = NextSplit
       };
       Stack->push_back(Next);
+      ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     }
     if (InTheCut && Q.Begin+1<=Mid) {
       split_type NextSplit = 
@@ -2425,6 +2438,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Split = NextSplit
       };
       Stack->push_back(Next);
+      ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     }
   }
   return PCount;
@@ -2433,7 +2447,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
 // TODO: reserve memory in advance
 // TODO: allocate a large memory arena upfront for the bit streams
 // TODO: we can't simply decode the right particle before going all the way to the left because it may belong to the next resolution
-u64 ClockCycleCount= 0;
+static u64 ClockCycleCount= 0;
 static void
 DecodeIntAdaptive(q_item_int Q) {
   printf("------Adaptive decoder------\n");
@@ -2442,6 +2456,7 @@ DecodeIntAdaptive(q_item_int Q) {
   std::priority_queue<heap_priority> Heap;
   Stacks.resize(u64(Params.NBlocks3.x)*u64(Params.NBlocks3.y)*u64(Params.NBlocks3.z));
   Queue.push(Q);
+  ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
   /*-------------------- BFS phase ---------------------- */
   if (Params.StartResolutionSplit > 0) {
     DecodeIntAdaptiveBFSPhase(Queue, Heap);
@@ -2452,11 +2467,13 @@ DecodeIntAdaptive(q_item_int Q) {
     Block.NParticles = i32(Q.End - Q.Begin);
     Block.BBoxes.reserve(Block.NParticles);
     Stacks[BlockIdx].push_back(Q);
+    ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     Heap.push(heap_priority{
       .Level=100, 
       .NParticles=i32(Q.End-Q.Begin), 
       .TotalNParticlesOnLevel=i32(Q.End-Q.Begin), 
       .BlockId=BlockIdx});
+    ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
   }
   /*-------------------- DFS phase ---------------------- */
   bool InTheCut = BitCount < Params.DecodeBudget*8;
@@ -2496,8 +2513,10 @@ DecodeIntAdaptive(q_item_int Q) {
       REQUIRE(Block.NParticlesDecoded <= Block.NParticles);
       uint64_t dec_start_time = __rdtsc();
       Heap.pop();
+      --MyHeapSize; NItems = MAX(NItems, MyHeapSize+QueueSize+StackSize);
       if (Block.NParticlesDecoded != Block.NParticles) {
         Heap.push(TopPriority);
+        ++MyHeapSize; NItems = MAX(NItems, MyHeapSize+QueueSize+StackSize);
       }
       ClockCycleCount += __rdtsc() - dec_start_time;
       //if (Block.NParticlesDecoded == Block.NParticles) {
@@ -3088,8 +3107,6 @@ START:
     printf("RMSE = %f\n", sqrt(RMSE / (ParticlesInt.size() * Params.NDims)));
     printf("# particles = %lld\n", NParticlesDecoded);
     printf("Average ratio = %f Ratio count = %lld\n", Ratio / RatioCount, RatioCount);
-    printf("Nodes with more empty cells count = %lld\n", NodesWithMoreEmptyCellsCount);
-    printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
     ///* dump the debug info */
     //FILE* Ff = fopen("debug.dat", "wb");
     //i64 DebugSize = SRList.size();
@@ -3163,8 +3180,8 @@ START:
     printf("consumed stream size = %lld\n", Size(BlockStream)+Size(Coder.BitStream));
     //WritePLYInt(PRINT("%s.ply", Params.OutFile), OutputParticles.begin(), OutputParticles.end());
     printf("num particles decoded = %lld\n", NParticlesDecoded);
-    printf("num particles generated = %lld\n", NParticlesGenerated);
     printf("bit count = %d bytes\n", BitCount/8);
+    printf("nitems in container = %lld\n", NItems);
     vec3f Scale3(30.0, 30.0, 30.0);
     vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
     Scale3.y *= (Dims3.y/Dims3.x);
