@@ -2804,6 +2804,8 @@ CountParticles(const grid_int& G) {
   return Count;
 }
 
+static i64 BitCount[64] = {}; // count the bit length per level
+static i64 TotalBitCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static u32 NumNodeAllocated = 0;
@@ -2829,16 +2831,16 @@ BuildTreeIntPredict(
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
     ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
-    //for (int DD = 0; DD < 3; ++DD) {
-    //  while (BBox.Max[DD] > BBox.Min[DD]+1) {
-    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-    //    bool Left = Particles[Begin].Pos[DD] < M;
-    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-    //    Write(&BlockStream, Left);
-    //  }
-    //}
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
+        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[DD] < M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+        Write(&BlockStream, Left);
+      }
+    }
     return Node;
   }
 
@@ -3002,6 +3004,11 @@ BuildTreeIntPredict(
     }
   }
 
+  /* count the bit size of the the subtree */
+  if (Split == ResolutionSplit) {
+    BitCount[ResLvl + 1] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
+  }
+
   /* recurse on the right */
   tree* Right = nullptr;
   if (CellCountRight>=1 && R>=1) { //recurse
@@ -3013,6 +3020,11 @@ BuildTreeIntPredict(
       if (ResLvl+1 >= Params.CodingLevel)
         Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1, D);
     }
+  }
+
+  if (Depth == Params.StartResolutionSplit) {
+    BitCount[ResLvl] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
+    TotalBitCount = Size(Coder.BitStream) + Size(BlockStream); // "reset" TotalBitCount
   }
 
   /* construct the prediction tree */
@@ -4298,9 +4310,13 @@ START:
     Scale3.y *= (Dims3.y/Dims3.x);
     Scale3.z *= (Dims3.z/Dims3.x);
     Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    for (int I = 0; I < 64; ++I) {
+      if (BitCount[I] > 0) {
+        printf("level %d size %d\n", I, BitCount[I]);
+      }
+    }
     if (OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel))
       WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticleOuts.begin(), ParticleOuts.end(), Params.BBoxInt.Min, Scale3);
-
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("%s\n", Params.DimsStr);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
