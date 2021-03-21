@@ -2863,6 +2863,8 @@ DecodeTreeIntPredict(
 
   return Node;
 }
+static i64 BitCountPerLevel[64] = {}; // count the bit length per level
+static i64 TotalBitCount = 0;
 
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
@@ -3145,7 +3147,7 @@ BuildTreeIntPredict(
   if (S==1 && CellCountLeft==1) {
     assert(Depth+1 == Params.MaxDepth);
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Begin+1 == Mid) {
+  if (Begin+1 == Mid && CellCountLeft ==1) {
 #endif
     assert(Begin+1 == Mid);
 #if defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
@@ -3154,19 +3156,19 @@ BuildTreeIntPredict(
     ++NumNodeAllocated;
 #endif
     ++NParticlesDecoded;
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
-      }
-    }
+    //bbox_int BBox;
+    //BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
+    //BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3;
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]) {
+    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[DD] < M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
 #if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (S >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
@@ -3193,6 +3195,10 @@ BuildTreeIntPredict(
 #endif
   }
 
+  if (Split == ResolutionSplit) {
+    BitCountPerLevel[ResLvl + 1] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
+  }
+
   /* recurse on the right */
   tree* Right = nullptr;
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
@@ -3201,7 +3207,7 @@ BuildTreeIntPredict(
   if (R==1 && CellCountRight==1) {
     assert(Depth+1 == Params.MaxDepth);
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Mid+1 == End) {
+  if (Mid+1 == End && CellCountRight==1) {
 #endif
     assert(Mid+1 == End);
 #if defined(PREDICTION) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
@@ -3209,20 +3215,20 @@ BuildTreeIntPredict(
     Right->Count = 1;
     ++NumNodeAllocated;
 #endif
-    ++NParticlesDecoded;
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Mid].Pos[DD] <= M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-        Write(&BlockStream, Left);
-      }
-    }
+    //++NParticlesDecoded;
+    //bbox_int BBox;
+    //BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+    //BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]) {
+    //    //REQUIRE(BBox.Min[DD] <= Particles[Mid].Pos[DD]);
+    //    //REQUIRE(BBox.Max[DD] >= Particles[Mid].Pos[DD]);
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Mid].Pos[DD] <= M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
 #if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT) || defined(RESOLUTION_PREDICT)
   } else if (R >= 1) { //recurse
 #elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
@@ -3250,6 +3256,11 @@ BuildTreeIntPredict(
     else if (Split == ResolutionSplit)
       Right = BuildTreeIntPredict(Left, Particles, Mid, End, R, GridRight, NextSplit, ResLvl+1, Depth+1);
 #endif
+  }
+
+  if (Depth == Params.StartResolutionSplit) {
+    BitCountPerLevel[ResLvl] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
+    TotalBitCount = Size(Coder.BitStream) + Size(BlockStream); // "reset" TotalBitCount
   }
 
   /* construct the prediction tree */
@@ -5273,7 +5284,7 @@ START:
       split_type Split = (Params.NLevels>1 && Params.StartResolutionSplit==0) ? ResolutionSplit : SpatialSplit;
       printf("--------------- Encoding %s\n", Buf);
       tree* MyNode = nullptr;
-      //MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
+      bool Pred = OptExists(Argc, Argv, "--pred");
       bool Bfs = OptExists(Argc, Argv, "--bfs");
       bool Dfs = OptExists(Argc, Argv, "--dfs");
       bool Priority = OptExists(Argc, Argv, "--priority");
@@ -5286,7 +5297,9 @@ START:
         .Depth = 0,
         .Split = Split,
       };
-      if (Dfs) {
+      if (Pred) {
+        MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
+      } else if (Dfs) {
         BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
         for (int I = 0; I <= Params.MaxDepth; ++I) {
           printf("%f\n", BitCount[I]/8);
@@ -5316,6 +5329,11 @@ START:
     Coder.EncodeFinalize();
     //Coder2.EncodeFinalize();
     Flush(&BlockStream);
+    for (int I = 0; I < 64; ++I) {
+      if (BitCountPerLevel[I] > 0) {
+        printf("level %d size %d\n", I, BitCountPerLevel[I]);
+      }
+    }
     printf("block count = %lld\n", BlockCount);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
