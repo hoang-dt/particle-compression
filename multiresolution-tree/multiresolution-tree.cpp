@@ -2831,16 +2831,16 @@ BuildTreeIntPredict(
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
     ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] < M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        Write(&BlockStream, Left);
-      }
-    }
+    //for (int DD = 0; DD < 3; ++DD) {
+    //  while (BBox.Max[DD] > BBox.Min[DD]+1) {
+    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+    //    bool Left = Particles[Begin].Pos[DD] < M;
+    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+    //    Write(&BlockStream, Left);
+    //  }
+    //}
     return Node;
   }
 
@@ -4226,7 +4226,7 @@ START:
       Params.NParticles = ParticlesInt.size();
       if (TreePtrBackup == nullptr) {
         assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 20];
+        TreePtr      = new tree[Params.NParticles * 10];
         //PrevFramePtr = new tree[Params.NParticles * 8];
         TreePtrBackup      = TreePtr;
         PrevFramePtrBackup = PrevFramePtr;
