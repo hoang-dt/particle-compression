@@ -1573,18 +1573,54 @@ struct heap_priority {
   stream* Stream = nullptr;
   stack* Stack = nullptr;
   i64 BlockId = 0;
-  INLINE bool operator<(const heap_priority& Other) const { 
-    if (Level == Other.Level) {
-      if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
-      //if (NParticles == Other.NParticles) {
-        return Stream < Other.Stream;
+  INLINE bool operator<(const heap_priority& Other) const {
+    double Score1 = 0;
+    int Sum1 = 0;
+    for (int I = 0; I + 1 < Stack->size(); ++I) {
+      // parent node is I, child node is I+1
+      // we want to know if it's worth to explore the other child node of I
+      const q_item_int& Node = (*Stack)[I];
+      const q_item_int& Child = (*Stack)[I + 1];
+      if (Node.Left) { // only makes sense if the child node is left (since the right is unexplored)
+        i8 D = Params.DimsStr[Child.Depth]-'x';
+        i64 N = (Node.End - Node.Begin) - (Child.End-Child.Begin);
+        double Err = Child.Grid.Dims3[D];
+        Score1 += N * Err * Err / log2(N+1);
+        ++Sum1;
       }
-      return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
-      //return (NParticles) < (Other.NParticles);
-      //return f64(ParticleCount)/f64(TotalNParticles) > f64(Other.ParticleCount)/f64(TotalNParticles);
     }
-    return Level < Other.Level;
-  };
+    double Score2 = 0;
+    int Sum2 = 0;
+    for (int I = 0; I + 1 < Other.Stack->size(); ++I) {
+      // parent node is I, child node is I+1
+      // we want to know if it's worth to explore the other child node of I
+      const q_item_int& Node = (*Other.Stack)[I];
+      const q_item_int& Child = (*Other.Stack)[I + 1];
+      if (Node.Left) { // only makes sense if the child node is left (since the right is unexplored)
+        i8 D = Params.DimsStr[Child.Depth]-'x';
+        i64 N = (Node.End - Node.Begin) - (Child.End-Child.Begin);
+        double Err = Child.Grid.Dims3[D];
+        Score2 += N * Err * Err / log2(N+1);
+        ++Sum2;
+      }
+    }
+    if (Score1*Sum2 == Score2*Sum1) {
+      return Stream < Other.Stream;
+    }
+    return Score1*Sum2 < Score2*Sum1;
+  }
+  //INLINE bool operator<(const heap_priority& Other) const { 
+  //  if (Level == Other.Level) {
+  //    if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
+  //    //if (NParticles == Other.NParticles) {
+  //      return Stream < Other.Stream;
+  //    }
+  //    return f64(NParticles)/f64(TotalNParticlesOnLevel) < f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel);
+  //    //return (NParticles) < (Other.NParticles);
+  //    //return f64(ParticleCount)/f64(TotalNParticles) > f64(Other.ParticleCount)/f64(TotalNParticles);
+  //  }
+  //  return Level < Other.Level;
+  //};
 };
 struct heap_data {
   i64 BlockId = 0;
@@ -2292,7 +2328,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
           .Grid = GridLeft,
           .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
           .Depth = i8(Q.Depth+1),
-          .Split = NextSplit
+          .Split = NextSplit,
+          .Left = true
         };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
@@ -2329,7 +2366,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         .Grid = GridRight,
         .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = i8(Q.Depth+1),
-        .Split = NextSplit
+        .Split = NextSplit,
+        .Left = false
       };
       if (Q.Depth+1 < Params.StartResolutionSplit) {
         Queue.push(Next);
@@ -2426,7 +2464,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Grid = GridRight,
         .ResLvl = Q.ResLvl+ (Q.Split==ResolutionSplit),
         .Depth = Q.Depth+1,
-        .Split = NextSplit
+        .Split = NextSplit,
+        .Left = true
       };
       Stack->push_back(Next);
       ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
@@ -2441,7 +2480,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
         .Grid = GridLeft,
         .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = Q.Depth+1,
-        .Split = NextSplit
+        .Split = NextSplit,
+        .Left = false
       };
       Stack->push_back(Next);
       ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
