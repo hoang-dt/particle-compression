@@ -2158,7 +2158,6 @@ struct q_item_int {
   i8 ResLvl;
   i8 Depth;
   split_type Split;
-  bool Left;
 };
 
 struct q_item {
