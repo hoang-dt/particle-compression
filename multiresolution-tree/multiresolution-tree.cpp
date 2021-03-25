@@ -1629,7 +1629,7 @@ struct heap_data {
   INLINE bool operator<(const heap_data& Other) const { return Stream < Other.Stream; }
 };
 
-static int BitCount = 0;
+static i64 BitCount = 0;
 static FILE* FilePtr = nullptr;
 static bitstream MetaStream;
 static i64 StreamSize = 0;
@@ -2031,7 +2031,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
 }
 
 #define IN_THE_CUT \
-  InTheCut = BitCount < Params.DecodeBudget*8;\
+  InTheCut = BitCount/8 < Params.DecodeBudget;\
   //InTheCut = Q.Depth <= 19; \
 
 static void
@@ -2279,7 +2279,7 @@ static i64 NItems = 0;
 
 static void
 DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<heap_priority>& Heap, std::vector<stack>& Stacks) {
-  bool InTheCut = BitCount < Params.DecodeBudget*8;
+  bool InTheCut = BitCount/8 < Params.DecodeBudget;
   while (!Queue.empty()) {
     auto Q = Queue.front();
     Queue.pop();
@@ -2292,7 +2292,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
     i64 CellCount = i64(Q.Grid.Dims3.x) * i64(Q.Grid.Dims3.y) * i64(Q.Grid.Dims3.z);
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
     auto Stream = GetStream(Q.Grid, Q.Depth);
     if (InTheCut) {
       bool Flip = CellCount-N < N;
@@ -2315,7 +2315,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       continue;
     }
     i64 NParticlesLeft = 0;
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    //InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
       REQUIRE(false); // should not happen
     } else if (InTheCut && Q.Begin<Mid) {
@@ -2355,7 +2356,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
       }
     }
     i64 NParticlesRight = 0;
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    //InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
       REQUIRE(false);
     } else if (InTheCut && Mid<Q.End) {
@@ -2397,7 +2399,8 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
 static int
 DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
   auto Stack = TopPriority.Stack;
-  bool InTheCut = BitCount < Params.DecodeBudget*8;
+  //bool InTheCut = BitCount < Params.DecodeBudget*8;
+  bool InTheCut = BitCount/8 < Params.DecodeBudget;
   int PCount = 0;
   auto BitCountBackup = BitCount;
   while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<512) {
@@ -2428,7 +2431,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       continue;
     }
 
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    //InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
     auto GridRight = SplitGrid(Q.Grid, D, Q.Split, side::Right);
     i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
@@ -2455,7 +2459,8 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
     }
 
     REQUIRE(CellCountLeft+CellCountRight == CellCount);
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    //InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
     if (InTheCut && Mid+1<=Q.End) {
       split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       q_item_int Next {
@@ -2523,7 +2528,8 @@ DecodeIntAdaptive(q_item_int Q) {
     ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
   }
   /*-------------------- DFS phase ---------------------- */
-  bool InTheCut = BitCount < Params.DecodeBudget*8;
+  //bool InTheCut = BitCount < Params.DecodeBudget*8;
+  bool InTheCut = BitCount/8 < Params.DecodeBudget;
   std::vector<i64> BlockCount(Stacks.size(), 0);
   // TODO: we need to prioritize blocks where particles are less refined
   while (InTheCut && !Heap.empty()) {
@@ -2544,7 +2550,8 @@ DecodeIntAdaptive(q_item_int Q) {
           bool Left = Read(&Stream.Stream);
           ++Block.BitCount;
           ++BitCount;
-          InTheCut = BitCount < Params.DecodeBudget*8;
+          //InTheCut = BitCount < Params.DecodeBudget*8;
+          InTheCut = BitCount/8 < Params.DecodeBudget;
           if (!InTheCut)
             break;
           i32 M = (B->Max[DD]+B->Min[DD]) >> 1;
@@ -2575,7 +2582,8 @@ DecodeIntAdaptive(q_item_int Q) {
       Heap.push(TopPriority);
     }
     //++BlockCount[TopPriority.BlockId];
-    InTheCut = BitCount < Params.DecodeBudget*8;
+    //InTheCut = BitCount < Params.DecodeBudget*8;
+    InTheCut = BitCount/8 < Params.DecodeBudget;
   }
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
@@ -2599,7 +2607,8 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
-  bool InTheCut = BitCount < Params.DecodeBudget*8;
+  //bool InTheCut = BitCount < Params.DecodeBudget*8;
+  bool InTheCut = BitCount/8 < Params.DecodeBudget;
   u32 P = 0;
   bool Flip = CellCount-N < N;
   if (Flip) N = CellCount - N;
@@ -2628,7 +2637,8 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
   Mid = P + Begin;
 
   /* ----------------- LEFT --------------- */
-  InTheCut = BitCount < Params.DecodeBudget*8;
+  //InTheCut = BitCount < Params.DecodeBudget*8;
+  InTheCut = BitCount/8 < Params.DecodeBudget;
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   tree* LeftTree = nullptr;
   i64 NParticlesLeft = 0;
@@ -2640,7 +2650,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     };
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        if (BitCount < Params.DecodeBudget*8)  {
+        if (BitCount/8 < Params.DecodeBudget)  {
           bool Left = Read(&Stream.Stream);
           ++BitCount;
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -2669,7 +2679,8 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
 
   /* ----------------- RIGHT --------------- */
   tree* RightTree = nullptr;
-  InTheCut = BitCount < Params.DecodeBudget*8;
+  //InTheCut = BitCount < Params.DecodeBudget*8;
+  InTheCut = BitCount/8 < Params.DecodeBudget;
   if (InTheCut && Mid+1==End && CellCountRight==1) {
     const auto& G = GridRight;
     bbox_int BBox {
@@ -2678,7 +2689,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     };
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        if (BitCount < Params.DecodeBudget*8)  {
+        if (BitCount/8 < Params.DecodeBudget)  {
           bool Left = Read(&Stream.Stream);
           ++BitCount;
           i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
