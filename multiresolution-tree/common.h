@@ -2148,7 +2148,7 @@ struct grid_int {
   vec3i From3, Dims3, Stride3;
 };
 
-enum split_type { ResolutionSplit, SpatialSplit, BalanceSplit };
+enum split_type : char { ResolutionSplit, SpatialSplit, BalanceSplit };
 enum class side { Left, Right };
 enum class action : int { Encode, Decode, Error, Convert, Dedup };
 
