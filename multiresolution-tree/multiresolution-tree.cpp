@@ -2371,7 +2371,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority, std::vector<stack>& Stacks
   bool InTheCut = BitCount/8 < Params.DecodeBudget;
   int PCount = 0;
   auto BitCountBackup = BitCount;
-  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<512) {
+  while (InTheCut && !Stack->empty() && BitCount-BitCountBackup<100000000) {
     auto Q = Stack->back();
     Stack->pop_back();
     --StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
@@ -2536,7 +2536,11 @@ DecodeIntAdaptive(q_item_int Q) {
       if (Block.NParticlesDecoded != Block.NParticles) {
         Heap.update(BlockPtr, TopPriority);
         ++MyHeapSize; NItems = MAX(NItems, MyHeapSize+QueueSize+StackSize);
-      } else {
+      } else { // block has been fully refined
+        //FOR_EACH(BB, Block.BBoxes) {
+        //  OutputParticles.push_back(particle_int{.Pos=BB->Min});
+        //}
+        Block.BBoxes.clear();
         Heap.pop();
       }
       //if (Block.NParticlesDecoded == Block.NParticles) {
@@ -2555,13 +2559,13 @@ DecodeIntAdaptive(q_item_int Q) {
   }
   //printf("heap size = %d\n", Heap.size());
   // generate the particles
-  FOR_EACH(B, OutputBlocks) {
-    //printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
-    FOR_EACH(BB, B->BBoxes) {
-      OutputParticles.push_back(particle_int{.Pos=BB->Min});
-    }
-    NParticlesDecoded += B->BBoxes.size();
-  }
+  //FOR_EACH(B, OutputBlocks) {
+  //  //printf("n %lld ndecoded %lld bboxes %lld\n", B->NParticles, B->NParticlesDecoded, B->BBoxes.size());
+  //  FOR_EACH(BB, B->BBoxes) {
+  //    OutputParticles.push_back(particle_int{.Pos=BB->Min});
+  //  }
+  //  NParticlesDecoded += B->BBoxes.size();
+  //}
 }
 
 static tree*
