@@ -1799,6 +1799,28 @@ ArithmeticEncode(u32 n, u32 v, u32 c, const u32* CdfTable, arithmetic_coder<>* C
   Coder->Encode(prob);
 }
 
+// Context is an array with 3 slots: [0, 1, 2]
+// 0 is reserved for the empty symbol
+inline void
+EncodeBinaryWithContext(u32 V, const u32* Context, arithmetic_coder<>* Coder) {
+  //assert(V>=0 && V<=N);
+  u32 Lo, Hi;
+  u32 Scale = Context[0] + Context[1] + Context[2];
+  if (V>1) { // V = 2
+    Lo = Context[0] + Context[1];
+    Hi = Context[0] + Context[1] + Context[2];
+  }
+  else if (V==1) {
+    Lo = Context[0];
+    Hi = Context[0] + Context[1];
+  }
+  else {
+    Lo = 0;
+    Hi = Context[0];
+  }
+  Coder->Encode(prob<u32>{Lo, Hi, Scale});
+}
+
 inline void
 EncodeWithContext(u32 N, u32 V, const u32* Context, arithmetic_coder<>* Coder) {
   //assert(V>=0 && V<=N);
