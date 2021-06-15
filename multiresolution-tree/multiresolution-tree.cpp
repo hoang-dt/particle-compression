@@ -3833,11 +3833,29 @@ INLINE f64
 ComputeScore(i64 Begin, i64 End, const vec3i& Dims3, i8 D) {
   i64 N = End - Begin;
   i32 Err = Dims3[D]/2;
-  //return f64(Err)*f64(Err)/log2(f64(N+1)); // best for surfaces
-  return N*f64(Err)*f64(Err)/log2(f64(N+1)); // best in general
+  return f64(Err)*f64(Err)/log2(f64(N+1)); // best for surfaces
+  //return N*f64(Err)*f64(Err)/log2(f64(N+1)); // best in general
   //return N*f64(Err)/log2(f64(N+1)); // best in general
 }
 
+// This score is for PT on hybrid tree
+INLINE f64
+ComputeScore2(i64 Begin, i64 End, const grid_int& G, i8 D) {
+  i64 N = End - Begin;
+  bbox_int BBox {
+    .Min = Params.BBoxInt.Min + G.From3*Params.W3,
+    .Max = BBox.Min + (G.Dims3-1) * Params.W3 * G.Stride3 + Params.W3
+  };
+  i32 Err = (BBox.Max[D]-BBox.Min[D])/2;
+  return f64(Err)*f64(Err)/log2(f64(N+1)); // best for surfaces
+  //return N*f64(Err)*f64(Err)/log2(f64(N+1)); // best in general
+  //return N*f64(Err)/log2(f64(N+1)); // best in general
+}
+
+INLINE f64
+ComputeScore3(i8 ResLvl, i8 D) { // traverse first by level, then by depth
+  return -(f64(ResLvl) * 128 + D);
+}
 
 static void
 DecodeTreeIntEntropy(q_item_int Q) {
@@ -3978,7 +3996,8 @@ static int NItemsInContainer = 0;
 static void
 DecodeTreeIntPriority(q_item_int Q) {
   printf("------Priority decoder------\n");
-  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  Q.Score = ComputeScore2(Q.Begin, Q.End, Q.Grid, Params.DimsStr[Q.Depth]-'x');
+  //Q.Score = ComputeScore3(Q.ResLvl, Q.Depth);
   std::priority_queue<q_item_int> Queue;
   Queue.push(Q);
   while (!Queue.empty()) {
@@ -3997,12 +4016,12 @@ DecodeTreeIntPriority(q_item_int Q) {
       //GenerateParticlesPerNode(N, Q.Grid, &OutputParticles);
       NParticlesGenerated += 1;
       NParticlesDecoded += 1;
-      //GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
-      bbox_int BBox {
-        .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
-      };
-      OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      GenerateParticlesPerNode(1, Q.Grid, &OutputParticles);
+      //bbox_int BBox {
+      //  .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
+      //  .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3 * Q.Grid.Stride3
+      //};
+      //OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
     }
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
@@ -4018,15 +4037,18 @@ DecodeTreeIntPriority(q_item_int Q) {
       ++NParticlesGenerated;
       ++NParticlesDecoded;
     } else if (InTheCut && Q.Begin<Mid) {
-      split_type NextSplit = SpatialSplit;
+      split_type NextSplit = 
+        ((Q.Depth+1==Params.StartResolutionSplit) ||
+         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
         .Begin = Q.Begin,
         .End = Mid,
         .Grid = GridLeft,
-        .ResLvl = Q.ResLvl,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = i8(Q.Depth+1),
         .Split = NextSplit,
-        .Score = ComputeScore(Q.Begin, Mid, GridLeft.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+        .Score = ComputeScore2(Q.Begin, Mid, GridLeft, Params.DimsStr[Q.Depth+1]-'x')
+        //.Score = ComputeScore3(Q.ResLvl+(Q.Split==ResolutionSplit), i8(Q.Depth+1))
       });
     }
     if (InTheCut && Mid+1==Q.End && CellCountRight==1) {
@@ -4038,15 +4060,16 @@ DecodeTreeIntPriority(q_item_int Q) {
       ++NParticlesGenerated;
       ++NParticlesDecoded;
     } else if (InTheCut && Mid<Q.End) {
-      split_type NextSplit = SpatialSplit;
+      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
         .Begin = Mid,
         .End = Q.End,
         .Grid = GridRight,
-        .ResLvl = Q.ResLvl,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = i8(Q.Depth+1),
         .Split = NextSplit,
-        .Score = ComputeScore(Mid, Q.End, GridRight.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+        .Score = ComputeScore2(Mid, Q.End, GridRight, Params.DimsStr[Q.Depth+1]-'x')
+        //.Score = ComputeScore3(Q.ResLvl+(Q.Split==ResolutionSplit), i8(Q.Depth+1))
       });
     }
   }
@@ -4054,7 +4077,8 @@ DecodeTreeIntPriority(q_item_int Q) {
 
 static void
 BuildTreeIntPriority(q_item_int Q, std::vector<particle_int>& Particles) {
-  Q.Score = ComputeScore(Q.Begin, Q.End, Q.Grid.Dims3, Params.DimsStr[Q.Depth]-'x');
+  Q.Score = ComputeScore2(Q.Begin, Q.End, Q.Grid, Params.DimsStr[Q.Depth]-'x');
+  //Q.Score = ComputeScore3(Q.ResLvl, Q.Depth);
   printf("------Priority builder------\n");
   std::priority_queue<q_item_int> Queue;
   Queue.push(Q);
@@ -4063,12 +4087,23 @@ BuildTreeIntPriority(q_item_int Q, std::vector<particle_int>& Particles) {
     Queue.pop();
     i64 N = Q.End - Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
-    i32 MM = Q.Grid.From3[D] + (((Q.Grid.Dims3[D]+1)>>1)-1) * Q.Grid.Stride3[D];
-    auto SPred = [&Q, MM, D](const particle_int& P) {
-      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
-      return Bin <= MM;
-    };
-    i64 Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+    i32 MM = Q.Grid.From3[D];
+    i64 Mid = Q.Begin;
+    if (Q.Split == ResolutionSplit) {
+      auto RPred = [&Q, D](const particle_int& P) {
+        i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+        Bin = (Bin-Q.Grid.From3[D]) / Q.Grid.Stride3[D];
+        return IS_EVEN(Bin);
+      };
+      Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), RPred) - Particles.begin();
+    } else if (Q.Split == SpatialSplit) {
+      MM = Q.Grid.From3[D] + (((Q.Grid.Dims3[D]+1)>>1)-1) * Q.Grid.Stride3[D];
+      auto SPred = [&Q, MM, D](const particle_int& P) {
+        i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+        return Bin <= MM;
+      };
+      Mid = std::partition(RANGE(Particles, Q.Begin, Q.End), SPred) - Particles.begin();
+    }
     i64 P = Mid - Q.Begin;
     EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
     auto GridLeft  = SplitGrid(Q.Grid, D, Q.Split, side::Left );
@@ -4077,29 +4112,33 @@ BuildTreeIntPriority(q_item_int Q, std::vector<particle_int>& Particles) {
     i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
     if (Q.Begin+1==Mid && CellCountLeft==1) {
     } else if (Q.Begin < Mid) {
-      split_type NextSplit = SpatialSplit;
+      split_type NextSplit = 
+        ((Q.Depth+1==Params.StartResolutionSplit) ||
+         (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
         .Begin = Q.Begin,
         .End = Mid,
         .Grid = GridLeft,
-        .ResLvl = Q.ResLvl,
-        .Depth = i8(Q.Depth+1),
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
+        .Depth = i8(Q.Depth + 1),
         .Split = NextSplit,
-        .Score = ComputeScore(Q.Begin, Mid, GridLeft.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+        .Score = ComputeScore2(Q.Begin, Mid, GridLeft, Params.DimsStr[Q.Depth+1]-'x')
+        //.Score = ComputeScore3(Q.ResLvl+(Q.Split==ResolutionSplit), i8(Q.Depth+1))
       });
     }
 
     if (Mid+1==Q.End && CellCountRight==1) {
     } else if (Mid < Q.End) {
-      split_type NextSplit = SpatialSplit;
+      split_type NextSplit = (Q.Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
         .Begin = Mid,
         .End = Q.End,
         .Grid = GridRight,
-        .ResLvl = Q.ResLvl,
+        .ResLvl = Q.ResLvl + (Q.Split==ResolutionSplit),
         .Depth = i8(Q.Depth+1),
         .Split = NextSplit,
-        .Score = ComputeScore(Mid, Q.End, GridRight.Dims3, Params.DimsStr[Q.Depth+1]-'x')
+        .Score = ComputeScore2(Mid, Q.End, GridRight, Params.DimsStr[Q.Depth+1]-'x')
+        //.Score = ComputeScore3(Q.ResLvl+(Q.Split==ResolutionSplit), i8(Q.Depth+1))
       });
     }
   }
@@ -4209,8 +4248,11 @@ DecodeTreeIntBFS(q_item_int Q) {
     i64 Mid = Q.Begin;
     i8 D = Params.DimsStr[Q.Depth] - 'x';
     bool InTheCut = Size(BlockStream) < Params.DecodeBudget;
-    if (Params.DecodeDepth < 127)
-      InTheCut = Q.Depth<=Params.DecodeDepth;
+    //if (Params.DecodeDepth < 127)
+    //  InTheCut = Q.Depth<=Params.DecodeDepth;
+    if (Params.DecodeDepth < 127) { // treating depth as resolution level to make bfs on each resolution level
+      InTheCut = (Q.ResLvl > Params.DecodeDepth) || (Size(BlockStream) < Params.DecodeBudget);
+    }
     if (InTheCut) {
 #if defined(BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
@@ -4229,7 +4271,7 @@ DecodeTreeIntBFS(q_item_int Q) {
       NParticlesDecoded += 1;
       bbox_int BBox {
         .Min = Params.BBoxInt.Min + Q.Grid.From3*Params.W3,
-        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3
+        .Max = BBox.Min + (Q.Grid.Dims3-1) * Params.W3 * Q.Grid.Stride3
       };
       OutputParticles.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
       continue;
