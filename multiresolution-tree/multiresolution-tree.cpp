@@ -2831,16 +2831,16 @@ BuildTreeIntPredict(
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
     ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
-    //for (int DD = 0; DD < 3; ++DD) {
-    //  while (BBox.Max[DD] > BBox.Min[DD]+1) {
-    //    //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-    //    //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
-    //    i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-    //    bool Left = Particles[Begin].Pos[DD] < M;
-    //    if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-    //    Write(&BlockStream, Left);
-    //  }
-    //}
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
+        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
+        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Particles[Begin].Pos[DD] < M;
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+        Write(&BlockStream, Left);
+      }
+    }
     return Node;
   }
 
@@ -2871,85 +2871,112 @@ BuildTreeIntPredict(
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;
-  i8 S = Msb(u32(P)) + 1; S = P > 0;
-  i8 R = Msb(u32(N - P)) + 1; R = (N-P) > 0;
-  //u32 CIdx = ResLvl*Params.NLevels + Depth;
-  u32 CIdx = Depth;
-  if (T>0 && (PredNode)) { // predict P
+  i8 S = Msb(u32(P)) + 1;
+  i8 R = Msb(u32(N-P)) + 1;
+  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
+  if (!FullGrid && T>0 && (PredNode)) { // predict P
     i64 M=0, K=0, L=0;
     {
       M = PredNode->Count; // whole
       K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count; // left
       L = M - K; // right
     } 
-    i8 MM = Msb(u64(M)) + 1; MM = M > 0; // using binary context
-    i8 KK = Msb(u64(K)) + 1; KK = K > 0;
-    i8 LL = Msb(u64(L)) + 1; LL = L > 0;
-    u32 C = MM*4 + KK*2 + LL;
-    //u32 C = MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
+    i8 MM = Msb(u64(M)) + 1;
+    i8 KK = Msb(u64(K)) + 1;
+    i8 LL = Msb(u64(L)) + 1;
+    u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
     { // encode S
       auto It = ContextS[CIdx].find(C);
-      if (It == ContextS[CIdx].end()) { // no context for C
+      if (It == ContextS[CIdx].end()) {
         auto Pair = ContextS[CIdx].insert({C, one_context_type()});
         Pair.first->second[0] = 1;
-        EncodeBinaryWithContext(0, Pair.first->second.data(), &Coder); // encode the empty symbol
-        Write(&BlockStream, S);
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(S, T+1, &BlockStream);
+        EncodeUniform(T, S, &Coder);
         ++Pair.first->second[S+1];
-      } else { // has context for C
+      } else {
         It->second[0] = 1;
-        if (It->second[S+1] == 0) { // but has not seen S
-          EncodeBinaryWithContext(0, It->second.data(), &Coder);
-          Write(&BlockStream, S);
-        } else { // has seen S (has context for C, S)
-          EncodeBinaryWithContext(S+1, It->second.data(), &Coder);
+        if (It->second[S+1] == 0) {
+          EncodeWithContext(T, 0, It->second.data(), &Coder);
+          //EncodeCenteredMinimal(S, T+1, &BlockStream);
+          EncodeUniform(T, S, &Coder);
+        } else {
+          EncodeWithContext(T, S+1, It->second.data(), &Coder);
         }
         ++It->second[S+1];
       }
     }
-    //C = MM*(ContextMax+2)*(ContextMax+2)*2 + KK*(ContextMax+2)*2 + (LL*2) + S;
-    C = MM*8 + KK*4 + LL*2 + S; // context for R
+    C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
     { // encode R
       auto It = ContextR[CIdx].find(C);
-      if (It == ContextR[CIdx].end()) { // no context for C
+      if (It == ContextR[CIdx].end()) {
         auto Pair = ContextR[CIdx].insert({C, one_context_type()});
         Pair.first->second[0] = 1;
-        EncodeBinaryWithContext(0, Pair.first->second.data(), &Coder);
-        Write(&BlockStream, R);
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(R, T+1, &BlockStream);
+        EncodeUniform(T, R, &Coder);
         ++Pair.first->second[R+1];
-      } else { // has context for C
+      } else {
         It->second[0] = 1;
-        if (It->second[R+1] == 0) { // but has not seen R
-          EncodeBinaryWithContext(0, It->second.data(), &Coder);
-          Write(&BlockStream, R);
-        } else { // has context for C, R
-          EncodeBinaryWithContext(R+1, It->second.data(), &Coder);
+        if (It->second[R+1] == 0) {
+          EncodeWithContext(T, 0, It->second.data(), &Coder);
+          //EncodeCenteredMinimal(R, T+1, &BlockStream);
+          EncodeUniform(T, R, &Coder);
+        } else {
+          EncodeWithContext(T, R+1, It->second.data(), &Coder);
         }
         ++It->second[R+1];
       }
     }
   } else 
-  if (T>0) { // no prediction, try 1-context
-    Write(&BlockStream, S);
-    //Write(&BlockStream, R);
+  if (!FullGrid && T>0) { // no prediction, try 1-context
+    { // encode S
+      auto It = ContextTS[CIdx].find(T);
+      if (It == ContextTS[CIdx].end()) {
+        auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
+        Pair.first->second[0] = 1;
+        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
+        //EncodeCenteredMinimal(S, T+1, &BlockStream);
+        EncodeUniform(T, R, &Coder);
+        ++Pair.first->second[S+1];
+      } else {
+        It->second[0] = 1;
+        if (It->second[S+1] == 0) {
+          EncodeWithContext(T, 0, It->second.data(), &Coder);
+          //EncodeCenteredMinimal(S, T+1, &BlockStream);
+          EncodeUniform(T, S, &Coder);
+        } else {
+          EncodeWithContext(T, S+1, It->second.data(), &Coder);
+        }
+        ++It->second[S+1];
+      }
+    }
     { // encode R
-      u32 CR = S;
-      if (S == 0) {
-        // for sure T == 1
+      u32 CR = T*(ContextMax+2) + S;
+      if (FullGrid) {
+        assert(R == T-1);
+      } else if (T==1 && S==1) {
+        assert(R == 0);
+      } else if (S == 0) {
+        assert(R == T);
       } else {
         auto It = ContextTSR[CIdx].find(CR);
-        if (It == ContextTSR[CIdx].end()) { // no context
+        if (It == ContextTSR[CIdx].end()) {
           auto Pair = ContextTSR[CIdx].insert({CR, one_context_type()});
           Pair.first->second[0] = 1;
-          EncodeBinaryWithContext(0, Pair.first->second.data(), &Coder); 
-          Write(&BlockStream, R);
+          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
+          //EncodeCenteredMinimal(R, T+1, &BlockStream);
+          EncodeUniform(T, R, &Coder);
           ++Pair.first->second[R+1];
-        } else { // has context
+        } else {
           It->second[0] = 1;
-          if (It->second[R+1] == 0) { // but has not seen R
-            EncodeBinaryWithContext(0, It->second.data(), &Coder);
-            Write(&BlockStream, R);
-          } else { // has context S, R
-            EncodeBinaryWithContext(R+1, It->second.data(), &Coder);
+          if (It->second[R+1] == 0) {
+            EncodeWithContext(T, 0, It->second.data(), &Coder);
+            //EncodeCenteredMinimal(R, T+1, &BlockStream);
+            EncodeUniform(T, R, &Coder);
+          } else {
+            EncodeWithContext(T, R+1, It->second.data(), &Coder);
           }
           ++It->second[R+1];
         }
@@ -2965,12 +2992,11 @@ BuildTreeIntPredict(
 
   /* recurse */
   tree* Left = nullptr; 
-  if (CellCountLeft>=1 && S) { //recurse
+  if (CellCountLeft>=1 && S>=1) { //recurse
    // assert(Depth+1 < Params.MaxDepth);
-    //split_type NextSplit = 
-    //  ((Depth+1==Params.StartResolutionSplit) ||
-    //   (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-    split_type NextSplit = ResolutionSplit;
+    split_type NextSplit = 
+      ((Depth+1==Params.StartResolutionSplit) ||
+       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit) {
       Left = BuildTreeIntPredict(PredNode?PredNode->Left:nullptr, Particles, Begin, Mid, S, GridLeft, NextSplit, ResLvl, Depth+1, DRes);
     } else if (Split == ResolutionSplit) {
@@ -2985,10 +3011,9 @@ BuildTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
-  if (CellCountRight>=1 && R) { //recurse
+  if (CellCountRight>=1 && R>=1) { //recurse
     //assert(Depth+1 < Params.MaxDepth);
-    //split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    split_type NextSplit = ResolutionSplit;
+    split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit) {
       Right = BuildTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1, DRes);
     } else if (Split == ResolutionSplit) {
@@ -3005,9 +3030,9 @@ BuildTreeIntPredict(
   /* construct the prediction tree */
   tree* Node = nullptr; // TODO: try to move this to the beginning and see if that improves performance?
   if (Left || Right) {
-    //if (Split == ResolutionSplit) {
-    //  Node = BuildPredTree(Left, Right, Depth, D);
-    //} else if (Split == SpatialSplit) {
+    if (Split == ResolutionSplit) {
+      Node = BuildPredTree(Left, Right, Depth, D);
+    } else if (Split == SpatialSplit) {
       if (Depth > Params.StartResolutionSplit) {
         Node = new (TreePtr++) tree;
         Node->Left  = Left;
@@ -3015,7 +3040,7 @@ BuildTreeIntPredict(
         if (Left ) Node->Count = Left->Count; else Node->Count = 0;
         if (Right) Node->Count += Right->Count;
       }
-    //}
+    }
   }
   if (Depth==Params.StartResolutionSplit && Node!=nullptr) {
     TreePtr = SaveTreePtr; // free memory
@@ -4201,7 +4226,7 @@ START:
       Params.NParticles = ParticlesInt.size();
       if (TreePtrBackup == nullptr) {
         assert(PrevFramePtrBackup == nullptr);
-        TreePtr      = new tree[Params.NParticles * 50];
+        TreePtr      = new tree[Params.NParticles * 20];
         //PrevFramePtr = new tree[Params.NParticles * 8];
         TreePtrBackup      = TreePtr;
         PrevFramePtrBackup = PrevFramePtr;
