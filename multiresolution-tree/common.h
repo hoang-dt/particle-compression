@@ -1345,7 +1345,7 @@ struct arithmetic_coder {
   }
 
   /* Encode a single symbol */
-  void
+  u32
   Encode(const prob<count_t>& P) {
     assert(P.Count > 0);
     code_t Range = CodeHigh - CodeLow + 1;
@@ -1354,6 +1354,7 @@ struct arithmetic_coder {
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
     /* renormalization */
+    u32 B = 0;
     while (true) {
       if (CodeHigh < CodeOneHalf) {
         PutBitsPlusPending(0);
@@ -1371,9 +1372,11 @@ struct arithmetic_coder {
       CodeHigh &= CodeMax; // remove the already shifted bits on the left
       CodeLow <<= 1;
       CodeLow &= CodeMax;
+      ++B;
     }
     assert(CodeHigh <= CodeMax);
     assert(CodeLow <= CodeMax);
+    return B;
   }
 
   void
@@ -1980,7 +1983,7 @@ EncodeUniform(u32 N, u32 V, arithmetic_coder<>* Coder) {
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
 }
 
-INLINE void
+INLINE u32
 EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* Coder) {
   assert(v>=0 && v<=n);
   u32 lo = v == 0 ? 0 : CdfTable[v-1];
@@ -1988,7 +1991,7 @@ EncodeBinomialSmallRange(u32 n, u32 v, const cdf& CdfTable, arithmetic_coder<>* 
   u32 scale = 1 << n;
   REQUIRE(scale == CdfTable[n]);
   prob<u32> prob{lo, hi, CdfTable[n]};
-  Coder->Encode(prob);
+  return Coder->Encode(prob);
 }
 
 INLINE u32
@@ -2095,8 +2098,7 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
     u32 v = u32(c - beg);
     if ( first && n <= BinomialCutoff) {
       assert(!CdfTable.empty());
-      EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
-      return BitCount;
+      return EncodeBinomialSmallRange(n-1, v, CdfTable[n-1], Coder);
     }
     /* compute F(a) and F(b) */
     f64 fa = F(m, s, a);
