@@ -2004,6 +2004,9 @@ DecodeTreeIntBFS(q_item_int Q) {
   //NParticlesGenerated += MyBlock.BBoxes.size();
 }
 
+int Stats[51] = {};
+int CountN[600000] = {};
+
 static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
@@ -2032,11 +2035,13 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
-  i64 P = Mid - Begin;
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
+  i64 P = Mid - Begin;  
+  if (N == 16)
+    ++Stats[P];
+  //if (CellCount-N < N) {
+  //  N = CellCount - N;
+  //  P = CellCountLeft - P;
+  //}
   N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   auto& Stream = GlobalStream;
 #if defined(FORCE_BINOMIAL)
@@ -2877,6 +2882,14 @@ START:
         BuildTreeIntBFS(Q, ParticlesInt);
       } else {
         BuildTreeIntDFS(ParticlesInt, 0, N, Grid, Split, 0, 0);
+        /* following code prints the statistics to compare with true binomial distribution */
+        for (int I = 0; I <= 16; ++I) {
+          printf("%d\n", Stats[I]);
+        }
+        printf("cdf table\n");
+        for (int I = 0; I <= 16; ++I) {
+          printf("%d\n", CdfTable[16][I]);
+        }
       }
       PrevFramePtr = MyNode;
       i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
