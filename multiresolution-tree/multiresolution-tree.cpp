@@ -794,10 +794,10 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-//#define FORCE_BINOMIAL 1
+#define FORCE_BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-#define NORMAL 1
+//#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -2004,8 +2004,7 @@ DecodeTreeIntBFS(q_item_int Q) {
   //NParticlesGenerated += MyBlock.BBoxes.size();
 }
 
-int Stats[51] = {};
-int CountN[600000] = {};
+int BitLength[128] = {};
 
 static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -2036,20 +2035,19 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;  
-  if (N == 16)
-    ++Stats[P];
-  //if (CellCount-N < N) {
-  //  N = CellCount - N;
-  //  P = CellCountLeft - P;
-  //}
+  
+  if (CellCount-N < N) {
+    N = CellCount - N;
+    P = CellCountLeft - P;
+  }
   N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   auto& Stream = GlobalStream;
 #if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
+    BitLength[Depth] += EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
 #else
-  EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
+  BitLength[Depth] += EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
 #endif
   if (Begin+1==Mid && CellCountLeft==1) {
     const auto& G = GridLeft;
@@ -2883,12 +2881,8 @@ START:
       } else {
         BuildTreeIntDFS(ParticlesInt, 0, N, Grid, Split, 0, 0);
         /* following code prints the statistics to compare with true binomial distribution */
-        for (int I = 0; I <= 16; ++I) {
-          printf("%d\n", Stats[I]);
-        }
-        printf("cdf table\n");
-        for (int I = 0; I <= 16; ++I) {
-          printf("%d\n", CdfTable[16][I]);
+        for (int I = 0; I <= 30; ++I) {
+          printf("%d\n", BitLength[I]);
         }
       }
       PrevFramePtr = MyNode;

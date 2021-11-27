@@ -1688,15 +1688,15 @@ BitReverse(uint a) {
 }
 
 /* v is from 0 to n-1 */
-inline void
+inline u32
 EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
   assert(n > 0);
   assert(v < n);
   if (n == 2) {
     Write(Bs, v == 1);
-    return;
+    return 1;    
   } else if (n == 1) {
-    return;
+    return 0;
   }
   u32 l1 = Msb(n);
   u32 l2 = ((1 << l1) == n) ? l1 : l1 + 1;
@@ -1706,15 +1706,19 @@ EncodeCenteredMinimal(u32 v, u32 n, bitstream* Bs) {
     v = BitReverse(v);
     v >>= sizeof(v) * 8 - l2;
     Write(Bs, v, l2);
+    return l2;
   } else if (v >= m + d) {
     v = BitReverse(v - d);
     v >>= sizeof(v) * 8 - l2;
     Write(Bs, v, l2);
+    return l2;
   } else { // middle
     v = BitReverse(v);
     v >>= sizeof(v) * 8 - l1;
     Write(Bs, v, l1);
+    return l1;
   }
+  return 0;
 }
 
 /* This version decodes into v and return the number of bits just consumed */
@@ -2103,8 +2107,7 @@ EncodeRange(f64 m, f64 s, f64 a, f64 b, f64 c,
     if (mid<a || mid>b) // mid can be infinity when (fa+fb) == 0
       mid = a;
     if (a==mid || b==mid || mid!=mid) {// run out of precision
-      EncodeCenteredMinimal(v, n, Bs);
-      return BitCount + log2(n+1); // TODO
+      return BitCount + EncodeCenteredMinimal(v, n, Bs);      
     }
     assert(a<=mid && mid<=b);
     if (c < mid) {
