@@ -604,7 +604,7 @@ static arithmetic_coder<> Coder;
 
 /* generate random particles in a grid of 512^3, with a given density */
 static std::vector<particle_int>
-GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
+GenerateRandomParticlesWithProb(i32 Prob) { // Prob is between 0 and 100
   //REQUIRE(Prob >= 0);
   //REQUIRE(Prob <= 100);
   printf("prob = %d\n", Prob);
@@ -619,6 +619,26 @@ GenerateRandomParticles(i32 Prob) { // Prob is between 0 and 100
           int Stop = 0;
         }
       }
+    }
+  }
+  return Result;
+}
+
+/* generate random particles in a grid of 512^3, with a given density */
+static std::vector<particle_int>
+GenerateRandomParticles(i32 NPoints) { // Prob is between 0 and 100
+  //REQUIRE(Prob >= 0);
+  //REQUIRE(Prob <= 100);  ;
+  std::vector<particle_int> Result;
+  std::vector<bool> Existed(128 * 128 * 128, false);
+  Result.reserve(NPoints);
+  FOR(i32, I, 0, NPoints) {
+    int X = rand() % 128;
+    int Y = rand() % 128;
+    int Z = rand() % 128;
+    if (!Existed[Z * 128 * 128 + Y * 128 + X]) {
+      Existed[Z * 128 * 128 + Y * 128 + X] = true;
+      Result.push_back(particle_int{.Pos = {X, Y, Z}});
     }
   }
   return Result;
@@ -2005,6 +2025,8 @@ DecodeTreeIntBFS(q_item_int Q) {
 }
 
 int BitLength[128] = {};
+double TrueBinomialBitLength[128] = {};
+double TrueUniformBitLength[128] = {};
 
 static void
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -2036,16 +2058,20 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   REQUIRE(CellCountLeft+CellCountRight == CellCount);
   i64 P = Mid - Begin;  
   
-  if (CellCount-N < N) {
-    N = CellCount - N;
-    P = CellCountLeft - P;
-  }
+  //if (CellCount-N < N) {
+  //  N = CellCount - N;
+  //  P = CellCountLeft - P;
+  //}
   N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   auto& Stream = GlobalStream;
 #if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
-    BitLength[Depth] += EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
+    if (N > 1) {
+      BitLength[Depth] += EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
+      TrueBinomialBitLength[Depth] += N - log2_C_n_m(N, P);
+      TrueUniformBitLength[Depth] += log2(N+1);
+    }
 #else
   BitLength[Depth] += EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
 #endif
@@ -2766,6 +2792,14 @@ ReadBinaryFiles(const grid_int& Grid) {
 //}
 int
 main(int Argc, cstr* Argv) {
+
+  //{
+  //  i32 NParticles = 0;
+  //  ToInt(Argv[1], &NParticles);
+  //  auto Particles = GenerateRandomParticles(NParticles);
+  //  WritePLYInt(PRINT("%random-%d.ply", NParticles), Particles.begin(), Particles.end());
+  //  return 0;
+  //}
   srand(1234567);
   doctest::Context context(Argc, Argv);
   context.setAsDefaultForAssertsOutOfTestCases();
@@ -2883,6 +2917,14 @@ START:
         /* following code prints the statistics to compare with true binomial distribution */
         for (int I = 0; I <= 30; ++I) {
           printf("%d\n", BitLength[I]);
+        }
+        printf("-----------------\n");
+        for (int I = 0; I <= 30; ++I) {
+          printf("%f\n", TrueBinomialBitLength[I]);
+        }
+        printf("-----------------\n");
+        for (int I = 0; I <= 30; ++I) {
+          printf("%f\n", TrueUniformBitLength[I]);
         }
       }
       PrevFramePtr = MyNode;

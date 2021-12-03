@@ -1676,6 +1676,25 @@ Finv(double m, double s, double y) {
   return m + s * (erfinv(2 * y - 1) * sqrt2);
 }
 
+inline
+double log2_C_n_m(int n, int m) {
+  assert(n>=m);
+  if (n == m)
+    return 0;
+  double s = 0;
+  for (double i = 1; i <= m; ++i)
+    s += log2((n+1-i)/i);
+  return s;
+}
+
+inline
+double log2_C_n_m_sterling(int n, int m) {
+  assert(n>=m);
+  if (n == m)
+    return 0;
+  return n*log2(n) - m*log2(m) - (n-m)*log2(n-m);
+}
+
 /* Reverse the bits in the input */
 inline uint
 BitReverse(uint a) {
