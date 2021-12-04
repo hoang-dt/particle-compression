@@ -2522,176 +2522,150 @@ static std::vector<i8> CountGrid; // count grid should be half of PredGrid
 static grid_int PredGrid;
 std::vector<vec2i> SRList;
 
+static void
+EncWithContext(context_elem_type& Context, u32 C, i8 T, i8 R) {
+  auto It = Context.find(C);
+  if (It == Context.end()) { // first time seeing the context
+    auto Pair = Context.insert({C, one_context_type()});
+    Pair.first->second[0] = 1;
+    EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
+    EncodeCenteredMinimal(R, T+1, &BlockStream);
+    ++Pair.first->second[R+1];
+  } else {
+    It->second[0] = 1;
+    if (It->second[R+1] == 0) {
+      EncodeWithContext(T, 0, It->second.data(), &Coder);
+      EncodeCenteredMinimal(R, T+1, &BlockStream);
+    } else {
+      EncodeWithContext(T, R+1, It->second.data(), &Coder);
+    }
+    ++It->second[R+1];
+  }
+}
+
+static i8
+DecWithContext(context_elem_type& Context, u32 C, i8 T) {
+  Context[C][0] = 1;
+  i8 S = DecodeWithContext(T, Context[C].data(), &Coder);
+  S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
+  ++Context[C][S+1];
+  return S;
+}
+
+
 static i64 BlockCount = -1;
+static u32 NumNodeAllocated = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
 DecodeTreeIntPredict(
-  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth) 
+  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, 
+  i8 T, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) 
 {
   assert(ResLvl < Params.NLevels);
   assert(Depth <= Params.MaxDepth);
+  i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
-  i8 D = Params.DimsStr[Depth] - 'x';
+  if (CellCount==1) { // one single particle and cell
+    assert(Depth == Params.MaxDepth);
+    //assert(Begin+1 == Mid);
+    tree* Node = new (TreePtr++) tree;
+    Node->Count = 1;
+    ++NumNodeAllocated;
+    ++NParticlesDecoded;
+    bbox_int BBox;
+    BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
+    BBox.Max = BBox.Min + Params.W3;
+    ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    for (int DD = 0; DD < 3; ++DD) {
+      while (BBox.Max[DD] > BBox.Min[DD]+1) {
+        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
+        bool Left = Read(&BlockStream);
+        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
+      }
+    }
+    return Node;
+  }
 
+  i8 D = Params.DimsStr[Depth] - 'x';
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
   i64 CellCountLeft  = i64(GridLeft .Dims3.x) * i64(GridLeft .Dims3.y) * i64(GridLeft .Dims3.z);
   assert(CellCountLeft+CellCountRight == CellCount);
 
-  /* decode to find Mid */
-#if defined(BINOMIAL)
-  i64 N = End - Begin;
-  i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-  i64 Mid = P + Begin;
-  i8 S = 0, R = 0;
-#elif defined(SOTA)
-  i64 N = End - Begin;
-  i64 P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-  i64 Mid = P + Begin;
-  i8 S = 0, R = 0;
-#elif defined(NORMAL)
-  i64 N = End - Begin;
-  i64 Mid = Begin;
-  i64 P = 0;
-  bool Flip = false;
-  if (CellCount-N < N) {
-    Flip = true;
-    N = CellCount - N;
-  }
-  //N = MIN(N, CellCountRight);
-  P = DecodeCenteredMinimal(u32(N+1), &BlockStream);
-  if (Flip) {
-    P = CellCountLeft - P;
-  }
-  Mid = P + Begin;
-  i8 S = 0, R = 0;
-#elif defined(LIGHT_PREDICT)
   i64 Mid = Begin;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
   u32 CIdx = ResLvl*Params.NLevels + Depth;    
   i8 S = 0, R = 0;
-  if (!FullGrid && T>0) { // no prediction, try 1-context
-    ContextTS[CIdx][T][0] = 1;
-    S = DecodeWithContext(T, ContextTS[CIdx][T].data(), &Coder);
-    S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
-    ++ContextTS[CIdx][T][S+1];
-  } else if (FullGrid) {
-    S = T - 1;
-  } else { // if S == 0
-    S = 0;
-    //++ContextTS[CIdx][T][S+1];
+  if (!FullGrid && T>0 && PredNode) { // predict P
+    i64 M=0, K=0, L=0;
+    {
+      M = PredNode->Count;
+      K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
+      L = M - K;
+    }
+    i8 MM = Msb(u64(M)) + 1;
+    i8 KK = Msb(u64(K)) + 1;
+    i8 LL = Msb(u64(L)) + 1;
+    { // decode S
+      u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
+      S = DecWithContext(ContextS[CIdx], C, T);
+    }
+    { // decode R, with S used as part of the context
+      if (FullGrid) {
+        R == T-1;
+      } else if (T==1 && S==1) {
+        R = 0;
+      } else if (S == 0) {
+        R = T;
+      } else {
+        u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
+        R = DecWithContext(ContextR[CIdx], C, T);
+      }
+    } // end decode R
+  } // end !FullGrid && T>0 && PredNode
+  else if (!FullGrid && T>0) { // no prediction, try 1-context
+    { // decode S
+      S = DecWithContext(ContextTS[CIdx], T, T);
+    }
+    { // decode R
+      if (FullGrid) {
+        R == T-1;
+      } else if (T==1 && S==1) {
+        R = 0;
+      } else if (S == 0) {
+        R = T;
+      } else {
+        u32 CR = T*(ContextMax+2) + S;
+        R = DecWithContext(ContextTSR[CIdx], CR, T);
+      }
+    }
   }
-
   if (FullGrid) {
-    R = T - 1;
+    S = R = T - 1;
   } else if (T==1 && S==1) {
     R = 0;
   } else if (S == 0) {
     R = T;
-  } else {
-    u32 CR = T*(ContextMax+2) + S;
-    ContextTSR[CIdx][CR][0] = 1;
-    R = DecodeWithContext(T, ContextTSR[CIdx][CR].data(), &Coder);
-    R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
-    ++ContextTSR[CIdx][CR][R+1];
   }
-#elif defined(PREDICTION) || defined(TIME_PREDICT)
-  //static int SRCounter = 0;
-  i64 Mid = Begin;
-  bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
-  bool EncodeEmptyCells = false;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
-  i8 S = 0, R = 0;
-  //if (!FullGrid && T>0 && PredNode) { // predict P
-  //  i64 M = PredNode->Count;
-  //  i64 K = PredNode->Left?PredNode->Left->Count : M - PredNode->Right->Count;
-  //  if (EncodeEmptyCells)  { K= CellCountLeft - K; M = CellCount - M; }
-  //  i8 MM = Msb(u64(M)) + 1;
-  //  i8 KK = Msb(u64(K)) + 1;
-  //  u32 C = T*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2) + KK;
-  //  ContextS[CIdx][C][0] = 1;
-  //  S = DecodeWithContext(T, ContextS[CIdx][C].data(), &Coder);
-  //  S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
-  //  ++ContextS[CIdx][C][S+1];
-  //  //++ContextTS[CIdx][T][S+1];
-  //} else if (!FullGrid && T>0) { // no prediction, try 1-context
-  //  ContextTS[CIdx][T][0] = 1;
-  //  S = DecodeWithContext(T, ContextTS[CIdx][T].data(), &Coder);
-  //  S = (S==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : S-1;
-  //  ++ContextTS[CIdx][T][S+1];
-  //} else if (FullGrid) {
-  //  S = T - 1;
-  //} else { // if S == 0
-  //  S = 0;
-  //  //++ContextTS[CIdx][T][S+1];
-  //}
-
-  //if (FullGrid) {
-  //  R = T - 1;
-  //} else if (T==1 && S==1) {
-  //  R = 0;
-  //} else if (S == 0) {
-  //  R = T;
-  //} else {
-  //  u32 CR = T*(ContextMax+2) + S;
-  //  ContextR[CIdx][CR][0] = 1;
-  //  R = DecodeWithContext(T, ContextR[CIdx][CR].data(), &Coder);
-  //  R = (R==0) ? DecodeCenteredMinimal(T+1, &BlockStream) : R-1;
-  //  ++ContextR[CIdx][CR][R+1];
-  //}
-#endif
 
   tree* SaveTreePtr = nullptr;
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
     ++BlockCount;
-    //REQUIRE(Split == ResolutionSplit);
-    //FOR_EACH(Context, ContextS ) { Context->clear(); }
-    //FOR_EACH(Context, ContextTS) { Context->clear(); }
-    //FOR_EACH(Context, ContextR ) { Context->clear(); }
     static bool Done = false;
     if (!Done) {
       printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
       Done = true;
     }
   }
-  //const vec2i& SR = SRList[SRCounter++];
-  //assert(S == SR.x);
-  //assert(R == SR.y);
 
   /* recurse */
   tree* Left = nullptr; 
-#if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
-  if (S == 1) {
-#elif defined(PREDICTION)
-  if (S==1 && CellCountLeft==1) {
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Begin+1 == Mid) {
-#endif
-    assert(Depth+1 == Params.MaxDepth);
-    Left = new (TreePtr++) tree;
-    Left->Count = 1;
-    ++NParticlesDecoded;
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridLeft.From3*Params.W3;
-    BBox.Max = BBox.Min + GridLeft.Dims3*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Read(&BlockStream);
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-      }
-    }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
-  } else if (S >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  } else if (Begin < Mid) {
-#endif
-    assert(Depth+1 < Params.MaxDepth);
+  if (S>=1 && CellCountLeft>=1) {
+    //assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
@@ -2703,33 +2677,8 @@ DecodeTreeIntPredict(
 
   /* recurse on the right */
   tree* Right = nullptr;
-#if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
-  if (R == 1) {
-#elif defined(PREDICTION)
-  if (R==1 && CellCountRight==1) {
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  if (Mid+1 == End) {
-#endif
-    assert(Depth+1 == Params.MaxDepth);
-    Right = new (TreePtr++) tree;
-    Right->Count = 1;
-    ++NParticlesDecoded;
-    bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
-    BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Read(&BlockStream);
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M+1;
-      }
-    }
-#if defined(PREDICTION) || defined(LIGHT_PREDICT) ||defined(TIME_PREDICT)
-  } else if (R >= 1) { //recurse
-#elif defined(NORMAL) || defined(SOTA) || defined(BINOMIAL)
-  } else if (Mid < End) {
-#endif
-    assert(Depth+1 < Params.MaxDepth);
+  if (R>=1 && CellCountRight>=1) {
+    //assert(Depth+1 < Params.MaxDepth);
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       Right = DecodeTreeIntPredict(PredNode?PredNode->Right:nullptr, Particles, Mid, End, R, GridRight, NextSplit, ResLvl, Depth+1);
@@ -2739,7 +2688,6 @@ DecodeTreeIntPredict(
 
   /* construct the prediction tree */
   tree* Node = nullptr;
-#if defined(PREDICTION)
   if (Split == ResolutionSplit) {
     Node = BuildPredTree(Left, Right, Depth, D);
     assert(Node && Node->Count>0);
@@ -2757,7 +2705,6 @@ DecodeTreeIntPredict(
     *TreePtr = *Node;
     Node = TreePtr++;
   }
-#endif
 
   return Node;
 }
@@ -2804,11 +2751,11 @@ CountParticles(const grid_int& G) {
   return Count;
 }
 
+
 static i64 BitCount[64] = {}; // count the bit length per level
 static i64 TotalBitCount = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
-static u32 NumNodeAllocated = 0;
 static tree*
 BuildTreeIntPredict(
   const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, 
@@ -2819,7 +2766,6 @@ BuildTreeIntPredict(
   i64 N = End - Begin; // total number of particles
   assert(Msb(u64(N))+1 == T);
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
-  //if (CellCount == N) return nullptr;
   if (CellCount==1) { // one single particle and cell
     assert(Depth == Params.MaxDepth);
     //assert(Begin+1 == Mid);
@@ -2833,8 +2779,6 @@ BuildTreeIntPredict(
     ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        //REQUIRE(BBox.Min[DD] <= Particles[Begin].Pos[DD]);
-        //REQUIRE(BBox.Max[DD] >= Particles[Begin].Pos[DD]);
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Particles[Begin].Pos[DD] < M;
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
@@ -2885,75 +2829,11 @@ BuildTreeIntPredict(
     i8 MM = Msb(u64(M)) + 1;
     i8 KK = Msb(u64(K)) + 1;
     i8 LL = Msb(u64(L)) + 1;
-    u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
     { // encode S
-      auto It = ContextS[CIdx].find(C);
-      if (It == ContextS[CIdx].end()) {
-        auto Pair = ContextS[CIdx].insert({C, one_context_type()});
-        Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-        //EncodeCenteredMinimal(S, T+1, &BlockStream);
-        EncodeUniform(T, S, &Coder);
-        ++Pair.first->second[S+1];
-      } else {
-        It->second[0] = 1;
-        if (It->second[S+1] == 0) {
-          EncodeWithContext(T, 0, It->second.data(), &Coder);
-          //EncodeCenteredMinimal(S, T+1, &BlockStream);
-          EncodeUniform(T, S, &Coder);
-        } else {
-          EncodeWithContext(T, S+1, It->second.data(), &Coder);
-        }
-        ++It->second[S+1];
-      }
-    }
-    C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
-    { // encode R
-      auto It = ContextR[CIdx].find(C);
-      if (It == ContextR[CIdx].end()) {
-        auto Pair = ContextR[CIdx].insert({C, one_context_type()});
-        Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-        //EncodeCenteredMinimal(R, T+1, &BlockStream);
-        EncodeUniform(T, R, &Coder);
-        ++Pair.first->second[R+1];
-      } else {
-        It->second[0] = 1;
-        if (It->second[R+1] == 0) {
-          EncodeWithContext(T, 0, It->second.data(), &Coder);
-          //EncodeCenteredMinimal(R, T+1, &BlockStream);
-          EncodeUniform(T, R, &Coder);
-        } else {
-          EncodeWithContext(T, R+1, It->second.data(), &Coder);
-        }
-        ++It->second[R+1];
-      }
-    }
-  } else 
-  if (!FullGrid && T>0) { // no prediction, try 1-context
-    { // encode S
-      auto It = ContextTS[CIdx].find(T);
-      if (It == ContextTS[CIdx].end()) {
-        auto Pair = ContextTS[CIdx].insert({T, one_context_type()});
-        Pair.first->second[0] = 1;
-        EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
-        //EncodeCenteredMinimal(S, T+1, &BlockStream);
-        EncodeUniform(T, R, &Coder);
-        ++Pair.first->second[S+1];
-      } else {
-        It->second[0] = 1;
-        if (It->second[S+1] == 0) {
-          EncodeWithContext(T, 0, It->second.data(), &Coder);
-          //EncodeCenteredMinimal(S, T+1, &BlockStream);
-          EncodeUniform(T, S, &Coder);
-        } else {
-          EncodeWithContext(T, S+1, It->second.data(), &Coder);
-        }
-        ++It->second[S+1];
-      }
+      u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2) + LL;
+      EncWithContext(ContextS[CIdx], C, T, S);
     }
     { // encode R
-      u32 CR = T*(ContextMax+2) + S;
       if (FullGrid) {
         assert(R == T-1);
       } else if (T==1 && S==1) {
@@ -2961,25 +2841,24 @@ BuildTreeIntPredict(
       } else if (S == 0) {
         assert(R == T);
       } else {
-        auto It = ContextTSR[CIdx].find(CR);
-        if (It == ContextTSR[CIdx].end()) {
-          auto Pair = ContextTSR[CIdx].insert({CR, one_context_type()});
-          Pair.first->second[0] = 1;
-          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
-          //EncodeCenteredMinimal(R, T+1, &BlockStream);
-          EncodeUniform(T, R, &Coder);
-          ++Pair.first->second[R+1];
-        } else {
-          It->second[0] = 1;
-          if (It->second[R+1] == 0) {
-            EncodeWithContext(T, 0, It->second.data(), &Coder);
-            //EncodeCenteredMinimal(R, T+1, &BlockStream);
-            EncodeUniform(T, R, &Coder);
-          } else {
-            EncodeWithContext(T, R+1, It->second.data(), &Coder);
-          }
-          ++It->second[R+1];
-        }
+        u32 C = T*(ContextMax+2)*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + MM*(ContextMax+2)*(ContextMax+2)*(ContextMax+2) + KK*(ContextMax+2)*(ContextMax+2) + (LL*ContextMax+2) + S;
+        EncWithContext(ContextR[CIdx], C, T, R);
+      }
+    }
+  } else if (!FullGrid && T>0) { // no prediction, try 1-context
+    { // encode S
+      EncWithContext(ContextTS[CIdx], T, T, S);
+    }
+    { // encode R
+      if (FullGrid) {
+        assert(R == T-1);
+      } else if (T==1 && S==1) {
+        assert(R == 0);
+      } else if (S == 0) {
+        assert(R == T);
+      } else {
+        u32 CR = T*(ContextMax+2) + S;
+        EncWithContext(ContextTSR[CIdx], CR, T, R);
       }
     }
   }
@@ -2988,6 +2867,11 @@ BuildTreeIntPredict(
   if (Depth == Params.StartResolutionSplit) { // beginning of block
     SaveTreePtr = TreePtr;
     ++BlockCount;
+    static bool Done = false;
+    if (!Done) {
+      printf("grid dims is %d %d %d\n", Grid.Dims3.x, Grid.Dims3.y, Grid.Dims3.z);
+      Done = true;
+    }
   }
 
   /* recurse */
@@ -4347,6 +4231,7 @@ START:
     printf("Nodes with more particles count = %lld\n", NodesWithMoreParticlesCount);
   /* ---------------- DECODING ------------------*/
   } else if (Params.Action == action::Decode) { /* decoding */
+    printf("--------------- Decoding ---------------\n");
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
     if (!OptVal(Argc, Argv, "--out", &Params.OutFile)) EXIT_ERROR("missing --out");
     ReadMetaFile(PRINT("%s.idx", Params.InFile));
@@ -4364,12 +4249,14 @@ START:
 
     printf("%s\n", Params.DimsStr);
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
-    ContextS.resize((Params.MaxDepth+1)*Params.NLevels);
-    ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
-    ContextTSR.resize((Params.MaxDepth+1)*Params.NLevels);
-    FOR_EACH (C, ContextS) { C->reserve(512); }
+    /*ContextS .clear();*/ ContextS .resize((Params.MaxDepth+1)*Params.NLevels);
+    /*ContextS .clear();*/ ContextR .resize((Params.MaxDepth+1)*Params.NLevels);
+    /*ContextTS.clear();*/ ContextTS.resize((Params.MaxDepth+1)*Params.NLevels);
+    /*ContextR .clear();*/ ContextTSR .resize((Params.MaxDepth+1)*Params.NLevels);
+    FOR_EACH (C, ContextS ) { C->reserve(512); }
+    FOR_EACH (C, ContextR ) { C->reserve(512); }
     FOR_EACH (C, ContextTS) { C->reserve(512); }
-    FOR_EACH (C, ContextTSR) { C->reserve(512); }
+    FOR_EACH (C, ContextTSR ) { C->reserve(512); }
     printf("baseheight = %d maxheight = %d\n", Params.BaseHeight, Params.MaxHeight);
     FILE* Fp = fopen(PRINT("%s.bin", Params.InFile), "rb");
     FSEEK(Fp, 0, SEEK_END);
