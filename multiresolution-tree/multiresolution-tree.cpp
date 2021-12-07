@@ -1302,7 +1302,7 @@ CheckSame(
   return true;
 }
 
-static f32
+  static f32
 Error3( 
   const std::vector<particle_int>& Particles1, const std::vector<particle_int>& Particles2, const vec3i& Dims3)
 {
@@ -1325,9 +1325,15 @@ Error3(
     vec3i Diff = Q - P->Pos;
     Err += Diff.x * Diff.x + Diff.y * Diff.y + Diff.z * Diff.z;
   }
+  auto BBox = ComputeBoundingBox(Particles2);
+  auto D3 = BBox.Max - BBox.Min;
+  auto M = MAX(D3.x, D3.y);
+  M = MAX(M, D3.z);
   int NDims = Dims3.z == 1 ? 2 : 3;
   Err = std::sqrt(Err / (NDims * Particles2.size()));
-  return Err;
+  double Psnr = 20 * log10(M/Err);
+  printf("%f\n", Psnr);
+  return f32(Err);
 }
 
 static f32
@@ -4288,7 +4294,7 @@ START:
     split_type Split = SpatialSplit;
     if (Params.NLevels>1 && Params.StartResolutionSplit==0)
       Split = ResolutionSplit;
-    TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
+    TreePtr      = new tree[Params.NParticles * 20];
     auto TreePtrBackup = TreePtr;
     ParticlesOut.reserve(N);
     tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesOut, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
@@ -4297,7 +4303,15 @@ START:
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesOut.begin(), ParticlesOut.end());
+    vec3f Scale3(30.0, 30.0, 30.0);
+    vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
+    Scale3.y *= (Dims3.y/Dims3.x);
+    Scale3.z *= (Dims3.z/Dims3.x);
+    Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    if (OptExists(Argc, Argv, "--ospray")) 
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticlesOut.begin(), ParticlesOut.end(), Params.BBoxInt.Min, Scale3);
+    else
+      WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesOut.begin(), ParticlesOut.end());
     printf("num particles decoded = %lld\n", ParticlesOut.size());
     printf("num particles generated = %lld\n", NParticlesGenerated);
   //================= ERROR =========================
@@ -4307,13 +4321,14 @@ START:
     if (!OptVal(Argc, Argv, "--dims", &Params.Dims3)) EXIT_ERROR("missing --dims");
     auto Particles1 = ReadParticlesInt(Params.InFile);
     auto Particles2 = ReadParticlesInt(Params.OutFile);
-    //f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
+    f32 Err1 = Error3(Particles1, Particles2, Params.Dims3);
     //f32 Err2 = Error3(Particles2, Particles1, Params.Dims3);
     //printf("error = %f %f %f\n", Err1, Err2, MAX(Err1, Err2));
-    if (!CheckSame(Particles1, Particles2))
-      printf("not same\n");
-    else
-      printf("same\n");
+    printf("error = %f\n", Err1);
+    //if (!CheckSame(Particles1, Particles2))
+    //  printf("not same\n");
+    //else
+    //  printf("same\n");
   //================= CONVERT =======================
   } else if (Params.Action == action::Convert) {
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
