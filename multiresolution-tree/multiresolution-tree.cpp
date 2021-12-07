@@ -55,7 +55,7 @@ ComputeBoundingBox(const std::vector<particle_int>& Particles) {
 #define LEVEL(BlockId) ((BlockId) >> 60)
 
 std::unordered_map<u64, std::vector<i64>> ParticlesLODs;
-std::vector<particle_int> ParticleOuts;
+std::vector<particle_int> ParticlesOut;
 
 /* Bit set stuffs */
 using word = u64;
@@ -2555,6 +2555,7 @@ DecWithContext(context_elem_type& Context, u32 C, i8 T) {
 
 static i64 BlockCount = -1;
 static u32 NumNodeAllocated = 0;
+static i32 BytesDecoded = 0;
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
@@ -2576,13 +2577,15 @@ DecodeTreeIntPredict(
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
-    ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
         bool Left = Read(&BlockStream);
         if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
       }
+    }
+    if (Size(Coder.BitStream) + Size(BlockStream) < BytesDecoded) {
+      ParticlesOut.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     }
     return Node;
   }
@@ -2776,7 +2779,7 @@ BuildTreeIntPredict(
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
     BBox.Max = BBox.Min + Params.W3;
-    ParticleOuts.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+    ParticlesOut.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]+1) {
         i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
@@ -4200,7 +4203,7 @@ START:
       }
     }
     if (OptVal(Argc, Argv, "--coding_level", &Params.CodingLevel))
-      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticleOuts.begin(), ParticleOuts.end(), Params.BBoxInt.Min, Scale3);
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticlesOut.begin(), ParticlesOut.end(), Params.BBoxInt.Min, Scale3);
     WriteMetaFile(Params, PRINT("%s.idx", Params.OutFile));
     printf("%s\n", Params.DimsStr);
     i64 BlockStreamSize = Size(BlockStream) + Size(Coder.BitStream);
@@ -4246,6 +4249,7 @@ START:
     OptVal(Argc, Argv, "--max_level", &Params.MaxLevel);
     OptVal(Argc, Argv, "--max_num_blocks", &Params.MaxNBlocks);
     OptVal(Argc, Argv, "--max_subsampling", &Params.MaxParticleSubSampling);
+    OptVal(Argc, Argv, "--bytes", &BytesDecoded);
 
     printf("%s\n", Params.DimsStr);
     Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
@@ -4286,15 +4290,15 @@ START:
       Split = ResolutionSplit;
     TreePtr = new tree[Params.NParticles * 2]; // TODO: avoid this
     auto TreePtrBackup = TreePtr;
-    ParticlesInt.reserve(N);
-    tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesInt, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
+    ParticlesOut.reserve(N);
+    tree* MyNode = DecodeTreeIntPredict(nullptr, ParticlesOut, 0, N, Msb(u64(N))+1, Grid, Split, 0, 0);
     delete[] TreePtrBackup;
     uint64_t dec_clocks = __rdtsc() - dec_start_time;
     double dec_time = timer() - start_time;
     printf("%lld clocks, %f s\n", dec_clocks, dec_time);
     printf("consumed stream size = %lld\n", Size(BlockStream));
-    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end());
-    printf("num particles decoded = %lld\n", NParticlesDecoded);
+    WritePLYInt(PRINT("%s.ply", Params.OutFile), ParticlesOut.begin(), ParticlesOut.end());
+    printf("num particles decoded = %lld\n", ParticlesOut.size());
     printf("num particles generated = %lld\n", NParticlesGenerated);
   //================= ERROR =========================
   } else if (Params.Action == action::Error) {
