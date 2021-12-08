@@ -2864,7 +2864,7 @@ DecodeTreeIntPredict(
   return Node;
 }
 static i64 BitCountPerLevel[64] = {}; // count the bit length per level
-static i64 TotalBitCount = 0;
+static i64 TotalByteCount = 0;
 
 /* At certain depth, we split the node using the Resolution split into a number of levels, then use the
 low-resolution nodes to predict the values for finer-resolution nodes */
@@ -3196,7 +3196,7 @@ BuildTreeIntPredict(
   }
 
   if (Split == ResolutionSplit) {
-    BitCountPerLevel[ResLvl + 1] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
+    BitCountPerLevel[ResLvl + 1] += Size(BlockStream) + Size(Coder.BitStream) - TotalByteCount;
   }
 
   /* recurse on the right */
@@ -3259,8 +3259,8 @@ BuildTreeIntPredict(
   }
 
   if (Depth == Params.StartResolutionSplit) {
-    BitCountPerLevel[ResLvl] += Size(BlockStream) + Size(Coder.BitStream) - TotalBitCount;
-    TotalBitCount = Size(Coder.BitStream) + Size(BlockStream); // "reset" TotalBitCount
+    BitCountPerLevel[ResLvl] += Size(BlockStream) + Size(Coder.BitStream) - TotalByteCount;
+    TotalByteCount = Size(Coder.BitStream) + Size(BlockStream); // "reset" TotalByteCount
   }
 
   /* construct the prediction tree */
@@ -4350,10 +4350,10 @@ DecodeTreeIntBFS(q_item_int Q) {
   }
 }
 
-static double BitCount[64] = {}; // count the code size per level
+static double ByteCount[64] = {}; // count the code size per level
 
 static std::vector<particle_int> ParticlesOut;
-static int ResLvlMin = 0;
+static int ResLvlMin = 15;
 static tree*
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
@@ -4377,8 +4377,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
       }
     }
     if (ResLvl >= ResLvlMin) {
-      ParticlesOut.push_back(particle_int{.Pos = {.Min = BBox.Min, .Max = BBox.Max}});
-
+      ParticlesOut.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     }
     return nullptr;
   }
@@ -4427,7 +4426,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 
   /* count the bit size of the the subtree */
   if (Split == ResolutionSplit) {
-    BitCount[ResLvl + 1] += Size(BlockStream) +  - TotalBitCount;
+    ByteCount[ResLvl + 1] += Size(BlockStream) +  - TotalByteCount;
   }
 
   tree* Right = nullptr;
@@ -4441,8 +4440,8 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   }
 
   if (Depth == Params.StartResolutionSplit) {
-    BitCount[ResLvl] += Size(BlockStream) - TotalBitCount;
-    TotalBitCount = Size(BlockStream); // "reset" TotalBitCount
+    ByteCount[ResLvl] += Size(BlockStream) - TotalByteCount;
+    TotalByteCount = Size(BlockStream); // "reset" TotalByteCount
   }
 
   tree* Node = nullptr;
@@ -5353,7 +5352,7 @@ START:
       } else if (Dfs) {
         BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
         for (int I = 0; I <= Params.MaxDepth; ++I) {
-          printf("%f\n", BitCount[I]/8);
+          printf("%d\n", ByteCount[I]);
         }
         printf("-----------------------------\n");
       } else if (Bfs) {
@@ -5385,6 +5384,7 @@ START:
         printf("level %d size %d\n", I, BitCountPerLevel[I]);
       }
     }
+    WriteVTU("out.vtu", ParticlesOut.begin(), ParticlesOut.end());
     printf("block count = %lld\n", BlockCount);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
