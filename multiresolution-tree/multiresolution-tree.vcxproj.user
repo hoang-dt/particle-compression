@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments> --action encode --in detonation_180m-dedup.vtu --name detonation_180m-bfs --ndims 3 --nlevels 1 --start_depth 0 --height 0 --accuracy 0 --bfs                                     </LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action encode --in dancer-dedup.ply --name dancer-dfs-test --ndims 3 --nlevels 2 --start_depth 0 --dfs</LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>

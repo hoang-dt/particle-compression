@@ -1202,15 +1202,15 @@ ComputeGrid(
   REQUIRE(Begin < End); // this cannot be a leaf node
   REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  //vec3i BBoxExt3 = BBox.Max - BBox.Min;
-  //D = Depth % Params.NDims;
-  //if (BBoxExt3[D] <= 1) {
-  //  D = (D+1) % Params.NDims;
-  //  if (BBoxExt3[D] <= 1) {
-  //    D = (D+1) % Params.NDims;
-  //    REQUIRE(BBoxExt3[D] > 1);
-  //  }
-  //}
+  /*vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  D = ((Depth+1) % Params.NDims);
+  if (BBoxExt3[D] <= 1) {
+    D = (D+1) % Params.NDims;
+    if (BBoxExt3[D] <= 1) {
+      D = (D+1) % Params.NDims;
+      REQUIRE(BBoxExt3[D] > 1);
+    }
+  }*/
   if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
     D = Depth % Params.NDims;
   } else { // take the largest dimension
@@ -4352,15 +4352,25 @@ DecodeTreeIntBFS(q_item_int Q) {
 
 static double ByteCount[64] = {}; // count the code size per level
 
+static std::vector<particle_int> ParticlesOut1;
+static std::vector<particle_int> ParticlesOut2;
 static std::vector<particle_int> ParticlesOut;
 static int ResLvlMin = 15;
 static tree*
 BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
-  const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
+  const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth, int Partition) {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
 
+  if (Partition == 1) {
+    ParticlesOut1.insert(ParticlesOut1.begin(), Particles.begin() + Begin, Particles.begin() + End);
+    return nullptr;
+  }
+  else if (Partition == 2) {
+    ParticlesOut2.insert(ParticlesOut2.begin(), Particles.begin() + Begin, Particles.begin() + End);
+    return nullptr;
+  }
   if (CellCount == 1) {
     bbox_int BBox;
     BBox.Min = Params.BBoxInt.Min + Grid.From3*Params.W3;
@@ -4377,7 +4387,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
       }
     }
     if (ResLvl >= ResLvlMin) {
-      ParticlesOut.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
+      //ParticlesOut.push_back(particle_int{.Pos=(BBox.Min+BBox.Max)/2});
     }
     return nullptr;
   }
@@ -4399,6 +4409,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     };
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
   }
+  
   auto GridLeft  = SplitGrid(Grid, D, Split, side::Left );
   auto GridRight = SplitGrid(Grid, D, Split, side::Right);
   i64 CellCountRight = i64(GridRight.Dims3.x) * i64(GridRight.Dims3.y) * i64(GridRight.Dims3.z);
@@ -4412,16 +4423,19 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   //N = MIN(N, CellCountRight); // this only makes sense if the grid dimension is non power of two (so that the right can have fewer cells than the left)
   EncodeCenteredMinimal(u32(P), u32(N+1), &BlockStream);
   //BitCount[Depth] += 2; // one bit for the left and one bit for the right
-
+  
   tree* Left = nullptr;
   if (Begin < Mid && CellCountLeft >= 1) {
     split_type NextSplit = 
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
-      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
+    int NewPartition = Partition * 2 + 1;
+    if (NewPartition >= 6) NewPartition = 6;
+    if (Split == SpatialSplit) {
+      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1, NewPartition);
+    } else if (Split == ResolutionSplit) {
+      Left = BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1, NewPartition);
+    }
   }
 
   /* count the bit size of the the subtree */
@@ -4433,10 +4447,13 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   if (Mid < End && CellCountRight >= 1) {
     // TODO: handle the case where we want to do resolution split on the right as well
     split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
-    if (Split == SpatialSplit)
-      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
-    else if (Split == ResolutionSplit)
-      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
+    int NewPartition = Partition * 2 + 2;
+    if (NewPartition >= 6) NewPartition = 6;
+    if (Split == SpatialSplit) {
+      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1, NewPartition);
+    } else if (Split == ResolutionSplit) {
+      Right = BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1, NewPartition);
+    }
   }
 
   if (Depth == Params.StartResolutionSplit) {
@@ -5350,7 +5367,7 @@ START:
       if (Pred) {
         MyNode = BuildTreeIntPredict(TimeStep==0?nullptr:PrevFramePtr, ParticlesInt, 0, ParticlesInt.size(), T, Grid, Split, 0, 0);
       } else if (Dfs) {
-        BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0);
+        BuildTreeIntDFS(ParticlesInt, 0, ParticlesInt.size(), Grid, Split, 0, 0, 0);
         for (int I = 0; I <= Params.MaxDepth; ++I) {
           printf("%d\n", ByteCount[I]);
         }
@@ -5384,7 +5401,14 @@ START:
         printf("level %d size %d\n", I, BitCountPerLevel[I]);
       }
     }
-    WriteVTU("out.vtu", ParticlesOut.begin(), ParticlesOut.end());
+    vec3f Scale3(30.0, 30.0, 30.0);
+    vec3f Dims3 = vec3f(Params.BBoxInt.Max-Params.BBoxInt.Min);
+    Scale3.y *= (Dims3.y/Dims3.x);
+    Scale3.z *= (Dims3.z/Dims3.x);
+    Scale3 = Scale3 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
+    WriteXYZ(PRINT("%s1.xyz", Params.OutFile), ParticlesOut1.begin(), ParticlesOut1.end(), Params.BBoxInt.Min, Scale3);
+    WriteXYZ(PRINT("%s2.xyz", Params.OutFile), ParticlesOut2.begin(), ParticlesOut2.end(), Params.BBoxInt.Min, Scale3);
+    //WriteVTU("out.vtu", ParticlesOut.begin(), ParticlesOut.end());
     printf("block count = %lld\n", BlockCount);
     printf("Residual code length normal = %lld\n", i64((ResidualCodeLengthNormal+7)/8));
     printf("Residual code length gamma  = %lld\n", i64((ResidualCodeLengthGamma+7)/8));
