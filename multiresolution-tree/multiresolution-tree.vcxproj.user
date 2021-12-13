@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments> --action decode --in detonation-1b-adaptive --out detonation_1b-adaptive --adaptive --budget 4000000</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--action encode --in crack-dedup.ply --dfs --name crack-dfs-binomial --ndims 3 --nlevels 1 --start_depth 0</LocalDebuggerCommandArguments>
     <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>

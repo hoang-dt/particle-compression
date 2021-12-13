@@ -795,10 +795,10 @@ static u32* RansPtr = nullptr;
 //#define RESOLUTION_ALWAYS 1
 //#define RESOLUTION_PREDICT 1
 //#define BINOMIAL 1
-//#define FORCE_BINOMIAL 1
+#define FORCE_BINOMIAL 1
 //#define PREDICTION  1
 //#define TIME_PREDICT 1
-#define NORMAL 1
+//#define NORMAL 1
 //#define SOTA 1
 //#define LIGHT_PREDICT 1
 static std::vector<i32> Residuals;
@@ -2183,6 +2183,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
 #if defined(FORCE_BINOMIAL)
     f64 Mean = f64(N) / 2; // mean
     f64 StdDev = sqrt(f64(N)) / 2; // standard deviation
+    GrowIfTooFull(&Stream.Coder.BitStream);
     EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
 #else
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
