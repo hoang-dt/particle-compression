@@ -262,7 +262,7 @@ GenerateParticlesPerNode(i64 N, const grid_int& Grid, std::vector<particle_int>*
   static std::vector<vec3i> GridPoints; // stores the grid points that contain the (to be generated) particles
   //GridPoints.resize(N);
   vec3i Dims3 = Grid.Dims3;
-  
+
   i64 NElems = N;
   i64 I = 0;
   FOR(i32, I, 0, N) {
@@ -315,7 +315,7 @@ GenerateParticlesPerNode(i64 N, const grid& Grid, const vec3f& W3) {
   GridPoints.resize(N);
   //vec3f W3 = (Params.BBox.Max - Params.BBox.Min) / vec3f(Params.Dims3);
   vec3f Dims3 = Grid.Dims3;
-  
+
   i64 NElems = N;
   i64 I = 0;
 //  f32 M = f32(Dims3.z) * f32(Dims3.y) * f32(Dims3.x);
@@ -351,13 +351,13 @@ struct Range {
 
 static vec3i
 ComputeGrid(
-  std::vector<particle_int>* Particles, const bbox_int& BBox, 
+  std::vector<particle_int>* Particles, const bbox_int& BBox,
   i64 Begin, i64 End, i8 Depth, str DimsStr)
 {
   REQUIRE(Begin < End); // this cannot be a leaf node
   REQUIRE(Params.StartResolutionSplit % Params.NDims == 0);
   i8 D = 0;
-  vec3i BBoxExt3 = BBox.Max - BBox.Min;
+  /*vec3i BBoxExt3 = BBox.Max - BBox.Min;
   D = Depth % Params.NDims;
   if (BBoxExt3[D] <= 1) {
     D = (D+1) % Params.NDims;
@@ -365,19 +365,19 @@ ComputeGrid(
       D = (D+1) % Params.NDims;
       REQUIRE(BBoxExt3[D] > 1);
     }
+  }*/
+  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
+  if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
+    D = Depth % Params.NDims;
+  } else { // take the largest dimension
+    if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
+      D = 0;
+    else
+    if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
+      D = 1;
+    else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
+      D = 2;
   }
-  //if (Depth < Params.StartResolutionSplit) { // cycle through x/y/z when it's not resolution split yet
-  //  D = Depth % Params.NDims;
-  //} else { // take the largest dimension
-  //  vec3i BBoxExt3 = BBox.Max - BBox.Min + 1;
-  //  if (BBoxExt3.x>=BBoxExt3.y && BBoxExt3.x>=BBoxExt3.z)
-  //    D = 0;
-  //  else
-  //  if (BBoxExt3.y>=BBoxExt3.z && BBoxExt3.y>=BBoxExt3.x)
-  //    D = 1;
-  //  else if (BBoxExt3.z>=BBoxExt3.y && BBoxExt3.z>=BBoxExt3.x)
-  //    D = 2;
-  //}
   DimsStr[Depth] = 'x' + D;
   //assert((BBoxExt3[D]&1) == 0);
   i32 Middle = (BBox.Min[D]+BBox.Max[D]) >> 1;
@@ -445,7 +445,7 @@ Handler(const doctest::AssertData& ad) {
 
 
 static bool
-CheckSame( 
+CheckSame(
   std::vector<particle_int>& Particles1, std::vector<particle_int>& Particles2)
 {
   if (Particles2.size() != Particles1.size())
@@ -465,7 +465,7 @@ CheckSame(
 }
 
 static f32
-Error3( 
+Error3(
   const std::vector<particle_int>& Particles1, const std::vector<particle_int>& Particles2, const vec3i& Dims3)
 {
   printf("error3\n");
@@ -499,7 +499,7 @@ Error3(
 }
 
 static f32
-Error3( 
+Error3(
   const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
 {
   std::vector<point<float, 3>> Pos(Particles1.size());
@@ -528,7 +528,7 @@ Error3(
 /* NOTE: Particles2 should be the reference */
 static f32
 Error(
-  const bbox& BBox, 
+  const bbox& BBox,
   const std::vector<particle>& Particles1, const std::vector<particle>& Particles2, const vec3i& Dims3)
 {
   //bbox BBox = ComputeBoundingBox(Particles1);
@@ -536,8 +536,8 @@ Error(
   std::vector<vec3f> Grid(Dims3.x * Dims3.y * Dims3.z, vec3f(NAN));
   FOR_EACH(P, Particles1) {
     vec3i Coord{
-      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
-      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1),
+      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1),
       MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
     i32 Idx = Coord.z * (Dims3.x * Dims3.y) + Coord.y * (Dims3.x) + Coord.x;
     assert(Grid[Idx].x != Grid[Idx].x);
@@ -546,8 +546,8 @@ Error(
   float Err = 0;
   FOR_EACH(P, Particles2) {
     vec3i Coord{
-      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1), 
-      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1), 
+      MIN(int((P->Pos.x - BBox.Min.x) / W3.x), Dims3.x - 1),
+      MIN(int((P->Pos.y - BBox.Min.y) / W3.y), Dims3.y - 1),
       MIN(int((P->Pos.z - BBox.Min.z) / W3.z), Dims3.z - 1)};
     i32 MaxD = MAX(Dims3.z, MAX(Dims3.x, Dims3.y)) / 2;
     for (i32 D = 0; D < MaxD; ++D) {
@@ -661,7 +661,7 @@ static f64 CodeLengthPerLevel[32] = {};
 static tree* TreePtr = nullptr, *TreePtrBackup = nullptr;
 static tree* PrevFramePtr = nullptr, *PrevFramePtrBackup = nullptr;
 
-/* Node and RefNode should be at the same relative position on the trees 
+/* Node and RefNode should be at the same relative position on the trees
 * FirstBranch = the first split
 * LastBranch  = the last split so far */
 enum class branch{ Left, Right };
@@ -774,14 +774,14 @@ CountCodeLength(const std::vector<i32> ResidualTree) {
   return i64((CodeLength + 7) / 8);
 }
 
-static vec2i 
+static vec2i
 IndexRange(int level, int nlevels, int nleaves) {
   int begin = Pow(2, level) - 1;
   int end = level+1<nlevels ? begin*2+1 : begin+nleaves;
   return vec2i{begin, end};
 }
 
-static std::vector<debug_prob> DebugProbs; 
+static std::vector<debug_prob> DebugProbs;
 static i64 BinomialCodeSize = 0;
 static f64 RangeCodeSize    = 0;
 static i64 UniformCodeSize1 = 0;
@@ -838,8 +838,8 @@ static i64 BlockCount = 0;
 low-resolution nodes to predict the values for finer-resolution nodes */
 static tree*
 DecodeTreeIntPredict(
-  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid, 
-  split_type Split, i8 ResLvl, i8 Depth) 
+  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, i8 T, const grid_int& Grid,
+  split_type Split, i8 ResLvl, i8 Depth)
 {
   assert(ResLvl < Params.NLevels);
   assert(Depth <= Params.MaxDepth);
@@ -883,7 +883,7 @@ DecodeTreeIntPredict(
   i64 Mid = Begin;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
   i8 S = 0, R = 0;
   if (!FullGrid && T>0) { // no prediction, try 1-context
     ContextTS[CIdx][T][0] = 1;
@@ -915,7 +915,7 @@ DecodeTreeIntPredict(
   i64 Mid = Begin;
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
   i8 S = 0, R = 0;
   //if (!FullGrid && T>0 && PredNode) { // predict P
   //  i64 M = PredNode->Count;
@@ -975,7 +975,7 @@ DecodeTreeIntPredict(
   //assert(R == SR.y);
 
   /* recurse */
-  tree* Left = nullptr; 
+  tree* Left = nullptr;
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (S == 1) {
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
@@ -1003,7 +1003,7 @@ DecodeTreeIntPredict(
   } else if (Begin < Mid) {
 #endif
     assert(Depth+1 < Params.MaxDepth);
-    split_type NextSplit = 
+    split_type NextSplit =
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
@@ -1026,7 +1026,7 @@ DecodeTreeIntPredict(
     Right->Count = 1;
     ++NParticlesDecoded;
     bbox_int BBox;
-    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3; 
+    BBox.Min = Params.BBoxInt.Min + GridRight.From3*Params.W3;
     BBox.Max = BBox.Min + GridRight.Dims3*Params.W3 - 1;
     for (int DD = 0; DD < 3; ++DD) {
       while (BBox.Max[DD] > BBox.Min[DD]) {
@@ -1078,7 +1078,7 @@ low-resolution nodes to predict the values for finer-resolution nodes */
 static u32 NumNodeAllocated = 0;
 static tree*
 BuildTreeIntPredict(
-  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End, 
+  const tree* PredNode, std::vector<particle_int>& Particles, i64 Begin, i64 End,
   i8 T, const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth)
 {
   assert(ResLvl < Params.NLevels);
@@ -1146,7 +1146,7 @@ BuildTreeIntPredict(
 #elif defined(LIGHT_PREDICT)
   bool FullGrid = (T>0) && (1<<(T-1))==CellCount;
   bool EncodeEmptyCells = false;
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
   //u32 CIdx = Depth;
   if (!FullGrid && T>0) { // no prediction, try 1-context
     if (ContextTS[CIdx][T][S+1] == 0) {
@@ -1197,7 +1197,7 @@ BuildTreeIntPredict(
   //  REQUIRE(T >= S);
   //  REQUIRE(T >= R);
   //}
-  u32 CIdx = ResLvl*Params.NLevels + Depth;    
+  u32 CIdx = ResLvl*Params.NLevels + Depth;
   //u32 CIdx = Depth;
   //if (!FullGrid && N>2) {
   //  if (CellCount-N < N) {
@@ -1272,7 +1272,7 @@ BuildTreeIntPredict(
         }
       }
     }
-  } else 
+  } else
   if (!FullGrid && T>0) { // no prediction, try 1-context
     { // encode S
       auto It = ContextTS[CIdx].find(T);
@@ -1308,7 +1308,7 @@ BuildTreeIntPredict(
         if (It == ContextTSR[CIdx].end()) {
           auto Pair = ContextTSR[CIdx].insert({CR, one_context_type()});
           Pair.first->second[0] = 1;
-          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder); 
+          EncodeWithContext(T, 0, Pair.first->second.data(), &Coder);
           //EncodeCenteredMinimal(R, T+1, &BlockStream);
           EncodeUniform(T, R, &Coder);
           ++Pair.first->second[R+1];
@@ -1347,7 +1347,7 @@ BuildTreeIntPredict(
   }
 
   /* recurse */
-  tree* Left = nullptr; 
+  tree* Left = nullptr;
 #if defined(LIGHT_PREDICT) || defined(TIME_PREDICT)
   if (S == 1) {
 #elif defined(PREDICTION) || defined(RESOLUTION_PREDICT)
@@ -1394,7 +1394,7 @@ BuildTreeIntPredict(
 #if defined(RESOLUTION_ALWAYS)
     split_type NextSplit = (Depth+1>=Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
 #else
-    split_type NextSplit = 
+    split_type NextSplit =
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
 #endif
@@ -1571,7 +1571,7 @@ struct heap_priority {
   //i64 TotalNParticles = 0; // total of particles on the current level
   //i64 ParticleCount = 0; // number of particles read so far
   i64 BlockId = 0;
-  INLINE bool operator<(const heap_priority& Other) const { 
+  INLINE bool operator<(const heap_priority& Other) const {
     if (Level == Other.Level) {
       if (f64(NParticles)/f64(TotalNParticlesOnLevel) == f64(Other.NParticles)/f64(Other.TotalNParticlesOnLevel)){
       //if (NParticles == Other.NParticles) {
@@ -1627,8 +1627,8 @@ WriteBlock(FILE* Fp, stream* S, bitstream* Bs) {
 static u32 BlockIndex = 0;
 static void
 BuildIntAdaptiveDFSPhase(
-  std::vector<particle_int>& Particles, i64 Begin, i64 End, 
-  const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) 
+  std::vector<particle_int>& Particles, i64 Begin, i64 End,
+  const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth)
 {
   i8 D = Params.DimsStr[Depth] - 'x';
   i64 N = End - Begin;
@@ -1667,7 +1667,7 @@ BuildIntAdaptiveDFSPhase(
             GrowIfTooFull(&Stream->Stream);
             Write(&Stream->Stream, Left);
             if (B->BBox.Min+1 == B->BBox.Max) {
-              ++NParticlesEncoded; 
+              ++NParticlesEncoded;
             }
             //++Block.BitCount;
           }
@@ -1723,7 +1723,7 @@ BuildIntAdaptiveDFSPhase(
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream->Stream);
 #endif
   if (Begin+1 <= Mid) {
-    split_type NextSplit = 
+    split_type NextSplit =
           ((Depth+1==Params.StartResolutionSplit) ||
            (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     BuildIntAdaptiveDFSPhase(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
@@ -1922,7 +1922,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
         //      GrowIfTooFull(&Stream.Stream);
         //      Write(&Stream.Stream, Left);
         //      if (B->BBox.Min+1 == B->BBox.Max) {
-        //        ++NParticlesEncoded; 
+        //        ++NParticlesEncoded;
         //      }
         //    }
         //  } else {
@@ -1931,7 +1931,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
         //}
       }
     } else if (Q.Begin < Mid) {
-      split_type NextSplit = 
+      split_type NextSplit =
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
@@ -1970,7 +1970,7 @@ BuildTreeIntBFS(q_item_int Q, std::vector<particle_int>& Particles) {
         //      GrowIfTooFull(&Stream.Stream);
         //      Write(&Stream.Stream, Left);
         //      if (B->BBox.Min+1 == B->BBox.Max) {
-        //        ++NParticlesEncoded; 
+        //        ++NParticlesEncoded;
         //      }
         //    }
         //  } else {
@@ -2078,7 +2078,7 @@ DecodeTreeIntBFS(q_item_int Q) {
         //}
       }
     } else if (InTheCut && Q.Begin<Mid) {
-      split_type NextSplit = 
+      split_type NextSplit =
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
       Queue.push(q_item_int{
@@ -2146,16 +2146,22 @@ DecodeTreeIntBFS(q_item_int Q) {
 }
 
 static void
-BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End, 
+BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   const grid_int& Grid, split_type Split, i8 ResLvl, i8 Depth) {
-  i8 D = Params.DimsStr[Depth] - 'x';
+  i8 D = 0;
+  if (Grid.Dims3.x >= Grid.Dims3.y && Grid.Dims3.x >= Grid.Dims3.z)
+    D = 0;
+  else if (Grid.Dims3.y >= Grid.Dims3.x && Grid.Dims3.y >= Grid.Dims3.z)
+    D = 1;
+  else
+    D = 2;
   i64 N = End - Begin;
   i64 CellCount = i64(Grid.Dims3.x) * i64(Grid.Dims3.y) * i64(Grid.Dims3.z);
   i64 Mid = Begin;
   i32 MM = Grid.From3[D];
   if (Split == ResolutionSplit) {
     auto RPred = [D, &Grid](const particle_int& P) {
-      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]);
       Bin = (Bin-Grid.From3[D]) / Grid.Stride3[D];
       return IS_EVEN(Bin);
     };
@@ -2163,7 +2169,7 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
   } else if (Split == SpatialSplit) {
     MM = Grid.From3[D] + (((Grid.Dims3[D]+1)>>1)-1) * Grid.Stride3[D];
     auto SPred = [MM, D, &Grid](const particle_int& P) {
-      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]) / Params.W3[D];
+      i32 Bin = (P.Pos[D]-Params.BBoxInt.Min[D]);
       return Bin <= MM;
     };
     Mid = std::partition(RANGE(Particles, Begin, End), SPred) - Particles.begin();
@@ -2186,54 +2192,29 @@ BuildTreeIntDFS(std::vector<particle_int>& Particles, i64 Begin, i64 End,
     GrowIfTooFull(&Stream.Coder.BitStream);
     EncodeRange(Mean, StdDev, f64(0), f64(N), f64(P), CdfTable, &Stream.Stream, &Stream.Coder);
 #else
+  GrowIfTooFull(&Stream.Stream);
   EncodeCenteredMinimal(u32(P), u32(N+1), &Stream.Stream);
 #endif
-  if (Begin+1==Mid && CellCountLeft==1) {
-    const auto& G = GridLeft;
-    bbox_int BBox {
-      .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3
-    };
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Begin].Pos[DD] < M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        GrowIfTooFull(&Stream.Stream);
-        Write(&Stream.Stream, Left);
-      }
-    }
-  } else if (Begin < Mid) {
-    split_type NextSplit = 
-      ((Depth+1==Params.StartResolutionSplit) ||
-       (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+  if (Begin < Mid && CellCountLeft > 1) {
+    //split_type NextSplit =
+    //  ((Depth+1==Params.StartResolutionSplit) ||
+    //   (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
+    split_type NextSplit = (Depth < 10) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       BuildTreeIntDFS(Particles, Begin, Mid, GridLeft, NextSplit, ResLvl+1, Depth+1);
   }
-  if (Mid+1==End && CellCountRight==1) {
-    const auto& G = GridRight;
-    bbox_int BBox {
-      .Min = Params.BBoxInt.Min + G.From3*Params.W3,
-      .Max = BBox.Min + Params.W3
-    };
-    for (int DD = 0; DD < 3; ++DD) {
-      while (BBox.Max[DD] > BBox.Min[DD]+1) {
-        i32 M = (BBox.Max[DD]+BBox.Min[DD]) >> 1;
-        bool Left = Particles[Mid].Pos[DD] < M;
-        if (Left) BBox.Max[DD] = M; else BBox.Min[DD] = M;
-        Write(&Stream.Stream, Left);
-      }
-    }
-  } else if (Mid < End) {
-    split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+  if (Mid < End && CellCountRight > 1) {
+    //split_type NextSplit = (Depth+1==Params.StartResolutionSplit) ? ResolutionSplit : SpatialSplit;
+    split_type NextSplit = (Depth < 10) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
       BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl, Depth+1);
     else if (Split == ResolutionSplit)
       BuildTreeIntDFS(Particles, Mid, End, GridRight, NextSplit, ResLvl+1, Depth+1);
   }
 }
+
 static std::vector<stack> Stacks; // one stack for each block
 static i64 MyHeapSize = 0;
 static i64 StackSize = 0;
@@ -2282,7 +2263,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
     if (InTheCut && Q.Begin+1==Mid && CellCountLeft==1) {
       REQUIRE(false); // should not happen
     } else if (InTheCut && Q.Begin<Mid) {
-      split_type NextSplit = 
+      split_type NextSplit =
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
         q_item_int Next{
@@ -2306,7 +2287,7 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
         Heap.push(
           heap_priority{
-            .Level=100, 
+            .Level=100,
             .NParticles=i32(Next.End-Next.Begin),
             .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
             .BlockId=BlockIdx});
@@ -2340,9 +2321,9 @@ DecodeIntAdaptiveBFSPhase(std::queue<q_item_int>& Queue, std::priority_queue<hea
         Stacks[BlockIdx].push_back(Next);
         ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
         Heap.push(heap_priority{
-            .Level=100, 
-            .NParticles=i32(Next.End-Next.Begin), 
-            .TotalNParticlesOnLevel=i32(Next.End-Next.Begin), 
+            .Level=100,
+            .NParticles=i32(Next.End-Next.Begin),
+            .TotalNParticlesOnLevel=i32(Next.End-Next.Begin),
             .BlockId=BlockIdx});
         ++BlockCount;
         ++MyHeapSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
@@ -2427,7 +2408,7 @@ DecodeIntAdaptiveDFSPhase(heap_priority& TopPriority) {
       ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     }
     if (InTheCut && Q.Begin+1<=Mid) {
-      split_type NextSplit = 
+      split_type NextSplit =
         ((Q.Depth+1==Params.StartResolutionSplit) ||
          (Q.Split==ResolutionSplit && Q.ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
       q_item_int Next {
@@ -2470,9 +2451,9 @@ DecodeIntAdaptive(q_item_int Q) {
     Stacks[BlockIdx].push_back(Q);
     ++StackSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
     Heap.push(heap_priority{
-      .Level=100, 
-      .NParticles=i32(Q.End-Q.Begin), 
-      .TotalNParticlesOnLevel=i32(Q.End-Q.Begin), 
+      .Level=100,
+      .NParticles=i32(Q.End-Q.Begin),
+      .TotalNParticlesOnLevel=i32(Q.End-Q.Begin),
       .BlockId=BlockIdx});
     ++QueueSize; NItems = MAX(NItems, QueueSize+MyHeapSize+StackSize);
   }
@@ -2618,7 +2599,7 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
     //LeftTree = new (TreePtr++) tree;
     //LeftTree->Count = 1;
   } else if (InTheCut && Begin<Mid) {
-    split_type NextSplit = 
+    split_type NextSplit =
       ((Depth+1==Params.StartResolutionSplit) ||
        (Split==ResolutionSplit && ResLvl+2<Params.NLevels)) ? ResolutionSplit : SpatialSplit;
     if (Split == SpatialSplit)
@@ -2680,10 +2661,10 @@ DecodeTreeIntDFS(const tree* PredNode, i64 Begin, i64 End, const grid_int& Grid,
   return Node;
 }
 
-/* we divide the particles into three trees, one for each x/y/z splits 
+/* we divide the particles into three trees, one for each x/y/z splits
 (so that the particles form a linear order) */
 // first x, second x, third x
-// 
+//
 
 static i64 BitsSkipped = 0;
 
@@ -2706,9 +2687,9 @@ RemoveRepeatedParticles(std::vector<particle_int>& Input) {
 }
 
 // TODO: add the number of blocks to the .idx file
-// TODO: 
+// TODO:
 
-//int 
+//int
 //main(int Argc, cstr* Argv) {
 //  f64 Accuracy = 0;
 //  bool Ok = ToDouble(Argv[1], &Accuracy);
@@ -2997,7 +2978,7 @@ main(int Argc, cstr* Argv) {
     if (strcmp(Str, "lossless"  ) == 0) Params.RefinementMode = refinement_mode::LOSSLESS;
     if (strcmp(Str, "separation") == 0) Params.RefinementMode = refinement_mode::SEPARATION_ONLY;
     if (!OptVal(Argc, Argv, "--in", &Params.InFile)) EXIT_ERROR("missing --in");
-    char Buf[512]; 
+    char Buf[512];
     strncpy(Buf, Params.InFile, sizeof(Buf));
     CdfTable = CreateBinomialTable(BinomialCutoff);
     bool Series = OptExists(Argc, Argv, "--series");
@@ -3006,13 +2987,13 @@ main(int Argc, cstr* Argv) {
     i32 TimeStep = 0;
     FilePtr = fopen(PRINT("%s.bin", Params.OutFile), "wb");
     InitWrite(&MetaStream, 1<<20);
-    if (!Series) 
+    if (!Series)
       goto START;
     Tp = fopen(Params.InFile, "rb");
     while (Series) {
       //Ok = fgets(Buf, sizeof Buf, Tp);
       Ok = fscanf(Tp, "%s\n", Buf);
-      if (TimeStep >= 2) 
+      if (TimeStep >= 2)
         break;
 START:
       ParticlesInt = ReadParticlesInt(Buf);
@@ -3030,7 +3011,7 @@ START:
       double start_time = timer();
       Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
       //Params.BBoxInt = bbox_int{vec3i{182, 9, 120}, vec3i{706, 1033, 376}};
-      printf("bbox = (%d %d %d) - (%d %d %d)\n", 
+      printf("bbox = (%d %d %d) - (%d %d %d)\n",
         Params.BBoxInt.Min[0], Params.BBoxInt.Min[1], Params.BBoxInt.Min[2],
         Params.BBoxInt.Max[0], Params.BBoxInt.Max[1], Params.BBoxInt.Max[2]);
       WriteVarByte(&BlockStream, ParticlesInt.size());
@@ -3049,7 +3030,7 @@ START:
       Params.W3[2] = Params.Dims3[2] / (1<<Params.LogDims3[2]);
       printf("log dims = %d %d %d\n", Params.LogDims3[0], Params.LogDims3[1], Params.LogDims3[2]);
       printf("w3 = %d %d %d\n", Params.W3[0], Params.W3[1], Params.W3[2]);
-      Params.Dims3 = Params.Dims3 / Params.W3;
+      //Params.Dims3 = Params.Dims3 / Params.W3;
       Params.MaxDepth = ComputeMaxDepth(Params.Dims3);
       //InitContext(); // uncomment to use contexts
       printf("max depth = %d\n", Params.MaxDepth);
@@ -3241,7 +3222,7 @@ START:
       //Params.BBox = ComputeBoundingBox(Particles);
       Params.BBoxInt = ComputeBoundingBox(ParticlesInt);
       vec3f Scale3 = 30.0 / vec3f(Params.BBoxInt.Max - Params.BBoxInt.Min);
-      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end(), Params.BBoxInt.Min, Scale3);      
+      WriteXYZ(PRINT("%s.xyz", Params.OutFile), ParticlesInt.begin(), ParticlesInt.end(), Params.BBoxInt.Min, Scale3);
       //WriteVTU(PRINT("%s.vtu", Params.OutFile), Particles.begin(), Particles.end(), Params.BBox.Min, Scale3);
     } else {
       fprintf(stderr, "Writing particles\n");

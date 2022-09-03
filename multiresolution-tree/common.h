@@ -1778,7 +1778,7 @@ using cdf = std::vector<u32>;
 using cdf_table = std::vector<cdf>;
 
 /* Generate the Pascal triangle */
-inline cdf_table 
+inline cdf_table
 pascal_triangle(int n) {
   cdf_table triangle(n + 1);
   for (int i = 0; i <= n; ++i)
@@ -1921,7 +1921,7 @@ CreateGeneralBinomialTables() {
   return RetVal;
 }
 
-/* n = number of particles in the parent 
+/* n = number of particles in the parent
    v = number of particles in the child
    c = sum of entire cdf */
 inline void
@@ -1941,14 +1941,14 @@ EncodeWithContext(u32 N, u32 V, const u32* Context, arithmetic_coder<>* Coder) {
   for (u32 I = 0; I < V; ++I) Lo += Context[I];
   Hi += Lo;
   u32 Scale = Hi;
-  for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I]; 
+  for (u32 I = V+1; I <= N+1; ++I) Scale += Context[I];
   Coder->Encode(prob<u32>{Lo, Hi, Scale});
 }
 
 INLINE u32
 DecodeWithContext(u32 N, const u32* Context, arithmetic_coder<>* Coder) {
   u32 Count = 0;
-  for (u32 I = 0; I <= N+1; ++I) Count += Context[I]; 
+  for (u32 I = 0; I <= N+1; ++I) Count += Context[I];
   size_t v = Coder->Decode(Context, N+2, Count);
   return (u32)v;
 }
@@ -1996,8 +1996,8 @@ DecodeBinomialSmallRange(int n, const cdf& CdfTable, arithmetic_coder<>* Coder) 
 /* This version decodes to an output variable and returns the number of bits just consumed */
 inline u32
 DecodeRange(
-  f64 m, f64 s, f64 a, f64 b, const cdf_table& CdfTable, 
-  bitstream* Bs, arithmetic_coder<>* Coder, u32& v) 
+  f64 m, f64 s, f64 a, f64 b, const cdf_table& CdfTable,
+  bitstream* Bs, arithmetic_coder<>* Coder, u32& v)
 {
   assert(a <= b);
   bool first = true;
@@ -2040,7 +2040,7 @@ DecodeRange(
 inline u32
 DecodeRange(
   f64 m, f64 s, f64 a, f64 b,
-  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder) 
+  const cdf_table& CdfTable, bitstream* Bs, arithmetic_coder<>* Coder)
 {
   assert(a <= b);
   bool first = true;
@@ -2174,7 +2174,7 @@ struct q_item {
   split_type SplitType;
 };
 
-enum class refinement_mode { ERROR_BASED, LOSSLESS, SEPARATION_ONLY }; 
+enum class refinement_mode { ERROR_BASED, LOSSLESS, SEPARATION_ONLY };
 
 struct params {
   char Name[64];
@@ -2260,12 +2260,12 @@ struct block {
   bitstream Bs;
   int NParticles = 0; // only used when level > BaseHeight (to complement BitSet)
   block() { Nodes.resize(POW2(Params.BlockBits)); }
-  block(bitstream* Bs) { 
+  block(bitstream* Bs) {
     Nodes.resize(Size(Bs->Stream) / sizeof(Nodes[0]) + 1);
     memcpy(Nodes.data(), Bs->Stream.Data, Size(Bs->Stream));
     this->Bs.Stream.Data = (byte*)Nodes.data();
     this->Bs.Stream.Bytes = Bs->Stream.Bytes;
-    InitRead(&this->Bs, this->Bs.Stream); 
+    InitRead(&this->Bs, this->Bs.Stream);
   }
 };
 using block_table = std::vector<std::vector<block>>; // [level] -> [block id] -> block data
@@ -2589,7 +2589,7 @@ ReadXYZ(cstr FileName) {
   fgets(Line, sizeof(Line), Fp); // dummy second line
   FOR(int, I, 0, NParticles) {
     fgets(Line, sizeof(Line), Fp);
-    vec3f P3; 
+    vec3f P3;
     char C[8];
     sscanf(Line, "%s %f %f %f", C, &P3.x, &P3.y, &P3.z);
     Particles[I].Pos = P3;
@@ -3000,7 +3000,7 @@ inline vec3i Factors[] = {
   vec3i{4, 4, 3}, // 48
   vec3i{4, 4, 4}, // 49 -> 64
   vec3i{4, 4, 4}, // 50 -> 64
-  vec3i{4, 4, 4}, // 51 -> 64 
+  vec3i{4, 4, 4}, // 51 -> 64
   vec3i{4, 4, 4}, // 52 -> 64
   vec3i{4, 4, 4}, // 53 -> 64
   vec3i{4, 4, 4}, // 54 -> 64
